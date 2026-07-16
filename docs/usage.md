@@ -16,7 +16,9 @@ cd ~/.claude/harness-template
 ./install.sh /path/to/project [프로젝트이름]
 ```
 
-install이 하는 일: 글루 복사(에이전트 10·오케스트레이터·훅 4·제0원칙) + 슬롯 스캐폴드(없을 때만) + settings.json 병합(기존 훅 보존·백업) + CLAUDE.md 포인터 append.
+install이 하는 일: 글루 복사(에이전트 12·오케스트레이터·훅 4·제0원칙) + 슬롯 스캐폴드(없을 때만) + settings.json 병합(기존 훅 보존·백업) + CLAUDE.md 포인터 append.
+
+파이프라인 확장 에이전트 2종은 **조건부**로만 돈다: `design-architect`(구조적 변경 — 새 모듈/레이어·경계/데이터모델 변경·3개+ 모듈 영향 — 일 때 Phase 2 전단, plan-reviewer가 설계·계획 2-pass 검증), `security-reviewer`(보안 민감 변경 — 인증/입력/DB/파일시스템/외부API/암호화/결제/시크릿 — 일 때 Phase 3에서 reviewer와 병렬, CRITICAL=병합 차단).
 
 **설치 후 반드시 2개 슬롯 채우기:**
 1. `.claude/harness/project-profile.md` — §1~§8 (도메인 전부: 스택·검증 명령·불변식·경계면·운영·vcs·예시). 작성 예시는 이 repo의 `examples/chat-system.profile.md`.

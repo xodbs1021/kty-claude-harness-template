@@ -25,10 +25,12 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
 | 에이전트 | 주입할 프로필 섹션 | 추가 동봉 |
 |---|---|---|
 | clarifier | §1 정체성 · §8 도메인 예시 | mem-search 결과 |
-| planner | §2 스택 · §4 불변식 · §5 경계면 · §7 vcs | principles.md · mem-search 결과 |
+| design-architect | §2 · §4 · §5 | principles.md · mem-search 결과 |
+| planner | §2 스택 · §4 불변식 · §5 경계면 · §7 vcs | principles.md · mem-search 결과 · (구조적이면) 설계서 경로 |
 | plan-reviewer | §4 · §5 · §7 | principles.md |
 | developer | §2 · §3 검증 · §4 · §5 | principles.md · 계획서 경로 |
 | reviewer | §3 · §4 · §5 | principles.md |
+| security-reviewer | §4 · §5 | 변경 파일 목록 |
 | pr-author | §3 (테스트 플랜용) · §7 | — |
 | pr-reviewer | §5 · §7 | — |
 | change-explainer | §1 (언어·톤) · §6 운영 | PR URL |
@@ -42,20 +44,30 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
 
 > 이 게이트가 이 하네스의 1번 가치다. "확실하지 않으면 추측 말고 물어본다"를 파이프라인이 강제한다.
 
-## Phase 2: 계획↔검증 루프 (planner ⇄ plan-reviewer)
+## Phase 2: 설계·계획↔검증 루프 (design-architect → planner ⇄ plan-reviewer)
 
+**구조적 변경 판별(오케스트레이터):** 새 모듈/레이어 신설 · 기존 경계나 데이터모델 변경 · 3개 이상 모듈 영향 중 하나라도 해당하면 "구조적".
+
+**구조적 변경이면 (2-pass):**
+1. `design-architect`가 설계서(`_workspace/00_design.md`) 작성 — 모듈 경계·계약·패턴·대안 트레이드오프.
+2. `plan-reviewer` **1차 pass(설계만)**: 제0원칙·계약 명시성·불변식 충돌·과설계를 검증. 보류면 design-architect로 루프.
+3. `planner`가 설계서를 입력으로 구현 계획서(`_workspace/01_plan.md`) 작성.
+4. `plan-reviewer` **2차 pass(계획+정합성)**: 기존 점검 전체 + 설계↔계획 정합성. 보류면 planner로 루프.
+
+**비구조적이면 (기존 흐름):**
 1. `planner`로 구현 계획서를 만든다. 영향 범위·모듈 경계(제0원칙)·PR 단위 단계·리스크·테스트 계획. `_workspace/01_plan.md`에 저장.
 2. `plan-reviewer`가 완결성·영향범위 정확성·PR 단위·리스크 누락·테스트 구체성·아키텍처 정합(§4)·제0원칙을 검증.
 3. 보류(차단)면 planner로 되돌려 수정 → 재검증. **승인까지 루프.**
 
-> 계획에도 generate-verify를 두는 이유: 결함은 늦게 잡을수록 비싸다. 가장 싼 지점에서 계획 결함을 잡는다.
+> 계획에도 generate-verify를 두는 이유: 결함은 늦게 잡을수록 비싸다. 가장 싼 지점(구조적이면 설계 직후)에서 결함을 잡는다. plan-reviewer는 pass마다 새 컨텍스트로 단일 임무만 받으므로 혼란이 없다.
 
 ## Phase 3: 개발↔검수 루프 (developer ⇄ reviewer)
 
 1. `developer`가 계획대로 구현, 프로필 §3 타입체크+테스트를 통과시킴. 출력 마지막에 `방법론: superpowers:test-driven-development 따름` 줄이 **있는지 확인** — 없으면 미준수로 되돌린다.
 2. `reviewer`가 경계면 정합성(§5)·실패 시나리오·불변식 위반(§4)·제0원칙·테스트를 검수.
-3. 보류(CRITICAL/HIGH)면 developer로 되돌려 수정 → 재검수. **통과까지 루프.**
-4. §3이 런타임/브라우저 관찰을 요구하면 실제 동작 확인까지.
+3. **보안 트리거 판별:** 변경이 인증/인가·사용자 입력·DB 쿼리·파일시스템·외부 API·암호화·결제·시크릿에 닿으면 `security-reviewer`를 reviewer와 **병렬** dispatch. CRITICAL = 병합 차단.
+4. 보류(CRITICAL/HIGH — reviewer든 security-reviewer든)면 developer로 되돌려 수정 → 재검수. **통과까지 루프.**
+5. §3이 런타임/브라우저 관찰을 요구하면 실제 동작 확인까지.
 
 개발 중 새 모호점이 나오면 clarifier로 에스컬레이션.
 

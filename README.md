@@ -3,7 +3,7 @@
 프로젝트마다 재사용하는 **접착제 층(glue)**. 질문정리→계획→계획검증→개발→검수→PR→PR점검→변경설명→완료감사
 파이프라인을 전문 에이전트 팀 + 강제 훅으로 실행한다. 도메인 알맹이는 프로젝트마다 **슬롯 한 파일**만 채운다.
 
-> 상태: **Stage 5 완료** — 글루 전체(에이전트 10 · 오케스트레이터 · 훅 4 · 제0원칙) + install/sync + 문서. 남은 것: Stage 6 실전 인스턴스화 검증.
+> 상태: **Stage 5.5 완료** — 글루 전체(에이전트 12 · 오케스트레이터 · 훅 4 · 제0원칙) + install/sync + 문서. 남은 것: Stage 6 실전 인스턴스화 검증.
 > 정본 repo: https://github.com/xodbs1021/kty-claude-harness-template (private) · 상세 사용법: [docs/usage.md](docs/usage.md)
 
 ## 설계 원칙 (확정)
@@ -16,7 +16,7 @@
 
 | 구분 | 무엇 | 어디 |
 |------|------|------|
-| **재사용 (글루, 복사됨)** | 메타 에이전트 9개(clarifier·planner·plan-reviewer·reviewer·pr-author·pr-reviewer·change-explainer·completion-auditor·architecture-guide) | `template/.claude/agents/` |
+| **재사용 (글루, 복사됨)** | 메타 에이전트 11개(clarifier·design-architect·planner·plan-reviewer·reviewer·security-reviewer·pr-author·pr-reviewer·change-explainer·completion-auditor·architecture-guide) + developer | `template/.claude/agents/` |
 | | 강제 훅 4개(guard-master-commit·mark-needs-audit·verify-before-stop·_common) + `settings.json` 배선 | `template/.claude/hooks/` |
 | | 오케스트레이터 스킬(제네릭 파이프라인) | `template/.claude/skills/` |
 | **슬롯 (프로젝트마다 채움)** | 도메인 프로필 — 스택·검증 명령·아키텍처 불변식·경계면·운영 모델·예시 | `template/.claude/harness/project-profile.template.md` → 프로젝트의 `.claude/harness/project-profile.md` |
@@ -57,7 +57,7 @@
 ├── template/
 │   ├── CLAUDE.md.snippet                       # 프로젝트 CLAUDE.md에 append되는 포인터
 │   └── .claude/
-│       ├── agents/                             # 제네릭 에이전트 10 (도메인 누출 0)
+│       ├── agents/                             # 제네릭 에이전트 12 (도메인 누출 0)
 │       ├── skills/harness-orchestrator/        # 파이프라인 오케스트레이터 (프로필 런타임 주입)
 │       ├── hooks/                              # 강제 훅 4 (+ settings.json 배선)
 │       ├── settings.json

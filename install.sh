@@ -34,7 +34,7 @@ cp "$SRC/skills/harness-orchestrator/SKILL.md" "$DST/skills/harness-orchestrator
 cp "$SRC/hooks/"*.sh "$DST/hooks/"
 chmod +x "$DST/hooks/"*.sh
 cp "$SRC/harness/principles.md" "$DST/harness/"
-echo "   글루 ✓  에이전트 10 · 오케스트레이터 · 훅 4 · 제0원칙"
+echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 오케스트레이터 · 훅 4 · 제0원칙"
 
 # ── 2) 슬롯 스캐폴드 (없을 때만 — 도메인은 사용자가 채운다) ──────────
 if [ ! -f "$DST/harness/project-profile.md" ]; then

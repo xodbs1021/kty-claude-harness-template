@@ -1,77 +1,149 @@
 # Harness Template — 도메인-무관 개발 파이프라인 하네스
 
-프로젝트마다 재사용하는 **접착제 층(glue)**. 질문정리→계획→계획검증→개발→검수→PR→PR점검→변경설명→완료감사
-파이프라인을 전문 에이전트 팀 + 강제 훅으로 실행한다. 도메인 알맹이는 프로젝트마다 **슬롯 한 파일**만 채운다.
+> **한 줄:** 어떤 프로젝트든 `install.sh` 한 번 + 프로필 한 파일로, 질문정리→설계→계획→개발→검수→PR→설명→완료감사 파이프라인과 강제 훅을 얻는 재사용 글루 층.
+>
+> 상태: **Stage 6a 검증 통과** (스크래치 인스턴스화 + 훅 발화 + 프로필 주입·사용 관찰 확인) · 남은 것: 실프로젝트 마이그레이션(6b)
+> 정본: https://github.com/xodbs1021/kty-claude-harness-template (private) · 사용법: [docs/usage.md](docs/usage.md)
 
-> 상태: **Stage 5.5 완료** — 글루 전체(에이전트 12 · 오케스트레이터 · 훅 4 · 제0원칙) + install/sync + 문서. 남은 것: Stage 6 실전 인스턴스화 검증.
-> 정본 repo: https://github.com/xodbs1021/kty-claude-harness-template (private) · 상세 사용법: [docs/usage.md](docs/usage.md)
+---
 
-## 설계 원칙 (확정)
+## 1. 이것이 무엇인가
 
-1. **레이어 분리, 짬뽕 금지.** ECC·superpowers·claude-mem은 전역 1회 설치로 두고 템플릿은 **참조만** 한다(복사 X). 버전 드리프트·중복·비대 방지.
-2. **템플릿 = 재사용 90% 접착제.** 도메인 알맹이는 프로젝트마다 채우는 **슬롯**.
-3. **강제력(훅)은 템플릿이 소유한다** — superpowers엔 없는 이 하네스의 무기.
-
-## 무엇이 재사용이고 무엇이 슬롯인가
-
-| 구분 | 무엇 | 어디 |
-|------|------|------|
-| **재사용 (글루, 복사됨)** | 메타 에이전트 11개(clarifier·design-architect·planner·plan-reviewer·reviewer·security-reviewer·pr-author·pr-reviewer·change-explainer·completion-auditor·architecture-guide) + developer | `template/.claude/agents/` |
-| | 강제 훅 4개(guard-master-commit·mark-needs-audit·verify-before-stop·_common) + `settings.json` 배선 | `template/.claude/hooks/` |
-| | 오케스트레이터 스킬(제네릭 파이프라인) | `template/.claude/skills/` |
-| **슬롯 (프로젝트마다 채움)** | 도메인 프로필 — 스택·검증 명령·아키텍처 불변식·경계면·운영 모델·예시 | `template/.claude/harness/project-profile.template.md` → 프로젝트의 `.claude/harness/project-profile.md` |
-| | developer 에이전트의 도메인 구현 지식 | 프로필 §2·§4 참조로 해결(에이전트 본문은 제네릭) |
-| **참조 (복사 안 함, 전역)** | ECC 룰 / superpowers 스킬 / claude-mem | `~/.claude/rules/ecc/` · superpowers·claude-mem 플러그인 |
-
-## 전역 의존 (없으면 하네스가 반쪽)
-
-- **ECC** (`~/.claude/rules/ecc/`): 언어 일반 코딩/테스트/보안 표준. 항상 로드.
-- **superpowers** (플러그인): 방법론 스킬. 에이전트가 런타임에 **참조 호출**(복사 X). 전역 `using-superpowers` 자동 선점은 이 하네스에서 CLAUDE.md 지시로 비활성 — 오케스트레이터가 스킬 순서를 통제.
-- **claude-mem** (플러그인): 세션 히스토리 **자동 캡처+검색**(디폴트 동작). planner/clarifier가 착수 전 "전에 이거 풀었나" 검색.
-
-### 하이브리드 메모리 경계
-
-- **파일 메모리(항상 로드, 하중지지 사실):** 핵심 규칙·확정 결정·로드맵·아키텍처 불변식·프로필. `~/.claude/projects/<proj>/memory/`.
-- **claude-mem(긴 꼬리, 검색):** 세션 서사·탐색 히스토리. 자동 캡처되므로 별도 작업 불필요.
-- **승격 규칙:** claude-mem 검색에서 하중지지 사실이 나오면 파일 메모리로 승격.
-
-## 인스턴스화 흐름 (새 프로젝트)
+CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 진화한 개발 하네스를, **도메인을 빼고 접착제만 남겨** 어느 프로젝트에나 붙일 수 있게 일반화한 것이다.
 
 ```
-1. install.sh <project>          # (Stage 5) 글루를 프로젝트 .claude/로 복사
-2. .claude/harness/project-profile.md 채우기   # 슬롯 — 도메인만
-3. CLAUDE.md 하네스 포인터 자동 추가             # (Stage 5) install.sh가 append
-→ 이후 개발 요청 시 오케스트레이터 스킬이 트리거되어 파이프라인 실행
+사용자 요청
+   │
+   ▼
+[clarifier] 모호점·비가역 결정 → 질문 게이트           ─┐
+   ▼                                                   │
+[design-architect] (구조적 변경만) 설계서               │ Phase 0에서
+   ▼                                                   │ 오케스트레이터가
+[plan-reviewer 1차] 설계 검증 ⇄ 루프                    │ 프로필 §섹션을
+   ▼                                                   │ 각 에이전트
+[planner] 계획서 → [plan-reviewer 2차] ⇄ 루프           │ 프롬프트에
+   ▼                                                   │ 런타임 주입
+[developer] TDD 구현 ⇄ [reviewer] 검수                  │
+   ‖ (보안 트리거 시) [security-reviewer] 병렬           │
+   ▼                                                   │
+[pr-author] 브랜치→PR ⇄ [pr-reviewer] 점검              │
+   ▼                                                   │
+[change-explainer] 사용자용 변경 설명   ← Stop 훅 강제   │
+   ▼                                                   │
+[completion-auditor] 완료 주장 1차 증거 감사 ← Stop 훅 강제
+   ▼
+머지 (항상 사용자 승인 후)                               ─┘
 ```
 
-- **글루 반영:** install 시 **복사(스냅샷)**. 템플릿 개선은 `sync` 명령으로 선택 반영(조용한 기본값=안 바뀜).
-- **참조 시스템:** 항상 전역 최신을 런타임에 사용 — 새 프로젝트를 깔 때마다 (그 시점 최신 글루) + (최신 ECC·superpowers·claude-mem)로 조립됨.
+파이프라인 밖 상시 자문: **architecture-guide** — "왜 이렇게 짰나"를 결정·대안·트레이드오프로 설명.
 
-## 디렉토리 구조
+## 2. 3층 구조 — 참조 / 글루 / 슬롯
+
+| 층 | 무엇 | 갱신 주체 |
+|---|---|---|
+| **참조** (복사 안 함, 전역 1회 설치) | ECC 룰(코딩/테스트/보안 표준) · superpowers(방법론 스킬) · claude-mem(세션 기억 자동 캡처+검색) | 각 시스템이 업데이트되면 모든 프로젝트에서 즉시 최신 |
+| **글루** (이 repo 소유, install 시 복사) | 에이전트 12 · 오케스트레이터 스킬 · 강제 훅 4 · 제0원칙 | 이 repo에서 개선 → `sync.sh`로 프로젝트에 전파 |
+| **슬롯** (프로젝트 소유, 절대 안 덮음) | `project-profile.md`(도메인 전부: 스택·검증·불변식·경계면·운영·vcs·예시) · `harness.env`(타입체크 명령) | 사용자 |
+
+새 프로젝트 온보딩 = 슬롯 한 파일 채우기. 에이전트·훅은 손대지 않는다.
+
+## 3. 왜 이런 구성인가 — 핵심 설계 결정
+
+각 결정을 "결정 / 대안 / 왜"로 기록한다. (architecture-guide가 설명할 때의 근거 원장이기도 하다.)
+
+**① 파이프라인 + 3중 generate-verify 루프 (계획·개발·PR)**
+대안: 유능한 에이전트 하나가 다 하기. → 결함은 늦게 잡을수록 비싸다. 계획 결함을 개발 후에 발견하면 코드·검수·PR 전부 재작업. 각 산출물마다 생성자와 다른 검증자를 붙여 가장 싼 지점에서 잡는다. 역할 분리는 컨텍스트 오염도 막는다.
+
+**② 강제력은 훅이 소유한다 — 이 하네스의 무기**
+대안: "검수해라, 설명해라"를 산문 지시로. → 실사고(§5)로 증명됐듯 산문은 생략된다. `PreToolUse`(기본 브랜치 커밋 차단)·`PostToolUse`(변경 플래그)·`Stop`(타입체크→설명→감사 미이행 시 종료 차단)은 모델의 선의와 무관하게 발화한다. superpowers가 방법론을 주지만 강제력이 없다 — 훅이 그 빈자리를 채운다. 단 벽돌 방지(3회 후 경고와 통과)와 탈출구(`HARNESS_HOOKS=off`)를 항상 남긴다: 강제 장치가 세션을 인질로 잡으면 안 된다.
+
+**③ 단일 프로필 슬롯 + 런타임 주입**
+대안 1: 도메인을 각 에이전트에 인라인(원본 방식) → 같은 사실이 5+개 파일에 중복, 바뀌면 드리프트. 대안 2: 에이전트에게 "프로필을 읽어라" 지시만 → 안 읽으면 도메인이 컨텍스트에 아예 없음. → 채택: 도메인은 프로필 한 파일(디스크의 단일 원천), 오케스트레이터가 dispatch마다 해당 §전문을 프롬프트에 동봉(런타임 인라인). **에이전트의 순종에 안 맡긴다.** 읽을지 선택할 기회 자체를 없앴고, 그래도 어기면 같은 프로필을 근거로 한 reviewer가 잡는다.
+
+**④ 제0원칙은 developer가 아니라 하네스가 소유**
+"코드는 사람을 위한 것 — 이름=계약, 구현=교체 가능한 부품, 과함도 배신(YAGNI)". 대안: developer 정의에만 넣기. → 모듈 경계는 **계획에서 정해지고 리뷰에서 강제**되므로 developer만 알면 샌다. planner(설계 반영)·plan-reviewer(검증)·developer(구현)·reviewer(적발)·architecture-guide(설명)가 같은 파일(`harness/principles.md`)을 공유한다.
+
+**⑤ ECC·superpowers·claude-mem은 참조, 복사 금지**
+대안: 좋은 부분을 템플릿에 복사해 자기완결. → 복사본은 그 순간부터 낡는다(버전 드리프트). 참조는 원본이 업데이트되면 공짜로 최신. superpowers 스킬은 서브에이전트의 `Skill` 도구로 런타임 로드(복사 0), ECC 룰은 세션 상주라 인용만, claude-mem recall은 `claude-mem:mem-search` 스킬 호출로 위임. 전역 `using-superpowers`의 "응답 전 스킬 먼저" 선점만 CLAUDE.md 지시로 꺼서 오케스트레이터가 순서 통제권을 유지한다.
+
+**⑥ per-agent 스킬 붕괴**
+원본은 에이전트마다 방법론 스킬이 짝(11개). 해부해 보니 내용물 = 에이전트 정의와 중복(~50%) + 도메인 사실(~40%, →프로필) + 트리거 문구(~10%, →오케스트레이터 description). 남는 알맹이가 없어 통째로 흡수했다. 단독 요청("검수만 다시")은 오케스트레이터 Phase 0의 부분 재실행이 커버.
+
+**⑦ 조건부 전문가 패턴 (design-architect · security-reviewer)**
+대안: 모든 변경에 설계·보안 검토. → 자잘한 수정에 매번 설계서를 만들면 과설계 공장이고, 모든 diff에 보안 검수는 소음이다. 오케스트레이터가 **트리거 기준**(구조적: 새 모듈/경계·데이터모델 변경/3+모듈 영향 · 보안: 인증/입력/DB/파일시스템/외부API/암호화/결제/시크릿)으로 판별해 해당할 때만 투입. plan-reviewer는 2-pass(1차 설계만, 2차 계획+정합성) — 호출마다 새 컨텍스트에 단일 임무라 혼란이 없고, 설계↔계획 정합성을 보는 주체가 유지된다.
+
+**⑧ 하이브리드 메모리**
+하중지지 사실(규칙·확정 결정·로드맵·프로필)은 파일 메모리(항상 로드), 긴 꼬리(세션 서사)는 claude-mem 자동 캡처+필요 시 검색. 전부 파일이면 비대, 전부 claude-mem이면 매 세션 재검색 위험. 승격 규칙: 검색에서 하중지지 사실이 나오면 파일로 승격.
+
+## 4. 에이전트 12
+
+| 에이전트 | 역할 한 줄 | 투입 |
+|---|---|---|
+| clarifier | 모호점·비가역 결정을 질문으로 — "추측 말고 물어본다"의 강제 | 항상 (맨 앞) |
+| design-architect | 모듈 경계·계약·패턴의 설계서 | 구조적 변경만 |
+| planner | 실행 가능한 구현 계획 (PR 단위·리스크·테스트) | 항상 |
+| plan-reviewer | 설계·계획 검증 (2-pass) — 가장 싼 지점의 결함 사냥 | 항상 |
+| developer | TDD 구현, 프로필 불변식 준수 | 항상 |
+| reviewer | 경계면 교차 비교·실패 시나리오·제0원칙 검수 | 항상 |
+| security-reviewer | 입력→도달 경로 추적으로 취약점 적발, CRITICAL=차단 | 보안 트리거만 |
+| pr-author | 브랜치→PR (기본 브랜치 커밋 금지·squash 전제) | 항상 |
+| pr-reviewer | PR 단위 위생·완결성·롤백성 | 항상 |
+| change-explainer | diff 기반 사용자용 설명 (프로필 §1 언어·수준) | 항상 (훅 강제) |
+| completion-auditor | 완료 주장을 1차 증거로 감사 (운영 반영까지) | 항상 (훅 강제) |
+| architecture-guide | 설계 의도·대안·트레이드오프 설명 | 파이프라인 밖 |
+
+전원 `model: opus` — 하네스 품질은 검증자의 추론 능력에 직결.
+
+## 5. 진화 이력 — 실사고가 만든 설계
+
+이 하네스의 모든 강제 장치는 이론이 아니라 **실제로 겪은 사고**의 흉터다:
+
+| 실사고 | 낳은 설계 |
+|---|---|
+| "됐다"는데 실제론 안 됨 (커밋 없이 push 보고, 테스트 안 돌리고 통과 주장) | completion-auditor + Stop 훅 감사 게이트 — 주장을 믿지 않고 1차 증거로 |
+| 스택 PR의 base 삭제로 뒤 PR이 통째로 닫힘 | 스택 PR 금지, 기능마다 기본 브랜치에서 새 브랜치 + PreToolUse 커밋 가드 |
+| 머지됐는데 사용자는 옛 빌드 화면을 보며 "그대로"라고 항의 (2026-07-12) | 프로필 §6 운영 모델 + 감사자의 "머지 ≠ 운영 반영" 판정 의무 |
+| 변경 설명 단계를 오케스트레이터가 임의 생략 (2026-07-13) | `.needs-explain` 플래그 + Stop 훅 설명 게이트 — 산문이던 절차를 훅으로 |
+| 도메인 지식이 에이전트 5+곳에 산재, 재사용 불가 | 단일 프로필 슬롯 + 런타임 주입 — **이 템플릿의 탄생 이유** |
+| 신생 repo에서 커밋 가드가 우연히 통과 (Stage 6a에서 발견) | unborn HEAD 처리 명문화 — 우연을 의도로 (a9cad82) |
+
+교훈의 패턴: **산문으로만 존재하는 절차는 언젠가 생략된다. 반복 실패는 훅·게이트·프로필로 승격하라.** (단, 선제 방어는 하지 않는다 — 실제로 겪은 뒤에 강제를 추가한다. YAGNI는 프로세스에도 적용된다.)
+
+## 6. 디렉토리 구조
 
 ```
 ~/.claude/harness-template/
-├── README.md                                  # 이 문서
+├── README.md                                  # 이 문서 (구성 + 왜)
 ├── install.sh                                 # 인스턴스화 (글루 복사 + 슬롯 스캐폴드 + 병합)
 ├── sync.sh                                    # 글루만 갱신 (pull + diff 미리보기, 슬롯 불변)
 ├── template/
-│   ├── CLAUDE.md.snippet                       # 프로젝트 CLAUDE.md에 append되는 포인터
+│   ├── CLAUDE.md.snippet                       # 프로젝트 CLAUDE.md에 붙는 포인터
 │   └── .claude/
 │       ├── agents/                             # 제네릭 에이전트 12 (도메인 누출 0)
-│       ├── skills/harness-orchestrator/        # 파이프라인 오케스트레이터 (프로필 런타임 주입)
-│       ├── hooks/                              # 강제 훅 4 (+ settings.json 배선)
-│       ├── settings.json
+│       ├── skills/harness-orchestrator/        # 오케스트레이터 (프로필 주입 규칙 포함)
+│       ├── hooks/ + settings.json              # 강제 훅 4 + 배선
 │       └── harness/
 │           ├── project-profile.template.md     # 슬롯 스키마 (9섹션)
 │           ├── harness.env.template            # 타입체크 명령 슬롯
 │           └── principles.md                   # 제0원칙 (글루)
-├── examples/
-│   └── chat-system.profile.md                  # 채팅 프로젝트 실증본(스키마 검증)
-└── docs/
-    └── usage.md                                # 설치→슬롯→일상 사용→sync→트러블슈팅
+├── examples/chat-system.profile.md             # 실증본 (채팅 도메인 → 슬롯 매핑 검증)
+└── docs/usage.md                               # 설치→슬롯→일상→sync→트러블슈팅
 ```
 
-## 원본
+## 7. 알려진 한계 · 개선 후보 (자기 검토)
 
-이 템플릿은 CHZZK/SOOP 채팅 하네스(`/Users/kty/Downloads/chat/.claude/`)를 도메인-무관으로 일반화한 것이다.
-채팅 도메인 알맹이는 `examples/chat-system.profile.md`에 슬롯 형태로 추출되어 있다.
+**정직한 한계 (구조적):**
+- **게이트는 절차 강제이지 완전 강제가 아니다.** 플래그 삭제는 모델의 손에 있다 — 감사 없이 지우면 뚫린다. 방어는 3중: 지시(정의)·문화(게이트 무력화 금지 명문)·벽돌 방지 후에도 "완료 주장 신뢰 금지" 경고. 결정론적 바닥은 타입체크뿐.
+- **스킬 자동 트리거는 세션 스냅샷 의존** — 설치 세션에는 발화하지 않음. 새 세션 1회로 확인 필요.
+- **opus 전원 배치는 비싸다** — 품질 우선의 의도된 선택. clarifier·change-explainer는 sonnet으로 낮춰도 손실이 작을 수 있는 후보(실사용 관찰 후 결정).
+
+**개선 후보 (관찰되면 착수, 선제 금지 — YAGNI):**
+- `HARNESS_TYPECHECK_CMD`가 프로필 §3과 harness.env 두 곳에 기입됨 — SSOT 위반. harness.env를 기계 정본으로, §3은 참조 표기로 정리.
+- settings.json 백업 파일명이 날짜 단위라 같은 날 재설치 시 덮임 → 타임스탬프 추가.
+- 프로필 신선도 가드 — reviewer/감사자가 "프로필 §2 맵이 현실과 다름"을 발견하면 프로필 갱신을 지적하는 한 줄.
+- 조건부 전문가 확장 — performance-reviewer·a11y-reviewer 등은 해당 필요가 실제로 관찰되면 security-reviewer와 같은 틀로 추가.
+- 트리거 검증(should/should-NOT 쿼리 세트)은 6b 마이그레이션 후 실사용에서.
+
+## 8. 원본
+
+CHZZK/SOOP 채팅 하네스(`/Users/kty/Downloads/chat/.claude/`)의 일반화. 채팅 도메인은 `examples/chat-system.profile.md`에 슬롯 형태로 추출되어, "도메인이 프로필 한 파일에 100% 담긴다"의 검증 증거로 남아 있다.

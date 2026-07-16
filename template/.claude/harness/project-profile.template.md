@@ -40,10 +40,10 @@
 ## 3. 검증 명령 (verify)
 `[읽는 이: developer · reviewer · completion-auditor · pr-author · verify-before-stop 훅]`
 
-> **`typecheck` 명령은 Stop 훅(`verify-before-stop.sh`)이 그대로 실행한다.** 형식: 셸에서 바로 도는 한 줄.
-> 없거나 해당 없으면 `(없음)`으로 두면 훅이 타입체크를 건너뛴다.
+> **타입체크 명령의 기계 정본은 `.claude/harness/harness.env`의 `HARNESS_TYPECHECK_CMD`다** — Stop 훅은 그 파일만 읽는다.
+> 여기 §3에 명령을 다시 적지 마라(이중 기입 = 드리프트). 나머지 항목(테스트·빌드·린트·관찰)은 이 섹션이 정본.
 
-- **타입체크:** {{예: `pnpm typecheck`  또는  `pnpm tsc --noEmit`}}
+- **타입체크:** `.claude/harness/harness.env` 참조 (여기 다시 적지 않는다)
 - **테스트:** {{예: `pnpm test`  (프레임워크: Vitest)}}
 - **빌드:** {{예: `pnpm build`}}
 - **린트/포맷(선택):** {{예: `pnpm lint` / `pnpm format`}}

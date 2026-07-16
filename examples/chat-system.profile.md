@@ -31,7 +31,7 @@
 
 ## 3. 검증 명령 (verify)
 
-- **타입체크:** `pnpm typecheck`  (= `tsc --noEmit`)
+- **타입체크:** `.claude/harness/harness.env` 참조 — 이 프로젝트는 `HARNESS_TYPECHECK_CMD="pnpm typecheck"` (정본은 env 파일, 여기는 안내만)
 - **테스트:** `pnpm test`  (Vitest)
 - **빌드:** `pnpm build`
 - **린트/포맷:** (프로젝트 설정 따름)

@@ -28,13 +28,13 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
 | design-architect | §2 · §4 · §5 | principles.md · mem-search 결과 |
 | planner | §2 스택 · §4 불변식 · §5 경계면 · §7 vcs | principles.md · mem-search 결과 · (구조적이면) 설계서 경로 |
 | plan-reviewer | §4 · §5 · §7 | principles.md |
-| developer | §2 · §3 검증 · §4 · §5 | principles.md · 계획서 경로 |
-| reviewer | §3 · §4 · §5 | principles.md |
+| developer | §2 · §3 검증 · §4 · §5 | principles.md · 계획서 경로 · harness.env(타입체크 정본) |
+| reviewer | §3 · §4 · §5 | principles.md · harness.env |
 | security-reviewer | §4 · §5 | 변경 파일 목록 |
 | pr-author | §3 (테스트 플랜용) · §7 | — |
 | pr-reviewer | §5 · §7 | — |
 | change-explainer | §1 (언어·톤) · §6 운영 | PR URL |
-| completion-auditor | §3 · §6 | 완료 주장 목록 |
+| completion-auditor | §3 · §6 | 완료 주장 목록 · harness.env |
 
 ## Phase 1: 명료화 게이트 (clarifier)
 
@@ -104,6 +104,16 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
 - 상충 데이터는 삭제하지 말고 출처 병기.
 - 파괴적 작업(force push, 브랜치 삭제, 데이터 덮어쓰기)은 실행 전 대상·롤백법 명시하고 필요 시 사용자 확인.
 - 프로필이 없거나 §가 비어 있으면: 해당 검증은 "확인 불가"로 명시하고 진행하되, 완료 보고에 "프로필 §N 미작성 — 해당 검증 생략됨"을 남긴다. 지어내지 않는다.
+
+## 진화 신호 감지 (전문 검수자 추가 판단)
+
+"성능/접근성 검수자가 필요한가"를 사람의 기억이나 감에 맡기지 않는다. 신호는 하네스가 쌓고, 판단은 임계치가 한다:
+
+1. **신호 축적**: reviewer는 지적마다 카테고리 태그(`[성능]` `[접근성]` `[국제화]` 등)를 붙인다. 모든 검수 결과는 claude-mem이 자동 캡처하므로 세션이 끝나도 남는다.
+2. **집계·판단**: Phase 6 완료 후, 이번 실행에서 **전문 검수자가 없는 카테고리의 HIGH+ 지적**이 나왔다면 `claude-mem:mem-search`로 같은 카테고리 과거 지적을 검색한다(예: `search(query="reviewer 성능 HIGH")`). **누적 3회 이상**이면 사용자에게 제안한다: "[성능] HIGH 지적이 3회 누적됨 — performance-reviewer를 security-reviewer와 같은 조건부 틀로 추가할까요?"
+3. **채택 시**: 템플릿 repo(정본)에 에이전트를 추가·커밋하고 각 프로젝트에 sync. CLAUDE.md 변경 이력에 기록.
+
+> 이 규칙 덕에 "언제 에이전트를 추가하나"가 세션 기억과 무관해진다 — 어느 세션의 오케스트레이터든 같은 검색으로 같은 누적치를 복원한다.
 
 ## 테스트 시나리오
 

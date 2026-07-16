@@ -21,6 +21,7 @@ PROJECT="$(cd "$PROJECT_ARG" && pwd)"
 NAME="${2:-$(basename "$PROJECT")}"
 DST="$PROJECT/.claude"
 TODAY="$(date +%Y-%m-%d)"
+STAMP="$(date +%Y%m%d-%H%M%S)"   # 백업용 — 같은 날 재설치해도 안 덮이게
 
 echo "== 하네스 설치: $NAME"
 echo "   템플릿: $TPL_ROOT"
@@ -53,8 +54,8 @@ fi
 
 # ── 3) settings.json 병합 (기존 훅 보존) ────────────────────────────
 if [ -f "$DST/settings.json" ]; then
-  cp "$DST/settings.json" "$DST/settings.json.bak-$TODAY"
-  echo "   settings 백업 → settings.json.bak-$TODAY"
+  cp "$DST/settings.json" "$DST/settings.json.bak-$STAMP"
+  echo "   settings 백업 → settings.json.bak-$STAMP"
 fi
 python3 - "$DST/settings.json" "$SRC/settings.json" <<'PYEOF'
 import json, os, sys

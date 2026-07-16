@@ -1,0 +1,18 @@
+## 하네스: {{PROJECT_NAME}}
+
+**목표:** {{한 줄 목표}}
+
+**제0원칙 (다른 모든 것에 우선):** 모든 개발은 `.claude/harness/principles.md`를 최우선으로 지킨다 — 코드는 사람을 위한 것, 이름=계약, 구현=교체 가능한 부품, 과설계 금지(YAGNI).
+
+**트리거:** 코드 변경을 수반하는 작업 요청 시 `harness-orchestrator` 스킬을 사용하라. 단순 질문·설명·조회는 직접 응답 가능.
+
+**도메인 슬롯:** 이 프로젝트의 스택·아키텍처 불변식·경계면·운영 모델·검증 명령은 `.claude/harness/project-profile.md`에 있다.
+
+**강제 훅 (`.claude/settings.json`, 커밋됨):** 기본 브랜치 직접 커밋 차단 / 코드·설정 편집 시 완료·설명 게이트 플래그 / Stop 시 타입체크(프로필 §3)+change-explainer+completion-auditor 미실행이면 종료 차단. 무한루프 가드 3회. 탈출구 `HARNESS_HOOKS=off` 또는 `ECC_DISABLED_HOOKS`.
+
+**using-superpowers 전역 선점 비활성:** 이 하네스는 `harness-orchestrator`가 스킬 순서를 통제한다. "응답 전 스킬 먼저"(using-superpowers) 전역 강제가 오케스트레이터 파이프라인을 가로채지 않게 한다. 각 에이전트는 자기 정의에 명시된 superpowers 스킬만 참조 호출한다.
+
+**변경 이력:**
+| 날짜 | 변경 내용 | 대상 | 사유 |
+|------|----------|------|------|
+| {{YYYY-MM-DD}} | 하네스 템플릿 인스턴스화 | 전체 | - |

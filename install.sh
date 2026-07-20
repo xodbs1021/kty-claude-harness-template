@@ -37,6 +37,15 @@ chmod +x "$DST/hooks/"*.sh
 cp "$SRC/harness/principles.md" "$DST/harness/"
 echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 오케스트레이터 · 훅 4 · 제0원칙"
 
+# ── 1b) 전역 에이전트 배포 (~/.claude/agents/ — 프로젝트 무관 글루, 덮어씀) ──
+# 정본은 이 repo의 global-agents/ (전역 디렉토리는 버전 관리가 안 되므로 — ADR-0002)
+GLOBAL_SRC="$TPL_ROOT/global-agents"
+if [ -d "$GLOBAL_SRC" ] && ls "$GLOBAL_SRC"/*.md >/dev/null 2>&1; then
+  mkdir -p "$HOME/.claude/agents"
+  cp "$GLOBAL_SRC"/*.md "$HOME/.claude/agents/"
+  echo "   전역 에이전트 ✓  $(ls "$GLOBAL_SRC"/*.md | wc -l | tr -d ' ')종 → ~/.claude/agents/"
+fi
+
 # ── 2) 슬롯 스캐폴드 (없을 때만 — 도메인은 사용자가 채운다) ──────────
 if [ ! -f "$DST/harness/project-profile.md" ]; then
   sed "s/{{PROJECT_NAME}}/$NAME/g" "$SRC/harness/project-profile.template.md" \

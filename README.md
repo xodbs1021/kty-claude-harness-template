@@ -43,6 +43,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 |---|---|---|
 | **참조** (복사 안 함, 전역 1회 설치) | ECC 룰(코딩/테스트/보안 표준) · superpowers(방법론 스킬) · claude-mem(세션 기억 자동 캡처+검색) · find-skills(스킬 생태계 검색 — 진화 시 "만들기 전에 찾는다") | 각 시스템이 업데이트되면 모든 프로젝트에서 즉시 최신 |
 | **글루** (이 repo 소유, install 시 복사) | 자체 에이전트 8 · 오케스트레이터 스킬 · 강제 훅 4 · 제0원칙 (설계·계획·검수·보안검수 4역할은 ECC 에이전트 **참조** — dispatch 계약으로 호출) | 이 repo에서 개선 → `sync.sh`로 프로젝트에 전파 |
+| **전역 글루** (이 repo `global-agents/` 소유, install/sync 시 `~/.claude/agents/`로 배포) | 프로젝트 무관 전역 에이전트 — research-collector(수집 [rc]) · research-evaluator(독립 평가 [re]). 정본이 repo인 이유: 전역 디렉토리는 버전 관리가 안 된다 ([ADR-0002](docs/decisions/2026-07-20-global-agents-layer.md)) | 이 repo에서 개선 → install/sync가 전역 갱신 |
 | **슬롯** (프로젝트 소유, 절대 안 덮음) | `project-profile.md`(도메인 전부: 스택·검증·불변식·경계면·운영·vcs·예시) · `harness.env`(타입체크 명령) | 사용자 |
 
 새 프로젝트 온보딩 = 슬롯 한 파일 채우기. 에이전트·훅은 손대지 않는다.
@@ -77,6 +78,9 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 
 **⑨ 역할 등가는 참조로, 계약은 dispatch로 (2026-07-20)**
 설계(architect)·계획(planner)·검수(code-reviewer)·보안(security-reviewer) 4역할은 ECC에 역할 등가 에이전트가 이미 있어 자체 정의를 삭제하고 참조로 교체했다. 대안: 자체판 유지(계약이 정의에 내장돼 편함). → "만들기 전에 찾는다"를 자기 자신에게도 적용 — 역할 전문성은 ECC가 유지보수하고, 하네스 고유 계약(판정 형식·카테고리 태그·프로필 준수·수정 금지)은 오케스트레이터의 **dispatch 계약**이 프롬프트 주입으로 강제한다(③의 런타임 주입과 같은 원리). 생태계에 등가가 없는 게이트·감사류 5종(clarifier·plan-reviewer·pr-author 포함 8종)만 자체 소유로 남긴다 — 이것이 이 하네스의 차별점이다.
+
+**⑩ 전역 에이전트 층 — 정본=repo, 배포=~/.claude/agents/ (2026-07-20)**
+리서치 수집/평가처럼 프로젝트 무관 에이전트는 프로젝트 글루로도, 전역 직접 작성으로도 안 맞는다(전자는 용도 불일치, 후자는 버전 관리 불가). `global-agents/`를 정본으로 install/sync가 전역 배포한다. reporter 에이전트는 기각 — evaluator 분리의 가치는 독립성이지만 보고서의 가치는 사용자 맥락이고 그것은 메인 세션에 있다. 상세: [ADR-0002](docs/decisions/2026-07-20-global-agents-layer.md).
 
 ## 4. 에이전트 — 자체 8 + ECC 참조 4
 
@@ -136,7 +140,11 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 │           ├── project-profile.template.md     # 슬롯 스키마 (9섹션)
 │           ├── harness.env.template            # 타입체크 명령 슬롯
 │           └── principles.md                   # 제0원칙 (글루)
+├── global-agents/                              # 전역 에이전트 정본 (install/sync가 ~/.claude/agents/로 배포 — ADR-0002)
+│   ├── research-collector.md                   #   리서치 수집 [rc] (메타데이터 강제·공백 명시)
+│   └── research-evaluator.md                   #   독립 평가 [re] (인용 실존·100점 스코어카드·채택/보류/기각)
 ├── examples/chat-system.profile.md             # 실증본 (채팅 도메인 → 슬롯 매핑 검증)
+├── docs/decisions/                             # 하네스 자체 결정의 ADR (프로젝트 도메인 결정은 각 프로젝트 소유)
 └── docs/usage.md                               # 설치→슬롯→일상→sync→트러블슈팅
 ```
 

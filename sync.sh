@@ -41,6 +41,7 @@ for f in "$SRC/agents/"*.md; do preview "$f" "$DST/agents/$(basename "$f")"; don
 preview "$SRC/skills/harness-orchestrator/SKILL.md" "$DST/skills/harness-orchestrator/SKILL.md"
 for f in "$SRC/hooks/"*.sh; do preview "$f" "$DST/hooks/$(basename "$f")"; done
 preview "$SRC/harness/principles.md" "$DST/harness/principles.md"
+for f in "$TPL_ROOT/global-agents/"*.md; do [ -f "$f" ] && preview "$f" "$HOME/.claude/agents/$(basename "$f")"; done
 
 if [ "$changed" -eq 0 ]; then
   echo "   (변경 없음 — 이미 최신)"

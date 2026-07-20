@@ -38,7 +38,7 @@
 ---
 
 ## 3. 검증 명령 (verify)
-`[읽는 이: developer · reviewer · completion-auditor · pr-author · verify-before-stop 훅]`
+`[읽는 이: developer · ecc:code-reviewer · completion-auditor · pr-author · verify-before-stop 훅]`
 
 > **타입체크 명령의 기계 정본은 `.claude/harness/harness.env`의 `HARNESS_TYPECHECK_CMD`다** — Stop 훅은 그 파일만 읽는다.
 > 여기 §3에 명령을 다시 적지 마라(이중 기입 = 드리프트). 나머지 항목(테스트·빌드·린트·관찰)은 이 섹션이 정본.
@@ -55,7 +55,7 @@
 `[읽는 이: planner · plan-reviewer · developer · reviewer · architecture-guide]`
 
 > 이 프로젝트에서 **어기면 버그**인 규칙들. 형식: `규칙 — 왜(안 지키면 뭐가 터지나)`.
-> 여기 적힌 것이 reviewer의 "실패 시나리오" 사고와 architecture-guide 설명의 근거가 된다.
+> 여기 적힌 것이 ecc:code-reviewer의 "실패 시나리오" 사고와 architecture-guide 설명의 근거가 된다.
 > 프로젝트 고유 규칙만. 언어 일반 관용구(불변성·작은 함수 등)는 ECC 룰이 이미 커버하므로 중복 금지.
 
 - {{규칙}} — {{왜}}
@@ -69,7 +69,7 @@
 `[읽는 이: planner · plan-reviewer · reviewer]`
 
 > 데이터 shape이 계층을 넘나드는 지점. 이 프로젝트 버그의 대부분이 여기서 난다.
-> reviewer의 핵심은 "존재 확인"이 아니라 **이 경계 양쪽을 동시에 열어 shape을 교차 비교**하는 것.
+> ecc:code-reviewer의 핵심은 "존재 확인"이 아니라 **이 경계 양쪽을 동시에 열어 shape을 교차 비교**하는 것.
 > 형식: `경계: A ↔ B — 공유 계약/타입 위치`.
 
 - {{경계: A ↔ B}} — 공유 계약: {{위치}}
@@ -119,6 +119,6 @@
 `[정보용: 사람이 읽는 메모. 에이전트는 각자 필요한 참조를 직접 호출]`
 
 - **ECC 룰:** `~/.claude/rules/ecc/` — 언어 일반 코딩/테스트/보안 표준(항상 로드).
-- **superpowers 스킬(참조, 복사 아님):** developer→`test-driven-development`, completion-auditor→`verification-before-completion`, clarifier→`brainstorming`, planner→`writing-plans`, reviewer→`requesting-code-review`/`receiving-code-review`, 디버깅→`systematic-debugging`.
-- **claude-mem:** 세션 히스토리 자동 캡처 + 검색. planner/clarifier가 착수 전 "전에 이거 풀었나" 검색.
+- **superpowers 스킬(참조, 복사 아님):** developer→`test-driven-development`·`receiving-code-review`, completion-auditor→`verification-before-completion`, clarifier→`brainstorming`, 디버깅→`systematic-debugging`. (계획·검수는 ECC 참조 에이전트 — `writing-plans`·`requesting-code-review`의 요지는 오케스트레이터 dispatch 계약이 대신 강제.)
+- **claude-mem:** 세션 히스토리 자동 캡처 + 검색. ecc:planner·clarifier가 착수 전 "전에 이거 풀었나" 검색.
 - **파일 메모리:** 하중지지 사실(핵심 규칙·확정 결정·로드맵)은 `~/.claude/projects/<proj>/memory/`(항상 로드). 이 프로필도 하중지지 사실이다.

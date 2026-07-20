@@ -52,7 +52,7 @@
 
 ## 5. 경계면 맵 (boundaries)
 
-- **서버 API 응답 ↔ socket.io payload ↔ React 훅/컴포넌트** — 공유 계약: `src/shared/types.ts`. reviewer는 서버 emit/응답과 이를 소비하는 훅을 **동시에 열어** shape을 교차 비교한다.
+- **서버 API 응답 ↔ socket.io payload ↔ React 훅/컴포넌트** — 공유 계약: `src/shared/types.ts`. ecc:code-reviewer는 서버 emit/응답과 이를 소비하는 훅을 **동시에 열어** shape을 교차 비교한다.
 
 ---
 
@@ -86,7 +86,7 @@
 ## 9. 참고 — 전역 의존
 
 - **ECC 룰:** `~/.claude/rules/ecc/`(web/typescript 룰셋).
-- **superpowers:** developer→`test-driven-development`, completion-auditor→`verification-before-completion`, clarifier→`brainstorming`, planner→`writing-plans`, reviewer→`requesting-code-review`/`receiving-code-review`, 디버깅→`systematic-debugging`.
+- **superpowers:** developer→`test-driven-development`·`receiving-code-review`, completion-auditor→`verification-before-completion`, clarifier→`brainstorming`, 디버깅→`systematic-debugging`. (계획·검수는 ECC 참조 에이전트 — `writing-plans`·`requesting-code-review`의 요지는 오케스트레이터 dispatch 계약이 대신 강제.)
 - **claude-mem:** 자동 캡처+검색.
 - **파일 메모리:** `~/.claude/projects/-Users-kty-Downloads-chat/memory/`(always-ask 규칙, 리팩터 로드맵, data 레이아웃 결정, SOLID 원칙).
 

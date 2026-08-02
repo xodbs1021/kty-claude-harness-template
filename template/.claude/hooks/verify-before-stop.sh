@@ -18,7 +18,7 @@ stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 
 # (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
 #     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
-if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ]; then
+if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$VAULT_FLAG" ]; then
   rm -f "$BLOCK_COUNT" 2>/dev/null
   exit 0
 fi
@@ -31,8 +31,8 @@ fi
 [ -z "$count" ] && count=0
 
 if [ "$count" -ge "$MAX_BLOCKS" ]; then
-  changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
-  rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$BLOCK_COUNT" 2>/dev/null
+  changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+  rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$BLOCK_COUNT" 2>/dev/null
   printf '{"systemMessage":"[완료 게이트] %s회 차단 후에도 미해결이라 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
     "$MAX_BLOCKS" "$changed"
   exit 0
@@ -117,7 +117,31 @@ if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
   bump_and_block
 fi
 
-# (5) 타입체크는 통과했지만 감사자가 아직 안 돌았다.
+# (5) 볼트(second brain) 반영 게이트 — 감사보다 먼저 강제한다 (감사자가 반영 결과를 검증하도록).
+#     결정·설계·개발작업이 나온 턴은 볼트 Projects/<name>/ 4종 세트 반영 없이 끝낼 수 없다.
+#     (2026-08-02 kty — 산문 Auto-Save 규칙이 세션 내내 0회 이행된 실사고의 기계화)
+if [ -s "$VAULT_FLAG" ] && ! hook_disabled "stop:vault"; then
+  {
+    echo "[완료 차단] 볼트(second brain) 반영 미확인 — 지식 반영 없이 끝낼 수 없습니다."
+    echo
+    echo "이 턴에서 바뀐 코드/설정:"
+    sed 's/^/  - /' "$VAULT_FLAG" 2>/dev/null
+    echo
+    echo "해야 할 일:"
+    echo "  1. 볼트 _CLAUDE.md 를 **전문** 읽는다 (부분 독해 금지 — head -N 사고 전례 있음)."
+    echo "  2. 이번 턴에 결정·설계·개발작업이 있으면 볼트 Projects/<name>/ 4종 세트"
+    echo "     (discussion-log + decisions/ADR + architecture + index)로 반영·커밋하고 해시를 확보한다."
+    echo "     raw 산출물(설계 전문 등)은 specs/ 에 보존한다 — raw와 요약 둘 다다."
+    echo "  3. 반영할 지식이 없으면(순수 버그픽스·기계적 수정) 불요 사유를 _workspace/progress.md 에 기록한다."
+    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f .claude/.needs-vault"
+    echo "     completion-auditor 가 커밋 해시·파일 실존(또는 불요 사유의 타당성)을 검증한다."
+    echo
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:vault"
+  } >&2
+  bump_and_block
+fi
+
+# (6) 타입체크는 통과했지만 감사자가 아직 안 돌았다.
 {
   echo "[완료 차단] completion-auditor 미실행 — '완료'라고 말할 수 없습니다."
   echo

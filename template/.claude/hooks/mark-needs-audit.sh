@@ -29,11 +29,13 @@ case "$rel" in
 esac
 
 mkdir -p "$STATE_DIR" 2>/dev/null
-# 두 완료 게이트를 동시에 세운다:
+# 세 완료 게이트를 동시에 세운다:
 #   .needs-audit   → completion-auditor 강제 (Phase 6)
 #   .needs-explain → change-explainer 강제 (Phase 5)
-# 둘 다 해당 에이전트가 실제로 돈 뒤에만 각자 수동으로 지워진다. Stop 훅이 둘 다 본다.
-for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG"; do
+#   .needs-vault   → 볼트(second brain) 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
+#                    세션 내내 볼트 Auto-Save가 기억에만 의존해 0회 이행된 실사고의 재발 방지)
+# 각 게이트는 해당 작업이 실제로 끝난 뒤에만 수동으로 지워진다. Stop 훅이 셋 다 본다.
+for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG"; do
   if ! grep -qxF "$rel" "$flag" 2>/dev/null; then
     printf '%s\n' "$rel" >> "$flag" 2>/dev/null
   fi

@@ -11,9 +11,11 @@ EXPLAIN_FLAG="$STATE_DIR/.needs-explain"
 VAULT_FLAG="$STATE_DIR/.needs-vault"
 DUALREVIEW_FLAG="$STATE_DIR/.needs-dualreview"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"
+BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플래그 상태) — 진전 인지 리셋용
 
-# Stop 훅이 같은 턴을 최대 몇 번까지 막을 수 있는가. 소진되면 통과시킨다(세션 벽돌 방지).
-# 정상 흐름은 1회 차단(감사자 호출)이므로 타입체크 실패용 여유가 2회 남는다.
+# Stop 훅이 "같은 지점에서 진전 없이" 최대 몇 번까지 막을 수 있는가. 소진되면 통과시킨다
+# (세션 벽돌 방지). 차단 지문이 바뀌면(=게이트를 하나 지웠으면) 카운터는 리셋되므로,
+# 게이트 개수가 늘어도 이 상수를 올릴 필요가 없다.
 MAX_BLOCKS=3
 
 # 탈출구.

@@ -130,7 +130,7 @@ codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort="high" "
 
 사용자에게 "완료"라고 보고하기 **직전**, `completion-auditor`가 모든 완료 주장을 1차 증거로 재검증한다 — 파일 실존·커밋 존재(push≠커밋)·PR 상태·테스트 실제 실행·실제 동작 관찰·**운영 반영 여부(§6)**. 반증이 하나라도 나오면 "완료"라 말하지 않고, 무엇이 실제로 됐고 안 됐는지 정확히 보고한 뒤 해당 주체로 되돌린다.
 
-**이 게이트는 산문이 아니라 훅으로 강제된다** (`.claude/settings.json`). 코드/설정을 편집하면 `.claude/.needs-audit`·`.needs-explain`·`.needs-vault` 플래그가 서고, Stop 훅이 타입체크(§3, `harness.env`) + 설명 + **볼트 반영** + 감사 없이는 턴 종료를 막는다(rc=2). 감사자가 검증을 통과시킨 **뒤에만** `rm -f .claude/.needs-audit` — 감사 없이 플래그만 지우는 것은 게이트 무력화다. 한 턴 최대 3회 차단 후 벽돌 방지 통과되며, 그때는 완료 주장을 신뢰하지 말 것.
+**이 게이트는 산문이 아니라 훅으로 강제된다** (`.claude/settings.json`). 코드/설정을 편집하면 `.claude/.needs-audit`·`.needs-explain`·`.needs-vault` 플래그가 서고, Stop 훅이 타입체크(§3, `harness.env`) + 설명 + **볼트 반영** + 감사 없이는 턴 종료를 막는다(rc=2). 감사자가 검증을 통과시킨 **뒤에만** `rm -f .claude/.needs-audit` — 감사 없이 플래그만 지우는 것은 게이트 무력화다. 같은 지점에서 진전 없이 3회 차단되면 벽돌 방지 통과되며(게이트를 지울 때마다 카운터 리셋), 그때는 완료 주장을 신뢰하지 말 것.
 
 **볼트(second brain) 반영 게이트 (2026-08-02 kty 확정 — 실사고 재발 방지):** 결정·설계·개발작업이 나온 턴은 종료 전에 볼트 `Projects/<name>/` **4종 세트**(discussion-log + decisions/ADR + architecture + index)에 반영하고, raw 산출물(설계 전문 등)은 `specs/`에 보존한다 — **raw와 요약 둘 다**. 반영할 지식이 없으면 불요 사유를 progress.md에 기록. 절차: ① 볼트 `_CLAUDE.md` **전문** 읽기(부분 독해 금지 — head -N 사고 전례) ② 반영·커밋(볼트 자체 pre-commit 훅이 4종 세트를 재검증) ③ `rm -f .claude/.needs-vault`. **completion-auditor 검증 항목에 포함**: 볼트 커밋 해시·파일 실존을 1차 증거로 확인, 불요 판정이면 사유 타당성 심사. 캐논 정의는 볼트 `_CLAUDE.md`가 정본(팀 위키 반영은 kty 명시 지시 시에만 — 볼트 규칙 준수).
 

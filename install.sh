@@ -30,12 +30,19 @@ echo "   대상:   $DST"
 # ── 1) 글루 복사 (덮어씀) ─────────────────────────────────────────────
 mkdir -p "$DST/agents" "$DST/skills" "$DST/hooks" "$DST/harness"
 cp "$SRC/agents/"*.md "$DST/agents/"
-mkdir -p "$DST/skills/harness-orchestrator"
-cp "$SRC/skills/harness-orchestrator/SKILL.md" "$DST/skills/harness-orchestrator/"
+# 스킬은 디렉토리째 전부 복사한다(references/·scripts/ 포함) — 특정 스킬명·특정 파일만
+# 복사하는 하드코딩은 readable-writing 미배포 버그(2026-08-03 점검)를 낳았다
+skill_count=0
+for skill_dir in "$SRC/skills/"*/; do
+  skill_name="$(basename "$skill_dir")"
+  mkdir -p "$DST/skills/$skill_name"
+  cp -R "$skill_dir"/. "$DST/skills/$skill_name/"
+  skill_count=$((skill_count + 1))
+done
 cp "$SRC/hooks/"*.sh "$DST/hooks/"
 chmod +x "$DST/hooks/"*.sh
 cp "$SRC/harness/principles.md" "$DST/harness/"
-echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 오케스트레이터 · 훅 4 · 제0원칙"
+echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 4 · 제0원칙"
 
 # ── 1b) 전역 에이전트 배포 (~/.claude/agents/ — 프로젝트 무관 글루, 덮어씀) ──
 # 정본은 이 repo의 global-agents/ (전역 디렉토리는 버전 관리가 안 되므로 — ADR-0002)
@@ -80,16 +87,27 @@ added = 0
 for event, entries in ours.get("hooks", {}).items():
     lst = hooks.setdefault(event, [])
     existing_cmds = {
-        h.get("command")
+        (entry.get("matcher"), h.get("command"))
         for entry in lst
         for h in entry.get("hooks", [])
     }
     for entry in entries:
-        cmds = [h.get("command") for h in entry.get("hooks", [])]
-        if any(c in existing_cmds for c in cmds):
-            continue  # 이미 배선됨 (멱등)
-        lst.append(entry)
-        added += 1
+        # (matcher, command) 단위 병합 — "항목에 하나라도 있으면 전체 스킵"은 같은 항목에 묶인
+        # 새 훅(guard-codex-invocation)이 기존 설치본에 영영 배선되지 않는 버그였고(2026-08-03),
+        # command만 보면 엉뚱한 matcher에 붙은 훅을 "배선됨"으로 오인한다([cx] 지적).
+        missing = [h for h in entry.get("hooks", [])
+                   if (entry.get("matcher"), h.get("command")) not in existing_cmds]
+        if not missing:
+            continue  # 전부 배선됨 (멱등)
+        target = next((e for e in lst if e.get("matcher") == entry.get("matcher")), None)
+        if target is not None:
+            target.setdefault("hooks", []).extend(missing)
+        else:
+            new_entry = {k: v for k, v in entry.items() if k != "hooks"}
+            new_entry["hooks"] = missing
+            lst.append(new_entry)
+        added += len(missing)
+        existing_cmds.update((entry.get("matcher"), h.get("command")) for h in missing)
 with open(dst_path, "w") as f:
     json.dump(cur, f, ensure_ascii=False, indent=2)
     f.write("\n")

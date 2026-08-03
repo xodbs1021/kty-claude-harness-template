@@ -19,7 +19,8 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
    - `_workspace/` 존재 + 새 입력 → **새 실행** (기존을 `_workspace_prev/`로 이동)
    - `_workspace/` 미존재 → **초기 실행**
 2. **프로필·원칙 로드(오케스트레이터가 직접 1회 Read):** `.claude/harness/project-profile.md` + `.claude/harness/principles.md`. 이후 각 에이전트 dispatch 시 아래 주입 규칙대로 **해당 섹션 전문을 Task 프롬프트에 동봉**한다 — 에이전트가 "읽으러 갈지"를 선택에 맡기지 않는다.
-3. **과거 기억 검색(초기 실행 시 1회):** `claude-mem:mem-search` 스킬을 호출해 "전에 이 문제/유사 요청을 풀었나"를 검색(search→timeline→get_observations 3층 워크플로우). 관련 결과가 있으면 clarifier·ecc:planner 프롬프트에 요약 동봉. (claude-mem은 2세션째부터 자동 주입도 하므로, 명시 검색은 착수 시 1회면 충분.) 검색 결과에 하중지지 사실(확정 결정·규칙)이 있으면 파일 메모리로 승격을 제안한다.
+3. **정본 드리프트 확인(초기 실행 시 1회):** 이 스킬·훅이 템플릿 정본(kty-claude-harness-template)과 다르면 — 특히 "듀얼 리뷰 규칙" 절이나 `guard-codex-invocation.sh`가 없으면 — 작업 전에 `sync.sh <프로젝트>`부터 실행한다. 근거: 2026-08-03 POK-30에서 sync 누락으로 구버전 스킬(Phase 3만 codex)을 따라 설계 단계 듀얼 리뷰가 생략된 실사고.
+4. **과거 기억 검색(초기 실행 시 1회):** `claude-mem:mem-search` 스킬을 호출해 "전에 이 문제/유사 요청을 풀었나"를 검색(search→timeline→get_observations 3층 워크플로우). 관련 결과가 있으면 clarifier·ecc:planner 프롬프트에 요약 동봉. (claude-mem은 2세션째부터 자동 주입도 하므로, 명시 검색은 착수 시 1회면 충분.) 검색 결과에 하중지지 사실(확정 결정·규칙)이 있으면 파일 메모리로 승격을 제안한다.
 
 ### 프로필 주입 규칙 (에이전트 → 동봉 섹션)
 
@@ -63,6 +64,7 @@ codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort="high" "
 - 통합 시 모든 지적에 출처 태그: **`[cc]`**(Claude 리뷰어) / **`[cx]`**(Codex) / **`[cc·cx]`**(둘 다 = 신뢰도 높음, 우선 처리). 심각도 규칙은 출처 무관 동일(CRITICAL/HIGH = 차단, 어느 쪽이 잡았든).
 - 판정 충돌 시(한쪽 승인·한쪽 보류): **보류가 이긴다.** 단 보류 사유가 사실 오인이면 오케스트레이터가 근거를 명시하고 기각 가능(기각 사유는 산출물에 기록).
 - codex 미설치·미인증·호출 실패면 해당 게이트를 Claude 단독으로 진행하되 보고에 "듀얼 리뷰 생략(codex 실패)"을 명시 — 조용한 성공 위장 금지.
+- **기계 강제 (2026-08-03 kty — 산문 규정만으로는 sync 누락 시 무력해진 실사고의 재발 방지):** `_workspace/00_design*.md`·`01_plan*.md` 저장과 모든 코드 편집은 `mark-needs-audit.sh` 훅이 `.claude/.needs-dualreview` 플래그를 세우고, Stop 훅(`stop:dualreview`)이 codex 리뷰 산출물(`_workspace/*codex*.md`) 저장·`[cc]`/`[cx]` 통합 없이는 턴 종료를 차단한다. 리뷰 없이 플래그만 지우는 것은 게이트 무력화다.
 
 ## 사용자 보고 블록 규칙 (2026-08-01 사용자 확정)
 

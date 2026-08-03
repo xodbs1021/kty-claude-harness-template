@@ -18,7 +18,7 @@ stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 
 # (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
 #     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
-if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$VAULT_FLAG" ]; then
+if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$VAULT_FLAG" ] && [ ! -s "$DUALREVIEW_FLAG" ]; then
   rm -f "$BLOCK_COUNT" 2>/dev/null
   exit 0
 fi
@@ -31,8 +31,8 @@ fi
 [ -z "$count" ] && count=0
 
 if [ "$count" -ge "$MAX_BLOCKS" ]; then
-  changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
-  rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$BLOCK_COUNT" 2>/dev/null
+  changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+  rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" 2>/dev/null
   printf '{"systemMessage":"[완료 게이트] %s회 차단 후에도 미해결이라 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
     "$MAX_BLOCKS" "$changed"
   exit 0
@@ -94,6 +94,28 @@ else
     } >&2
     bump_and_block
   fi
+fi
+
+# (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
+#      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
+#      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
+if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
+  {
+    echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
+    echo
+    echo "이 턴의 듀얼 리뷰 대상:"
+    sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+    echo
+    echo "해야 할 일:"
+    echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
+    echo "  2. 결과를 _workspace/ 에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
+    echo "  3. 그 뒤에만:  rm -f .claude/.needs-dualreview"
+    echo "     codex 미설치·호출 실패면 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을 명시한 뒤에 지운다."
+    echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+    echo
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
+  } >&2
+  bump_and_block
 fi
 
 # (4) change-explainer 게이트 (Phase 5) — 감사자보다 먼저 강제한다.

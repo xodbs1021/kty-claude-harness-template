@@ -46,7 +46,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 | 층 | 무엇 | 갱신 주체 |
 |---|---|---|
 | **참조** (복사 안 함, 전역 1회 설치) | ECC 룰(코딩/테스트/보안 표준) · superpowers(방법론 스킬) · claude-mem(세션 기억 자동 캡처+검색) · find-skills(스킬 생태계 검색 — 진화 시 "만들기 전에 찾는다") | 각 시스템이 업데이트되면 모든 프로젝트에서 즉시 최신 |
-| **글루** (이 repo 소유, install 시 복사) | 자체 에이전트 8 · 스킬 2(harness-orchestrator·readable-writing — 후자는 현행 install이 아직 복사하지 않음, §7 버그) · 강제 훅 4(커밋 가드·codex 규율 가드·게이트 플래그·Stop 게이트) · 제0원칙 (설계·계획·검수·보안검수 4역할은 ECC 에이전트 **참조** — dispatch 계약으로 호출 · 테스트품질 ecc:pr-test-analyzer는 조건부 `[tq]` 참조) | 이 repo에서 개선 → `sync.sh`로 프로젝트에 전파 |
+| **글루** (이 repo 소유, install 시 복사) | 자체 에이전트 8 · 스킬 2(harness-orchestrator·readable-writing) · 강제 훅 4(커밋 가드·codex 규율 가드·게이트 플래그·Stop 게이트) · 제0원칙 (설계·계획·검수·보안검수 4역할은 ECC 에이전트 **참조** — dispatch 계약으로 호출 · 테스트품질 ecc:pr-test-analyzer는 조건부 `[tq]` 참조) | 이 repo에서 개선 → `sync.sh`로 프로젝트에 전파 |
 | **전역 글루** (이 repo `global-agents/` 소유, install/sync 시 `~/.claude/agents/`로 배포) | 프로젝트 무관 전역 에이전트 — research-collector(수집 [rc]) · research-evaluator(독립 평가 [re]). 정본이 repo인 이유: 전역 디렉토리는 버전 관리가 안 된다 ([ADR-0002](docs/decisions/2026-07-20-global-agents-layer.md)) | 이 repo에서 개선 → install/sync가 전역 갱신 |
 | **슬롯** (프로젝트 소유, 절대 안 덮음) | `project-profile.md`(도메인 전부: 스택·검증·불변식·경계면·운영·vcs·예시) · `harness.env`(타입체크 명령) | 사용자 |
 
@@ -87,7 +87,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 리서치 수집/평가처럼 프로젝트 무관 에이전트는 프로젝트 글루로도, 전역 직접 작성으로도 안 맞는다(전자는 용도 불일치, 후자는 버전 관리 불가). `global-agents/`를 정본으로 install/sync가 전역 배포한다. reporter 에이전트는 기각 — evaluator 분리의 가치는 독립성이지만 보고서의 가치는 사용자 맥락이고 그것은 메인 세션에 있다. 상세: [ADR-0002](docs/decisions/2026-07-20-global-agents-layer.md).
 
 **⑪ 모든 검증 게이트는 이종(異種) 듀얼 — Claude + Codex (2026-08-01 사용자 확정)**
-대안: Claude 리뷰어 단독. → 같은 모델은 생성자와 맹점을 공유한다 — 실제로 Claude 단독 검수가 놓친 CRITICAL을 codex가 적발했다(2026-08-03 POK-30). 계획검증·검수·PR점검 전 게이트에 codex를 병렬 투입하고 `[cc]`/`[cx]`/`[cc·cx]` 태그로 통합, 판정 충돌 시 보류 우선. 모델(`gpt-5.6-sol`)·effort(`high`)는 하드코딩 — "작업이 작다/비용" 사유의 임의 하향 실사고(2026-08-01)를 `guard-codex-invocation.sh`(PreToolUse)가 규정 형태(`codex exec --…`) 호출에 대해 기계 차단한다(매처 밖 변형 호출은 못 잡음 — §7). 규정 자체도 기계화했다: 설계·계획 산출물 저장과 코드 편집이 `.needs-dualreview`를 세우고, Stop 훅이 이 플래그가 서 있는 한 종료를 막는다 — 플래그는 codex 리뷰 산출물(`_workspace/*codex*.md`) 저장·`[cc]`/`[cx]` 통합 후에만 지우는 규율이다(훅은 플래그만 보므로 산출물 실존 검증은 감사자 몫) — sync 누락으로 구버전 스킬이 듀얼 리뷰를 조용히 생략한 실사고(2026-08-03)의 재발 방지. 같은 사고에서 오케스트레이터 Phase 0의 정본 드리프트 확인(스킬·훅이 정본과 다르면 작업 전 sync 먼저)도 나왔다.
+대안: Claude 리뷰어 단독. → 같은 모델은 생성자와 맹점을 공유한다 — 실제로 Claude 단독 검수가 놓친 CRITICAL을 codex가 적발했다(2026-08-03 POK-30). 계획검증·검수·PR점검 전 게이트에 codex를 병렬 투입하고 `[cc]`/`[cx]`/`[cc·cx]` 태그로 통합, 판정 충돌 시 보류 우선. 모델(`gpt-5.6-sol`)·effort(`high`)는 하드코딩 — "작업이 작다/비용" 사유의 임의 하향 실사고(2026-08-01)를 `guard-codex-invocation.sh`(PreToolUse)가 명령 위치의 `codex exec` 호출을 기계 차단한다(커밋 메시지·문서 속 문자열은 오탐 제외). 규정 자체도 기계화했다: 설계·계획 산출물 저장과 코드 편집이 `.needs-dualreview`를 세우고, Stop 훅이 이 플래그가 서 있는 한 종료를 막는다 — 플래그는 codex 리뷰 산출물(`_workspace/*codex*.md`) 저장·`[cc]`/`[cx]` 통합 후에만 지우는 규율이다(훅은 플래그만 보므로 산출물 실존 검증은 감사자 몫) — sync 누락으로 구버전 스킬이 듀얼 리뷰를 조용히 생략한 실사고(2026-08-03)의 재발 방지. 같은 사고에서 오케스트레이터 Phase 0의 정본 드리프트 확인(스킬·훅이 정본과 다르면 작업 전 sync 먼저)도 나왔다.
 
 **⑫ 지식 반영도 완료 조건 — 볼트 게이트 (2026-08-02 사용자 확정)**
 대안: "세션 끝나면 second brain 볼트에 정리해라" 산문 규칙. → 세션 내내 0회 이행된 실사고. 코드·설정이 바뀐 턴은 볼트 `Projects/<name>/` 4종 세트(discussion-log·decisions/ADR·architecture·index) 반영 또는 불요 사유 기록 없이 종료 불가(`.needs-vault` + Stop 훅 `stop:vault`). completion-auditor가 볼트 커밋 해시·파일 실존을 1차 증거로 검증한다 — 코드가 끝나도 지식이 볼트에 없으면 완료가 아니다.
@@ -171,13 +171,8 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 - **스킬 자동 트리거는 세션 스냅샷 의존** — 설치 세션에는 발화하지 않음. 새 세션 1회로 확인 필요.
 - **opus 전원 배치 + 검증 게이트마다 codex high는 비싸다** — 품질 우선의 의도된 선택(하향은 사용자 승인으로만). clarifier·change-explainer는 sonnet으로 낮춰도 손실이 작을 수 있는 후보(실사용 관찰 후 결정).
 
-**발견된 버그 (2026-08-03 구조 점검 [cc] + codex 교차 검증 [cx]에서 발견 — 착수 대상):**
-- `[cc]` `install.sh`/`sync.sh`가 `skills/readable-writing/`을 복사하지 않는다 — 오케스트레이터의 사용자 보고 블록이 이 스킬을 참조하는데, 프로젝트에는 harness-orchestrator만 배포됨.
-- `[cx]` settings.json 병합이 "항목 내 명령 하나라도 이미 있으면 항목 전체 스킵"이라, 기존 설치본(guard-master-commit 보유)에 같은 PreToolUse 항목으로 묶인 guard-codex-invocation이 **sync로 배선되지 않는다** — 정본 드리프트 복구 경로의 구멍.
-- `[cx]` guard-codex-invocation 매처가 `codex exec --…` 형태만 검사 — `codex exec -m … <프롬프트>`처럼 매처를 벗어난 변형 호출은 미달 모델이어도 통과. 결정론적 차단의 커버리지 한계.
-- `[cc·cx]` `docs/usage.md`가 2026-07-20 시점 스냅샷 — 훅 표에 guard-codex-invocation 누락, 탈출구 목록에 `stop:vault`·`stop:dualreview` 누락, Stop 게이트 순서(타입체크→듀얼리뷰→설명→볼트→감사) 미반영, 듀얼 리뷰가 "Phase 3만"으로 기술됨.
-
 **개선 후보 (관찰되면 착수, 선제 금지 — YAGNI):**
+- `[cx]` Stop 게이트가 4종으로 늘었는데 벽돌 방지 카운터는 MAX_BLOCKS=3 공유 — 게이트를 하나씩 순차 처리하면 감사 게이트 전에 카운터가 소진돼 completion-auditor 없이 통과될 수 있다. MAX_BLOCKS 상향 또는 게이트별 카운터 검토.
 - `HARNESS_TYPECHECK_CMD`가 프로필 §3과 harness.env 두 곳에 기입됨 — SSOT 위반. harness.env를 기계 정본으로, §3은 참조 표기로 정리.
 - 프로필 신선도 가드 — 검수자/감사자가 "프로필 §2 맵이 현실과 다름"을 발견하면 프로필 갱신을 지적하는 한 줄.
 - 조건부 전문가 확장 — performance-reviewer·a11y-reviewer 등은 해당 필요가 실제로 관찰되면 ecc:security-reviewer와 같은 틀로 추가(자체 제작 전에 생태계 검색).

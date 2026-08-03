@@ -2,9 +2,11 @@
 # Stop: 코드를 건드린 턴은 (1) 타입체크 통과 (2) change-explainer 실행
 #       (3) completion-auditor 실행 없이는 끝낼 수 없다.
 #
-# 무한루프 가드: 같은 턴을 MAX_BLOCKS(3)회까지만 막는다. 소진되면 플래그를
-# 지우고 통과시키되 사용자에게 큰 경고를 띄운다. 세션이 벽돌이 되는 것보다
-# 낫다. 카운터 파일을 못 쓰는 환경이면 stop_hook_active 로 폴백한다.
+# 무한루프 가드: "같은 지점에서 진전 없이" MAX_BLOCKS(3)회까지만 막는다.
+# 게이트를 하나 지울 때마다(차단 지문 변화) 카운터가 리셋되므로 순차 처리로는
+# 소진되지 않는다. 소진되면 플래그를 지우고 통과시키되 사용자에게 큰 경고를
+# 띄운다. 세션이 벽돌이 되는 것보다 낫다. 지문 파일을 못 쓰면 리셋 없는 구식
+# 누적으로, 카운터 파일도 못 쓰면 stop_hook_active 로 폴백한다.
 
 set -uo pipefail
 # shellcheck source=_common.sh
@@ -19,24 +21,48 @@ stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 # (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
 #     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
 if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$VAULT_FLAG" ] && [ ! -s "$DUALREVIEW_FLAG" ]; then
-  rm -f "$BLOCK_COUNT" 2>/dev/null
+  rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
   exit 0
 fi
 
-# (2) 카운터 확인 — 벽돌 방지
+# (2) 카운터 확인 — 벽돌 방지, 진전 인지 리셋 (2026-08-03 [cx] 지적 반영)
+# 카운터의 목적은 "갇힘 감지"이지 노력 예산이 아니다. 게이트가 4종으로 늘며 공유 카운터
+# 3회로는 게이트를 순서대로 성실히 처리해도 마지막 감사 게이트 전에 소진되는 역설이 있었다.
+# → 차단 지문(어느 게이트에서, 어떤 플래그 상태로 막혔나)이 지난 차단과 다르면 = 진전이면
+#   카운터를 리셋한다. 같은 지문으로 MAX_BLOCKS회 = 진짜 갇힘일 때만 경고와 통과.
 count=0
 if [ -f "$BLOCK_COUNT" ]; then
   count="$(tr -dc '0-9' < "$BLOCK_COUNT" 2>/dev/null)"
 fi
 [ -z "$count" ] && count=0
+prev_fp="$(cat "$BLOCK_FP" 2>/dev/null)"
+# 지문 = 서 있는 플래그의 집합(내용 아님). 내용을 넣으면 갇힌 채 새 파일만 편집해도
+# 리셋되고(무한 차단), cksum 충돌로 실제 진전이 리셋 안 될 수도 있다([cx] 지적).
+flags_fp=""
+[ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
+[ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
+[ -s "$VAULT_FLAG" ]      && flags_fp="${flags_fp}v"
+[ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
+new_fp=""
 
-if [ "$count" -ge "$MAX_BLOCKS" ]; then
-  changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
-  rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" 2>/dev/null
-  printf '{"systemMessage":"[완료 게이트] %s회 차단 후에도 미해결이라 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
-    "$MAX_BLOCKS" "$changed"
-  exit 0
-fi
+gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출력 전에 호출한다.
+  new_fp="$1|$flags_fp"
+  # 지문을 기록할 수 있을 때만 리셋한다 — 지문 파일을 못 쓰는 환경에서 리셋하면
+  # prev_fp가 영원히 비어 매번 1/3로 무한 차단된다([cx] 지적). 그 경우 리셋 없는
+  # 구식 누적으로 동작해 3회 후 통과가 보장된다.
+  if printf '%s\n' "$new_fp" > "$BLOCK_FP" 2>/dev/null; then
+    if [ "$new_fp" != "$prev_fp" ]; then
+      count=0   # 지난 차단과 다른 게이트/플래그 집합 = 진전 — 예산 리셋
+    fi
+  fi
+  if [ "$count" -ge "$MAX_BLOCKS" ]; then
+    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+    printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
+      "$1" "$MAX_BLOCKS" "$changed"
+    exit 0
+  fi
+}
 
 bump_and_block() {
   if ! printf '%s\n' "$((count + 1))" > "$BLOCK_COUNT" 2>/dev/null; then
@@ -82,6 +108,7 @@ else
     # 명령/도구 없음(rc=127)은 "타입 오류"가 아니다. 오탐 차단 방지 위해 생략.
     typecheck_note="타입체크 생략 (명령 실행 불가 rc=127): $TYPECHECK_CMD"
   elif [ "$tc_rc" -ne 0 ]; then
+    gate_budget "typecheck"
     {
       echo "[완료 차단] 타입체크 실패 — 지금은 '완료'가 아닙니다."
       echo
@@ -100,6 +127,7 @@ fi
 #      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
 #      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
 if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
+  gate_budget "dualreview"
   {
     echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
     echo
@@ -123,6 +151,7 @@ fi
 #     사용자용 설명을 낸 뒤에만 .needs-explain 을 지운다.
 #     (완료 감사와 별개로 이 게이트만 끄려면 ECC_DISABLED_HOOKS=stop:explain)
 if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
+  gate_budget "explain"
   {
     echo "[완료 차단] change-explainer 미실행 — 변경 설명 없이 끝낼 수 없습니다."
     echo
@@ -143,6 +172,7 @@ fi
 #     결정·설계·개발작업이 나온 턴은 볼트 Projects/<name>/ 4종 세트 반영 없이 끝낼 수 없다.
 #     (2026-08-02 kty — 산문 Auto-Save 규칙이 세션 내내 0회 이행된 실사고의 기계화)
 if [ -s "$VAULT_FLAG" ] && ! hook_disabled "stop:vault"; then
+  gate_budget "vault"
   {
     echo "[완료 차단] 볼트(second brain) 반영 미확인 — 지식 반영 없이 끝낼 수 없습니다."
     echo
@@ -164,6 +194,7 @@ if [ -s "$VAULT_FLAG" ] && ! hook_disabled "stop:vault"; then
 fi
 
 # (6) 타입체크는 통과했지만 감사자가 아직 안 돌았다.
+gate_budget "audit"
 {
   echo "[완료 차단] completion-auditor 미실행 — '완료'라고 말할 수 없습니다."
   echo

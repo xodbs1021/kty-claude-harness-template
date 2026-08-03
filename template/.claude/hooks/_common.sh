@@ -9,6 +9,7 @@ STATE_DIR="$PROJECT_DIR/.claude"
 AUDIT_FLAG="$STATE_DIR/.needs-audit"
 EXPLAIN_FLAG="$STATE_DIR/.needs-explain"
 VAULT_FLAG="$STATE_DIR/.needs-vault"
+DUALREVIEW_FLAG="$STATE_DIR/.needs-dualreview"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"
 
 # Stop 훅이 같은 턴을 최대 몇 번까지 막을 수 있는가. 소진되면 통과시킨다(세션 벽돌 방지).

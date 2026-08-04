@@ -14,3 +14,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh
+      - name: 완료 게이트 검사 범위 회귀 테스트
+        run: ./tests/mark-needs-audit.test.sh

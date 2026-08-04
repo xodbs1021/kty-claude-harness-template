@@ -23,40 +23,57 @@ COPIES=(
 MARK_START='rule:core:start'
 MARK_END='rule:core:end'
 
-# extract <파일> — 마커 사이 본문만 출력. 여는·닫는 마커가 짝으로 없으면 종료 코드 1.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# extract <파일> <출력파일> — 마커 사이 본문을 파일로 뽑는다.
+# 마커가 **정확히 한 쌍**이 아니면 종료 코드 1.
+#
+# 왜 개수를 세나 (codex 리뷰 지적): "닫힌 적이 있으면 통과"로 두면, 사본에 블록을 두 개
+# 두고 사이에 다른 내용을 끼웠을 때 두 블록만 이어붙여 비교하고 중간을 무시한 채
+# 통과한다. 어긋난 사본을 통과시키는 위음성이라 이 검사기의 존재 이유가 사라진다.
+#
+# 왜 변수가 아니라 파일에 담나 (codex 리뷰 지적): 명령 치환 `$(...)`은 후행 개행을 전부
+# 먹는다. 사본 끝에 빈 줄을 넣으면 내용이 다른데도 같다고 판정된다. 파일로 받아
+# cmp 로 바이트 단위 비교한다.
+#
 # index() 부분 일치라서 마커 줄에 설명을 덧붙여도 계속 잡힌다.
 extract() {
   awk -v s="$MARK_START" -v e="$MARK_END" '
-    index($0, s) { inblock = 1; next }
-    index($0, e) { inblock = 0; closed = 1; next }
+    index($0, s) { starts++; inblock = 1; next }
+    index($0, e) { ends++;   inblock = 0; next }
     inblock      { print }
-    END          { exit(closed ? 0 : 1) }
-  ' "$1"
+    END          { exit((starts == 1 && ends == 1) ? 0 : 1) }
+  ' "$1" > "$2"
 }
 
 rel() { echo "${1#"$ROOT"/}"; }
 
-if ! canon="$(extract "$CANON")"; then
-  echo "✗ 정본에 rule:core 마커가 없거나 짝이 안 맞음: $(rel "$CANON")" >&2
+canon_f="$WORK/canon"
+if ! extract "$CANON" "$canon_f"; then
+  echo "✗ 정본의 rule:core 마커가 없거나 정확히 한 쌍이 아님: $(rel "$CANON")" >&2
   exit 1
 fi
 
-if [ -z "$canon" ]; then
+if [ ! -s "$canon_f" ]; then
   echo "✗ 정본의 rule:core 블록이 비어 있음: $(rel "$CANON")" >&2
   exit 1
 fi
 
 fail=0
+i=0
 for copy_file in "${COPIES[@]}"; do
-  if ! copy="$(extract "$copy_file")"; then
-    echo "✗ 사본에 rule:core 마커가 없거나 짝이 안 맞음: $(rel "$copy_file")" >&2
+  i=$((i + 1))
+  copy_f="$WORK/copy.$i"
+  if ! extract "$copy_file" "$copy_f"; then
+    echo "✗ 사본의 rule:core 마커가 없거나 정확히 한 쌍이 아님: $(rel "$copy_file")" >&2
     fail=1
     continue
   fi
 
-  if [ "$copy" != "$canon" ]; then
+  if ! cmp -s "$canon_f" "$copy_f"; then
     echo "✗ 정본과 어긋남: $(rel "$copy_file")" >&2
-    diff <(printf '%s\n' "$canon") <(printf '%s\n' "$copy") | sed 's/^/    /' >&2 || true
+    diff "$canon_f" "$copy_f" | sed 's/^/    /' >&2 || true
     fail=1
   fi
 done

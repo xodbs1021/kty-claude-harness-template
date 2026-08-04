@@ -75,3 +75,19 @@ cd ~/.claude/harness-template
 ## 7. 하네스 진화
 
 에이전트/스킬 수정·추가는 이 repo(정본)에서 하고 커밋 → 각 프로젝트에 `sync.sh`. 구조 변경이 크면 `harness` 메타 스킬(운영/유지보수 워크플로우)을 사용. 변경 이력은 각 프로젝트 CLAUDE.md의 변경 이력 표에 기록.
+
+### 제0원칙 판정 기준을 고칠 때
+
+판정 기준(`principles.md`의 `rule:core` 블록)은 판정자 에이전트가 **자기 정의 안에 사본으로** 들고 있다. 참조만 두면 에이전트가 그 파일을 읽는다는 보장이 없어서다. 그래서 고치는 순서가 정해져 있다.
+
+1. 정본 `template/.claude/harness/principles.md`의 `rule:core` 블록을 고친다.
+2. 사본(`template/.claude/agents/plan-reviewer.md` 점검 항목 7)에 **그대로 복사**한다.
+3. 검사한다.
+
+```bash
+./scripts/check-rule-copies.sh
+```
+
+어긋나면 종료 코드 1과 함께 diff가 나오고, CI(`.github/workflows/check-rules.yml`)가 PR을 막는다. 마커 **밖**의 문맥별 설명은 동기화 대상이 아니니 파일마다 자유롭게 써도 된다 — 판정 기준만 동기화한다.
+
+판정자를 새로 추가해 사본이 늘면 `scripts/check-rule-copies.sh`의 `COPIES` 배열에 경로 한 줄을 추가한다.

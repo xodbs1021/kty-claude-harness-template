@@ -2,6 +2,9 @@
 # 사본이 낡아도 아무것도 안 깨지던 상태가 이 저장소의 유일한 조용한 실패였다.
 name: check-rules
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]

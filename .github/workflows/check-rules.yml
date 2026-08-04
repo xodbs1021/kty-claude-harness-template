@@ -1,0 +1,16 @@
+# 규칙 정본과 판정자 사본이 어긋난 채로 머지되는 걸 막는다.
+# 사본이 낡아도 아무것도 안 깨지던 상태가 이 저장소의 유일한 조용한 실패였다.
+name: check-rules
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rule-copies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 규칙 사본 동기화 검사
+        run: ./scripts/check-rule-copies.sh

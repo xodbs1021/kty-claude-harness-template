@@ -144,6 +144,8 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 ├── README.md                                  # 이 문서 (구성 + 왜)
 ├── install.sh                                 # 인스턴스화 (글루 복사 + 슬롯 스캐폴드 + 병합)
 ├── sync.sh                                    # 글루만 갱신 (pull + diff 미리보기, 슬롯 불변)
+├── scripts/check-rule-copies.sh               # 판정 기준 정본↔사본 대조 (어긋나면 exit 1)
+├── .github/workflows/check-rules.yml          #   위 검사를 PR에서 강제
 ├── template/
 │   ├── CLAUDE.md.snippet                       # 프로젝트 CLAUDE.md에 붙는 포인터
 │   └── .claude/

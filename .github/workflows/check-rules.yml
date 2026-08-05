@@ -16,6 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 이 워크스페이스에서 PR 이 작성한 셸 스크립트를 실행한다 —
+          # .git/config 에 토큰을 남기지 않는다.
+          persist-credentials: false
       - name: 검사기 회귀 테스트
         run: ./tests/check-rule-copies.test.sh
       - name: 규칙 사본 동기화 검사

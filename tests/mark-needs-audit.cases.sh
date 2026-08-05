@@ -615,17 +615,23 @@ case_63() { # _workspace/* 스킵이 장식이 아님을 고정한다. 그 줄�
   check_case '63 프로젝트 안 _workspace/scratch.sh → 스킵' 0 none ''
 }
 
-case_64() { # **의도된 오탐**의 명문화. classify 의 .claude/* 제외는 rel 선두에만 걸리는데
-            # harness_anchor 는 */.claude/hooks/* 로 모든 깊이에 걸린다 → 최상위 .claude/ 는
-            # 스킵(케이스 07)인데 모노레포 하위 .claude/ 는 발화한다. 피해 방향이 오탐이고
-            # 탈출구(ECC_DISABLED_HOOKS)가 있어 감수한다. 이 행이 없으면 다음 사람이 이
-            # 비대칭을 의도인지 사고인지 구분할 수 없다.
-            # 비차별(a·b 양판 GREEN) — 이 오탐은 두 구판에도 있었다. 새로 만든 게 아니라
-            # 유지하기로 **결정**한 것임을 남긴다.
+case_64() { # **기존 동작의 명문화 — 이번 변경이 만든 게 아니다.**
+            # 비차별 행이다(구판 두 개 모두 GREEN). 즉 옛날에도 똑같이 발화했다.
+            #
+            # 왜 이런가: harness_anchor 는 */.claude/hooks/* 로 **모든 깊이**에 걸린다.
+            # 프로젝트 밖 절대경로(~/.claude/agents/x.md)를 잡으려면 선행 와일드카드가
+            # 필수인데, 그 패턴이 프로젝트 안 깊은 곳의 .claude/ 도 같이 잡는다.
+            # 반면 classify 의 .claude/* 제외는 rel **선두**에만 걸린다.
+            # → 최상위 .claude/ 는 스킵(케이스 07), 모노레포 하위 .claude/ 는 발화.
+            #
+            # 이번 작업의 범위는 검사 범위 재작성이었고, 이 비대칭은 **바꾸지 않기로** 했다.
+            # 고치는 것(하위 .claude/ 도 스킵)은 범위 밖 동작 변경이라 별건이다.
+            # 이 행은 "봤고 안 건드렸다"는 기록이다 — 없으면 다음 사람이 이 비대칭을
+            # 의도인지 사고인지 구분할 수 없다. 피해 방향은 오탐이고 탈출구가 있다.
   local p; p="$(new_project)"
   mkfile "$p/packages/app/.claude/hooks/x.sh"
   run_hook "$p" "$p/packages/app/.claude/hooks/x.sh"
-  check_case '64 모노레포 하위 .claude/hooks/x.sh → 게이트 4종(의도된 오탐)' 0 gate 'packages/app/.claude/hooks/x.sh'
+  check_case '64 모노레포 하위 .claude/hooks/x.sh → 게이트 4종(기존 동작, 범위 밖)' 0 gate 'packages/app/.claude/hooks/x.sh'
 }
 
 case_65() { # 확장자 축의 .markdown 쪽. *.md|*.markdown 을 *.md 로 좁혀도 나머지 전 행이

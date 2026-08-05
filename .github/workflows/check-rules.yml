@@ -22,5 +22,7 @@ jobs:
           persist-credentials: false
       - name: 검사기 회귀 테스트
         run: ./tests/check-rule-copies.test.sh
+      - name: 완료 게이트 검사 범위 회귀 테스트
+        run: ./tests/mark-needs-audit.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh

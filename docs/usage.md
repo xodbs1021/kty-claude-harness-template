@@ -60,10 +60,26 @@ cd ~/.claude/harness-template
 |---|---|---|
 | guard-master-commit | Bash 실행 전 | master/main 직접 `git commit` 차단 |
 | guard-codex-invocation | Bash 실행 전 | `codex exec` 호출의 모델(`gpt-5.6-sol`)·effort(`high`) 미달 차단 — 임의 하향 금지 (2026-08-01 사용자 지시) |
-| mark-needs-audit | 파일 편집 후 | 게이트 플래그 4종: `.needs-audit`·`.needs-explain`·`.needs-vault`·`.needs-dualreview` (설계·계획 산출물은 듀얼리뷰 플래그만, 코드는 4종 전부. 제외: `_workspace/` 기타·`.claude/`·`*.md`) |
+| mark-needs-audit | 파일 편집 후 | 게이트 플래그 4종: `.needs-audit`·`.needs-explain`·`.needs-vault`·`.needs-dualreview` (설계·계획 산출물은 듀얼리뷰 플래그만, 코드는 4종 전부). 검사 범위는 아래 "완료 게이트 검사 범위" 참조 |
 | verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → codex 듀얼리뷰 → change-explainer → 볼트(second brain) 반영 → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
 
 **탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:vault`(볼트 게이트만) 나열. 예외: guard-codex-invocation은 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만.
+
+### 완료 게이트 검사 범위 (mark-needs-audit)
+
+판정 **순서가 곧 계약**이다: 개행 가드 → 물리 경로 정규화 → 듀얼리뷰 판정 → 범위 판정 → 분류 → 기록.
+
+- **프로젝트 안** — `_workspace/`·`.claude/`·문서 `*.md`·`*.markdown`(대소문자 무관)는 제외. 나머지는 게이트 4종.
+  단 **문서 제외에는 예외가 둘** 있다(동작을 정의하는 마크다운이라 코드로 취급한다):
+  `.claude/` 에 앵커된 하네스 경로(`agents/`·`skills/`·`hooks/`·`harness/`·`settings.json`), 그리고
+  **프로젝트 자신이 하네스 정본일 때의 `global-agents/*.md`**. 둘 다 `*.md` 제외보다 **먼저** 판정된다.
+- **프로젝트 밖 + 하네스 정본 저장소**(루트에 `template/.claude/` 존재) — 저장소 **전체**를 **프로젝트와 같은 규칙으로** 검사한다. `scripts/`·`install.sh`·`global-agents/*.md` 포함(전부 하네스 동작을 정의한다). "같은 규칙"이므로 위의 제외도 **그대로** 적용된다 — 정본 저장소 안이라도 `_workspace/`·`.claude/`·순수 문서는 게이트가 서지 않는다. 지금 읽고 있는 이 파일(`docs/usage.md`)이 그 예다.
+- **프로젝트 밖 + 그 외** — `.claude/`에 앵커된 하네스 경로(`agents/`·`skills/`·`hooks/`·`harness/`·`settings.json`)만. **git 저장소가 아니어도** 발화한다.
+- **설계·계획 산출물**(`_workspace/00_design*.md`·`01_plan*.md`) — 위치·git 여부와 무관하게 듀얼리뷰 플래그만 세운다.
+- **밖 편집은 절대경로로 기록**한다. 상대경로로 적으면 프로젝트와 외부 저장소가 `README.md` 같은 흔한 경로를 공유할 때 감사자가 프로젝트 쪽 동명 파일을 보고 통과시킨다.
+- 플래그를 못 쓰거나 경로에 개행이 있으면 **차단하지 않고** `systemMessage`로 알린다(PostToolUse는 항상 exit 0). git 호출이 실패했는데 조상에 `.git`이 있으면 그 사실도 알린다 — 정본 저장소가 조용히 앵커 전용으로 강등되는 것을 사람이 알 수 있게.
+
+계약의 **기계 정본**은 `tests/mark-needs-audit.cases.sh`의 판정 표이고, 케이스 수는 같은 파일의 `EXPECTED_CASES`가 강제한다. CI가 PR마다 돌린다.
 
 ## 6. 트러블슈팅
 

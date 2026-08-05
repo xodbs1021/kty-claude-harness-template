@@ -70,6 +70,9 @@ cd ~/.claude/harness-template
 판정 **순서가 곧 계약**이다: 개행 가드 → 물리 경로 정규화 → 듀얼리뷰 판정 → 범위 판정 → 분류 → 기록.
 
 - **프로젝트 안** — `_workspace/`·`.claude/`·문서 `*.md`·`*.markdown`(대소문자 무관)는 제외. 나머지는 게이트 4종.
+  단 **문서 제외에는 예외가 둘** 있다(동작을 정의하는 마크다운이라 코드로 취급한다):
+  `.claude/` 에 앵커된 하네스 경로(`agents/`·`skills/`·`hooks/`·`harness/`·`settings.json`), 그리고
+  **프로젝트 자신이 하네스 정본일 때의 `global-agents/*.md`**. 둘 다 `*.md` 제외보다 **먼저** 판정된다.
 - **프로젝트 밖 + 하네스 정본 저장소**(루트에 `template/.claude/` 존재) — 저장소 **전체**를 **프로젝트와 같은 규칙으로** 검사한다. `scripts/`·`install.sh`·`global-agents/*.md` 포함(전부 하네스 동작을 정의한다). "같은 규칙"이므로 위의 제외도 **그대로** 적용된다 — 정본 저장소 안이라도 `_workspace/`·`.claude/`·순수 문서는 게이트가 서지 않는다. 지금 읽고 있는 이 파일(`docs/usage.md`)이 그 예다.
 - **프로젝트 밖 + 그 외** — `.claude/`에 앵커된 하네스 경로(`agents/`·`skills/`·`hooks/`·`harness/`·`settings.json`)만. **git 저장소가 아니어도** 발화한다.
 - **설계·계획 산출물**(`_workspace/00_design*.md`·`01_plan*.md`) — 위치·git 여부와 무관하게 듀얼리뷰 플래그만 세운다.

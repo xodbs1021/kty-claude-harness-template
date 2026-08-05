@@ -52,17 +52,46 @@ emit_message() {
   printf '{"systemMessage":"%s"}\n' "$1"
 }
 
-# physical_path <경로> — 심링크·.. 를 푼 물리 절대경로를 stdout 에.
+# physical_dir <디렉토리> — 심링크·`..`·`.` 를 푼 물리 절대경로를 stdout 에.
 # 실패하면 **원본을 그대로 내고** rc=1. 호출자는 스킵하지 않는다 — 정규화에 실패했다고
 # 게이트를 지우면 조용한 위음성이 되므로, 덜 정확한 경로로라도 판정을 잇는 쪽을 택한다.
-physical_path() {
+#
+# **cd 는 반드시 -P 여야 한다** — pwd -P 만으로는 부족하다. 논리 cd(기본값)는 `심링크/..` 를
+# 심링크를 따라가기 **전에** 문자로 상쇄하므로 커널이 실제로 여는 곳과 다른 답을 낸다
+# (실측: `cd -- /var/..` → `/`, `cd -P -- /var/..` → `/private`). 그 차이만큼 프로젝트
+# **밖** 파일이 프로젝트 **안** 상대경로로 기록돼, 게이트는 서는데 감사자가 엉뚱한 파일을
+# 본다(케이스 67). 반대 방향으로는 밖 하네스 파일의 게이트가 통째로 사라진다(케이스 68).
+# 형제 검사기 scripts/check-rule-copies.sh 의 physical_path 와 같은 방식이다(PR #13).
+physical_dir() {
   local out
-  out="$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)"
+  out="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P)"
   if [ -z "$out" ]; then
     printf '%s\n' "$1"
     return 1
   fi
   printf '%s\n' "$out"
+}
+
+# physical_path <파일경로> — 편집 경로를 물리화한다. 실패하면 **원본 경로를 그대로 내고** rc=1.
+#
+# 마지막 성분이 **이름이면 보존**한다 — 파일 자신이 심링크여도 편집 대상의 이름으로
+# 기록해야 하고, 애초에 파일에는 cd 할 수 없다. 파일이 아직 없을 수도 있다(케이스 51).
+#
+# **단 `.`·`..` 는 이름이 아니라 디렉토리 이동이라 반드시 푼다.** 보존할 이름이 없으므로
+# 위 예외의 근거가 성립하지 않는다. 안 풀면 dirname 만 물리화된 `…/src/..` 가 그대로 나와
+# 프로젝트 접두사에 문자열상 걸리고, 플래그에 디렉토리 표기가 박힌다(케이스 69·70).
+# 형제 검사기가 PR #13 에서 같은 이름의 같은 버그를 이 방식으로 고쳤다 — 접근을 맞춘다.
+physical_path() {
+  local dir base
+  base="$(basename -- "$1")"
+  # cd 는 반드시 명령 치환 안에서 — 함수 본문에서 그냥 cd 하면 호출부의 cwd 가 바뀐다.
+  case "$base" in
+    . | ..) physical_dir "$1"; return ;;
+  esac
+  dir="$(physical_dir "$(dirname -- "$1")")" || { printf '%s\n' "$1"; return 1; }
+  # pwd -P 가 "/" 를 낼 때만 "//base" 가 된다 (루트 바로 아래 경로).
+  if [ "$dir" = '/' ]; then dir=''; fi
+  printf '%s/%s\n' "$dir" "$base"
 }
 
 # project_rel <절대경로> — $proj 아래면 프로젝트 기준 상대경로를 stdout·rc=0, 아니면 rc=1.
@@ -90,7 +119,7 @@ git_toplevel() {
   top="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
          git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"
   [ -n "$top" ] || return 1
-  physical_path "$top"
+  physical_dir "$top"
 }
 
 # has_git_ancestor <절대경로> — 조상 디렉토리에 .git 이 있는가. git 을 쓰지 않는다.
@@ -191,12 +220,15 @@ esac
 # 양쪽을 물리 경로로 맞춘 뒤에 비교한다. git 은 실제 경로를 돌려주는데 편집 경로는
 # 심링크를 지나올 수 있고(macOS /var → /private/var), .. 로 되돌아올 수도 있다.
 # 정규화 없이 자르면 접두사가 안 맞아 프로젝트 안 편집이 통째로 "밖"으로 샌다.
-proj="$(physical_path "$PROJECT_DIR")"
+# PROJECT_DIR 은 디렉토리라 통째로 물리화한다(심링크 PROJECT_DIR — 케이스 11·12).
+# 편집 경로는 파일이라 마지막 성분 이름을 보존하는 physical_path 를 쓴다 — 두 계약이
+# 다르므로 함수도 둘이다.
+proj="$(physical_dir "$PROJECT_DIR")"
 case "$file_path" in
   /*) ;;
   *) file_path="$proj/$file_path" ;;
 esac
-abs="$(physical_path "$(dirname -- "$file_path")")/$(basename -- "$file_path")"
+abs="$(physical_path "$file_path")"
 
 # 설계·계획 산출물은 위치·git 여부와 무관하게 듀얼리뷰 게이트만 세운다.
 # **정규화 뒤**에 판정해야 한다: 상대경로 입력에는 선행 슬래시가 없어 아래 글롭에

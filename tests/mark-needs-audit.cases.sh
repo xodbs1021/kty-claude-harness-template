@@ -647,16 +647,83 @@ case_66() { # 듀얼 글롭의 접미사 축 — 00_design* 쪽. 케이스 06 �
   check_case '66 프로젝트 안 _workspace/00_design.v2.md → 듀얼리뷰만' 0 dual '_workspace/00_design.v2.md'
 }
 
+# === G. PR 점검(C1)에서 추가된 행 — 물리 경로 정규화 축 ====================
+# 전부 physical_path 를 겨냥한다. 케이스 10·11·12 는 이 축을 **부분만** 덮고 있었다:
+#   10 — `..` 가 있지만 심링크가 없다 → 논리 cd 로도 답이 같다
+#   11·12 — 심링크가 있지만 `..` 가 없다 → 논리 cd 로도 답이 같다
+# 논리 cd 와 물리 cd 가 갈리는 지점은 **둘이 겹칠 때**뿐이다: 논리 cd 는 `심링크/..` 를
+# 심링크를 따라가기 **전에** 문자로 상쇄하므로 커널이 실제로 여는 곳과 다른 답을 낸다
+# (실측: `cd -- /var/..` → `/`, `cd -P -- /var/..` → `/private`).
+# 마지막 성분이 `.`·`..` 인 축(69·70)은 형제 검사기 scripts/check-rule-copies.sh 가
+# PR #13 에서 이미 고친 같은 이름의 버그다 — 두 함수가 같은 방식이어야 한다.
+#
+# 픽스처 기본계약 1의 예외: 이 두 행(67·68)은 심링크를 **의도적으로** 만든다.
+
+case_67() { # `심링크/..` 로 프로젝트를 빠져나간 편집 — 밖 파일이 **안 상대경로로 기록**되면 안 된다.
+            # 링크가 프로젝트 밖을 가리키므로 물리 해석은 $outside/secret.ts(=밖)이고,
+            # 논리 해석은 $p/secret.ts(=안)다. `-P` 가 빠지면 후자가 되어 게이트는 서지만
+            # **존재하지도 않는 프로젝트 안 파일** secret.ts 가 박힌다 — 감사자가 엉뚱한
+            # 파일을 보고 통과시키는 조용한 위양성. 에러도 stderr 도 없다.
+            # 값 축(밖인데 무게이트가 되는 반대 방향)은 케이스 68.
+  local p outside; p="$(new_project)"; outside="$(new_dir outside)"
+  mkdir -p "$outside/target"
+  mkfile "$outside/secret.ts"
+  ln -s "$outside/target" "$p/link"
+  run_hook "$p" "$p/link/../secret.ts"
+  check_case '67 프로젝트 밖을 가리키는 심링크/.. 편집 → 스킵(안 상대경로로 오기록 금지)' 0 none ''
+}
+
+case_68() { # 케이스 67 의 반대 방향 — 물리 해석이 밖 **하네스 앵커**를 가리킨다.
+            # 논리 해석은 $p/agents/x.md 로 접혀 프로젝트 안의 평범한 문서(5단계 *.md)가
+            # 되어 **스킵**된다 → 하네스 파일 편집에 게이트가 통째로 사라진다(위음성).
+            # 67 이 오기록을, 이 행이 무기록을 붙든다. 기록값이 절대경로인 것도 함께 고정.
+            #
+            # 디코이 $p/agents/ 가 **필수**다(실측). 논리 cd 는 정규화한 경로가 존재하지
+            # 않으면 **원본 문자열로 재시도**하는데, 그러면 심링크를 따라가 물리 cd 와 같은
+            # 답이 나와 이 행이 비차별로 죽는다. 디코이를 지우면 구판에서도 초록이 된다.
+  local p nogit; p="$(new_project)"; nogit="$(new_dir nogit)"
+  mkfile "$nogit/.claude/agents/x.md"
+  mkfile "$p/agents/x.md"
+  ln -s "$nogit/.claude/agents" "$p/link"
+  run_hook "$p" "$p/link/../agents/x.md"
+  check_case '68 심링크/.. 로 밖 하네스 앵커 → 게이트 4종(절대경로)' 0 gate "$nogit/.claude/agents/x.md"
+}
+
+case_69() { # 마지막 성분이 `..` — 호출부가 dirname/basename 으로 쪼개 넘기면 `..` 는
+            # basename 쪽으로 가고 basename 은 물리화되지 않아 **안 풀린 채** 남는다.
+            # 그러면 프로젝트 루트 자신을 가리키는 경로가 상대경로 `src/..` 로 접두사에
+            # 걸려 게이트가 서고, 플래그에 디렉토리 표기가 박힌다. 정규화하면 $p 자신이라
+            # 접두사(<proj>/)에 안 걸려 밖으로 떨어지고, 앵커도 정본도 아니므로 스킵이다.
+            # **픽스처 기본계약 2의 예외**: 편집 경로가 디렉토리라 파일을 만들지 않는다.
+            # mkdir 이 실패해도 조용히 초록이 되지 않는다 — cd 가 실패하면 원본이 그대로
+            # 나와 `src/..` 게이트가 서므로 이 행이 빨개진다(fail-closed).
+            # `.` 쪽 거울상은 케이스 70.
+  local p; p="$(new_project)"
+  mkdir -p "$p/src"
+  run_hook "$p" "$p/src/.."
+  check_case '69 마지막 성분이 .. → 스킵(정규화하면 프로젝트 루트 자신)' 0 none ''
+}
+
+case_70() { # 케이스 69 의 `.` 쪽 거울상 — 판정이 아니라 **기록값**에서 갈린다.
+            # `.` 는 경로를 옮기지 않으므로 안/밖은 그대로지만, 안 풀리면 플래그에
+            # `src/.` 가 박혀 같은 디렉토리의 다른 표기와 중복 제거되지 않는다.
+            # 69 를 `..` 만 풀어서 고치면 이 행이 혼자 빨개진다(PR #13 케이스 43 과 같은 구조).
+  local p; p="$(new_project)"
+  mkdir -p "$p/src"
+  run_hook "$p" "$p/src/."
+  check_case '70 마지막 성분이 . → 게이트 4종(정규화된 값 src)' 0 gate 'src'
+}
+
 # --- 계약 표의 크기 -------------------------------------------------------
 # 러너가 이 두 값으로 "케이스가 조용히 빠지거나 두 번 도는 것"을 잡는다.
 # 건수는 여기 말고 어디에도 숫자로 적지 않는다 — 케이스를 추가할 때마다 낡는다.
 
-EXPECTED_CASES=66
+EXPECTED_CASES=70
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 case_10 case_11
        case_12 case_13 case_14 case_15 case_16 case_17 case_18 case_19 case_20 case_21 case_22
        case_23 case_24 case_25 case_26 case_27 case_28 case_29 case_30 case_31 case_32 case_33
        case_34 case_35 case_36 case_37 case_38 case_39 case_40 case_41 case_42 case_43 case_44
        case_45 case_46 case_47 case_48 case_49 case_50 case_51 case_52 case_53 case_54 case_55
-       case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66'
-
+       case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66
+       case_67 case_68 case_69 case_70'

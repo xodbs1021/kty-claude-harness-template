@@ -761,16 +761,53 @@ case_41() { # physical_path 실패를 `|| continue` 로 넘기면 범위 검사�
   check_case '41 등록 경로의 물리 경로를 못 구하는데 파일은 존재함' 1 "$MSG_REG_UNRESOLVED"
 }
 
+case_42() { # 케이스 38의 **마지막 성분** 변형. 38은 `..` 가 경로 중간에 있어서 dirname 쪽에
+            # 들어가고, dirname 은 `cd -P` 로 물리화되니 풀렸다. 여기서는 `..` 가 경로의
+            # 마지막 성분이라 basename 쪽으로 가는데 basename 은 물리화하지 않는다 —
+            # physical_path 가 `…/template/..` 를 그대로 되돌려주고, 범위 단언의
+            # `case "$reg_phys" in "$scan_root_phys"/*)` 가 **문자열상 매치**해
+            # "범위 안"으로 오판한다(실측: 오판 후 `-f` 가 뒤늦게 막아 `사본 파일이 없음`).
+            # 즉 이 축의 방어선이 `-f` 하나뿐이다 — 함수가 다른 곳에서 재사용되거나
+            # 검사 순서가 바뀌면 조용히 fail-open 이 된다. 범위 단언 자신이 막아야 한다.
+  local repo out; repo="$(new_repo)"
+  rm -f "$(copy_path "$repo")"
+  out='  "$ROOT/template/.."'
+  if replace_sut_copies_entry "$repo" "$out"; then
+    run_check "$repo"
+  else
+    fixture_broken 'COPIES 항목 줄을 찾지 못했다 (검사기 구조가 바뀌었나?)'
+  fi
+  check_case '42 COPIES 항목의 마지막 성분이 `..` 라 스캔 범위를 빠져나감' 1 "$MSG_REG_SCOPE" "$MSG_COPY_MISSING"
+}
+
+case_43() { # 케이스 42의 `.` 쪽 거울상. `.` 는 경로를 옮기지 않으므로 범위를 **빠져나갈**
+            # 수는 없지만, 정확히 한 지점에서 판정을 뒤집는다 — 스캔 루트 자신이다.
+            # `$ROOT/template` 등록은 `/*` 패턴에 안 걸려 "범위 밖"인데(스캔 루트는 하위가
+            # 아니다), 안 풀린 `$ROOT/template/.` 는 `/*` 에 걸려 "범위 안"이 된다.
+            # 같은 디렉토리를 가리키는 두 표기가 반대로 판정되는 것이라, 42 를 `..` 만
+            # 풀어서 고치면 이 케이스가 혼자 빨개진다.
+  local repo out; repo="$(new_repo)"
+  rm -f "$(copy_path "$repo")"
+  out='  "$ROOT/template/."'
+  if replace_sut_copies_entry "$repo" "$out"; then
+    run_check "$repo"
+  else
+    fixture_broken 'COPIES 항목 줄을 찾지 못했다 (검사기 구조가 바뀌었나?)'
+  fi
+  check_case '43 COPIES 항목의 마지막 성분이 `.` 라 스캔 루트 자신을 가리킴' 1 "$MSG_REG_SCOPE" "$MSG_COPY_MISSING"
+}
+
 # --- 러너 ----------------------------------------------------------------
 
-EXPECTED_CASES=41
+EXPECTED_CASES=43
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07
        case_08 case_09 case_10 case_11 case_12 case_13 case_14
        case_15 case_16 case_17 case_18 case_19 case_20 case_21
        case_22 case_23 case_24 case_25 case_26 case_27 case_28
        case_29 case_30 case_31 case_32 case_33 case_34 case_35
-       case_36 case_37 case_38 case_39 case_40 case_41'
+       case_36 case_37 case_38 case_39 case_40 case_41
+       case_42 case_43'
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이
 # 상쇄돼 그대로 초록이 된다 — 목록을 직접 봐야 그 조합이 잡힌다.

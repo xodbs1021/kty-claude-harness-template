@@ -133,7 +133,7 @@ stop 게이트 3.4: 각 경로의 첫 줄이 표명 형식인가 (BOM·CR 스트
 
 ## 기계적 장치
 
-`tests/retrieval-attestation.test.sh` **27케이스**(EXPECTED_CASES 상수 고정) + CI 스텝 + 변이 하네스 `_workspace/mutate-retrieval-gate.sh` **17변이 전건 적색**. 목록과 근거는 설계서 7절(구현 검수 반영으로 설계 시점의 25·15 에서 늘었다). 통과 기대 케이스는 후속 게이트 도달 문구를 요구한다 — rc 단독 판정 금지. 기존 계약 자리 전수(`tests/mark-needs-audit.cases.sh`·`FLAG_NAMES`·README·usage.md)를 함께 갱신한다.
+`tests/retrieval-attestation.test.sh` **27케이스**(EXPECTED_CASES 상수 고정) + CI 스텝 + 변이 하네스 `_workspace/mutate-retrieval-gate.sh` **18변이 전건 적색**. 목록과 근거는 설계서 7절(구현 검수 반영으로 설계 시점의 25·15 에서 늘었다). 통과 기대 케이스는 후속 게이트 도달 문구를 요구한다 — rc 단독 판정 금지. 기존 계약 자리 전수(`tests/mark-needs-audit.cases.sh`·`FLAG_NAMES`·README·usage.md)를 함께 갱신한다.
 
 **공시된 측정 공백:** 3.4 의 자동 해제 후 exit 0 경로에 있는 `decision_note` 방출은 현행 발동 규칙에서 **도달 불가**다 — decision_note 가 서려면 결정 게이트를 무장시키는 플래그가 서야 하는데, 그 플래그가 `work_pending` 을 참으로 유지해 exit 0 에 못 간다. 방출 코드는 발동 규칙이 바뀌는 날을 위한 방어로 남겼고, **그 제거 변이는 원리적으로 초록이다**(ADR-0012 의 "모르는 rc" 공백과 같은 부류 — 두 공시가 짝이고 하나만 보면 오판한다).
 

@@ -190,6 +190,11 @@ mutate 'm17 해제 후 compute_flags_fp 재호출 제거' "$VSTOP" \
     compute_flags_fp' \
   '    :'
 
+# 18. read 관용구 되돌림 (개행 없는 마지막 줄이 조용히 스킵되는 결함 재현)
+mutate 'm18 read 의 || [ -n ] 제거' "$VSTOP" \
+  '  while IFS= read -r entry || [ -n "$entry" ]; do' \
+  '  while IFS= read -r entry; do'
+
 echo
 echo "총 $total 건 — 적색 $red · 초록 $green"
 [ "$green" -eq 0 ] && [ "$red" -eq "$total" ]

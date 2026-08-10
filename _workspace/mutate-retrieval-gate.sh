@@ -213,7 +213,7 @@ mutate 'm18 read 의 || [ -n ] 제거' "$VSTOP" \
   '  while IFS= read -r entry || [ -n "$entry" ]; do' \
   '  while IFS= read -r entry; do'
 
-# --- ADR-0015: 둘째 줄(레퍼런스 표명) 방어 (m19~m35) -----------------------
+# --- ADR-0015: 둘째 줄(레퍼런스 표명) 방어 (m19~m37) -----------------------
 
 # 19. 둘째 줄 검사 통째 무력화 — if 체인 머리에 항상 참인 no-op 가지를 끼운다
 mutate 'm19 둘째 줄 검사 통째 제거' "$VSTOP" \

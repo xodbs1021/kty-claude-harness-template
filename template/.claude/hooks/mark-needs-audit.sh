@@ -275,12 +275,16 @@ fi
 # 완료 게이트 4종을 동시에 세운다:
 #   .needs-audit      → completion-auditor 강제 (Phase 6)
 #   .needs-explain    → change-explainer 강제 (Phase 5)
-#   .needs-vault      → 볼트(second brain) 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
-#                       세션 내내 볼트 Auto-Save 가 기억에만 의존해 0회 이행된 실사고의 재발 방지)
+#   .needs-knowledge  → 지식 저장소 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
+#                       산문 규칙이 기억에만 의존해 세션 내내 0회 이행된 실사고의 재발 방지)
 #   .needs-dualreview → codex 듀얼 리뷰 강제 (2026-08-03 kty)
 # 각 게이트는 해당 작업이 실제로 끝난 뒤에만 수동으로 지워진다. Stop 훅이 넷 다 본다.
+#
+# 지식 게이트가 꺼져 있어도 여기서는 **기록한다.** 켜짐/꺼짐 판정은 harness.env 를 한 번
+# 더 읽는 일인데 이 훅은 편집마다 돌고 Stop 훅은 턴에 한 번 돈다 — 판정은 Stop 쪽
+# 한 곳(knowledge_gate_active)으로 모았다. 꺼져 있으면 이 파일은 아무 효력이 없다.
 write_failed=0
-for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG"; do
+for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG"; do
   record_flag "$flag" "$value" || write_failed=1
 done
 # 넷이 다 실패해도 메시지는 한 줄만 낸다.

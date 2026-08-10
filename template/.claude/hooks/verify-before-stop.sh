@@ -20,7 +20,9 @@ stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 
 # (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
 #     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
-if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$VAULT_FLAG" ] && [ ! -s "$DUALREVIEW_FLAG" ]; then
+#     지식 플래그는 **게이트가 켜져 있을 때만** 할 일로 센다 — 껐는데 예전에 남은
+#     플래그 파일이 읽기 전용 턴의 조기 종료를 막으면 안 된다.
+if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then
   rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
   exit 0
 fi
@@ -41,7 +43,7 @@ prev_fp="$(cat "$BLOCK_FP" 2>/dev/null)"
 flags_fp=""
 [ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
 [ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
-[ -s "$VAULT_FLAG" ]      && flags_fp="${flags_fp}v"
+knowledge_gate_active     && flags_fp="${flags_fp}k"
 [ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
 new_fp=""
 
@@ -56,8 +58,8 @@ gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출�
     fi
   fi
   if [ "$count" -ge "$MAX_BLOCKS" ]; then
-    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
-    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
     printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
       "$1" "$MAX_BLOCKS" "$changed"
     exit 0
@@ -172,27 +174,35 @@ if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
   bump_and_block
 fi
 
-# (5) 볼트(second brain) 반영 게이트 — 감사보다 먼저 강제한다 (감사자가 반영 결과를 검증하도록).
-#     결정·설계·개발작업이 나온 턴은 볼트 Projects/<name>/ 4종 세트 반영 없이 끝낼 수 없다.
-#     (2026-08-02 kty — 산문 Auto-Save 규칙이 세션 내내 0회 이행된 실사고의 기계화)
-if [ -s "$VAULT_FLAG" ] && ! hook_disabled "stop:vault"; then
-  gate_budget "vault"
+# (5) 지식 저장소 반영 게이트 — 감사보다 먼저 강제한다 (감사자가 반영 결과를 검증하도록).
+#     (2026-08-02 kty — 산문 규칙이 세션 내내 0회 이행된 실사고의 기계화)
+#
+#     **이 훅이 아는 것은 계약 하나뿐이다**: "지식 저장소가 설정돼 있으면, 결정·설계가
+#     나온 턴은 반영 없이 끝낼 수 없다." 저장소가 어디인지·어떤 구조인지·무엇을 4종
+#     세트라 부르는지는 **상위 층의 구현**이고 이 파일은 모른다. 알게 되면 그 저장소를
+#     안 쓰는 환경에서 하네스가 없는 구조를 요구하게 된다(제0원칙 4 — 구체가 아닌 계약).
+#     어디에 어떻게 저장했는지의 검증은 그 저장소 자신의 규약이 한다.
+if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
+  gate_budget "knowledge"
   {
-    echo "[완료 차단] 볼트(second brain) 반영 미확인 — 지식 반영 없이 끝낼 수 없습니다."
+    echo "[완료 차단] 지식 저장소 반영 미확인 — 이 턴의 결정·설계를 남기지 않고 끝낼 수 없습니다."
     echo
     echo "이 턴에서 바뀐 코드/설정:"
-    sed 's/^/  - /' "$VAULT_FLAG" 2>/dev/null
+    sed 's/^/  - /' "$KNOWLEDGE_FLAG" 2>/dev/null
     echo
     echo "해야 할 일:"
-    echo "  1. 볼트 _CLAUDE.md 를 **전문** 읽는다 (부분 독해 금지 — head -N 사고 전례 있음)."
-    echo "  2. 이번 턴에 결정·설계·개발작업이 있으면 볼트 Projects/<name>/ 4종 세트"
-    echo "     (discussion-log + decisions/ADR + architecture + index)로 반영·커밋하고 해시를 확보한다."
-    echo "     raw 산출물(설계 전문 등)은 specs/ 에 보존한다 — raw와 요약 둘 다다."
+    echo "  1. 이 머신의 지식 저장소가 **어디이고 어떤 형식인지는 사용자 층 설정**(전역"
+    echo "     CLAUDE.md 등)이 답한다. 그 규약을 **전문** 읽는다 — 부분 독해 금지."
+    echo "  2. 이번 턴에 결정·설계·개발작업이 있으면 그 규약대로 반영하고, 반영됐다는"
+    echo "     확인 가능한 증거(커밋 해시·파일 경로 등)를 확보한다."
+    echo "     판단을 만든 **근거(raw)** 도 규약이 정한 자리에 함께 남긴다 — 요약만 남기면"
+    echo "     \"왜 그렇게 정했나\"가 복원 불가능해진다."
     echo "  3. 반영할 지식이 없으면(순수 버그픽스·기계적 수정) 불요 사유를 _workspace/progress.md 에 기록한다."
-    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f .claude/.needs-vault"
-    echo "     completion-auditor 가 커밋 해시·파일 실존(또는 불요 사유의 타당성)을 검증한다."
+    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f .claude/.needs-knowledge"
+    echo "     completion-auditor 가 그 증거(또는 불요 사유의 타당성)를 검증한다."
+    echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
     echo
-    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:vault"
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
   } >&2
   bump_and_block
 fi

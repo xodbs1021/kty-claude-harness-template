@@ -67,7 +67,7 @@ TOK_WRITE_FAIL='게이트 플래그를 기록하지 못했다'
 TOK_NEWLINE='편집 경로에 개행이 있어'
 TOK_GIT_UNAVAILABLE='git 이 저장소 정보를 돌려주지 못해'
 
-FLAG_NAMES='.needs-audit .needs-explain .needs-vault .needs-dualreview'
+FLAG_NAMES='.needs-audit .needs-explain .needs-knowledge .needs-dualreview'
 
 # --- 픽스처 조립 ----------------------------------------------------------
 

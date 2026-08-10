@@ -142,6 +142,18 @@ run_mutation '읽기 실패 경고를 지운다' "$COMMON" \
   "    printf '[하네스] harness.env 를 읽지 못했습니다 — 미설정으로 봅니다: %s\\n' \"\$file\" >&2" \
   '    :'
 
+run_mutation '지식 게이트 기본값을 꺼짐으로 뒤집는다' "$COMMON" \
+  '  v="$(harness_env_value HARNESS_KNOWLEDGE_GATE)" || return 0   # 값을 못 믿으면 켠다' \
+  '  v="$(harness_env_value HARNESS_KNOWLEDGE_GATE)" || return 1'
+
+run_mutation '지식 게이트를 항상 켜짐으로 못박는다' "$COMMON" \
+  '  [ -n "$v" ]                                                   # 리터럴로 비었을 때만 꺼짐' \
+  '  return 0'
+
+run_mutation '조기 종료가 게이트 꺼짐을 무시하게 만든다' "$STOP" \
+  'if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then' \
+  'if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$KNOWLEDGE_FLAG" ] && [ ! -s "$DUALREVIEW_FLAG" ]; then'
+
 run_mutation 'Stop 훅의 rc 구별을 지운다' "$STOP" \
   'if [ "$typecheck_rc" -ne 0 ]; then
   typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 를 읽지 못함 — 미설정이거나, 선언이 2개 이상이거나, 지원 문법 밖입니다)"

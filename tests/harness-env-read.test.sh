@@ -61,6 +61,8 @@ TOK_AUDIT='completion-auditor 미실행'
 TOK_READ_FAIL='읽지 못했습니다'   # _common.sh 가 stderr 로 내는 읽기 실패 경고
 TOK_UNREADABLE='읽지 못함'        # Stop 훅이 사용자에게 내는 생략 사유
 TOK_EMPTY_SET='빈 값으로 설정됨'
+TOK_KNOWLEDGE='지식 저장소 반영 미확인'
+GKEY='HARNESS_KNOWLEDGE_GATE'
 
 # --- 픽스처 --------------------------------------------------------------
 
@@ -121,6 +123,26 @@ run_stop_hook() {
   shift
   HRC=999; HOUT=''; HERR=''; DID_RUN=1
   printf 'gate-target.ts\n' > "$proj/.claude/.needs-audit"
+  _invoke_stop_hook "$proj" "$errf" ${@+"$@"}
+}
+
+# run_knowledge_probe <proj> — **지식 플래그 하나만** 세우고 Stop 훅을 돌린다.
+# 게이트가 켜졌으면 지식 게이트 문구로 rc=2, 꺼졌으면 할 일이 없어 rc=0 이다.
+#
+# 이 프로브는 harness.env 의 키 개수와 값을 **직접 해석하지 않는다.** 판독 규칙의 사본을
+# 테스트에 두면 그 사본이 언젠가 원본과 어긋나고, 그때 테스트는 **틀린 기준으로 초록**을
+# 낸다. 훅 자신을 돌려 차단되는지만 본다.
+run_knowledge_probe() {
+  local proj="$1" errf="$TMPROOT/kerr.$$"
+  shift
+  HRC=999; HOUT=''; HERR=''; DID_RUN=1
+  printf 'gate-target.ts\n' > "$proj/.claude/.needs-knowledge"
+  _invoke_stop_hook "$proj" "$errf" ${@+"$@"}
+}
+
+_invoke_stop_hook() {
+  local proj="$1" errf="$2"
+  shift 2
   HOUT="$(printf '{"stop_hook_active": false}' \
           | env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS ${@+"$@"} CLAUDE_PROJECT_DIR="$proj" \
                 bash "$proj/.claude/hooks/verify-before-stop.sh" 2>"$errf")"
@@ -163,6 +185,36 @@ pcase() {
       *"$want_err"*) ;;
       *) why="stderr 에 기대 문구가 없다: $want_err (실제 [$VERR])" ;;
     esac
+  fi
+  report "$name" "$why"
+}
+
+# gcase <이름> <on|off> <harness.env 내용> — 지식 게이트가 켜졌는지 훅으로 잰다.
+#   on  → rc=2 이고 지식 게이트 문구가 나온다
+#   off → rc=0 이고 stderr 가 비어 있다 (할 일이 없어 조기 종료)
+gcase() {
+  local name="$1" want="$2" body="$3" proj why=''
+  if ! proj="$(new_project "$body")"; then
+    report "$name" "픽스처 구성 실패: $FIXTURE_FAIL"; return 0
+  fi
+  run_knowledge_probe "$proj"
+  if [ "$DID_RUN" -ne 1 ]; then
+    why='훅을 실행하지 않았다'
+  elif [ "$want" = 'on' ]; then
+    if [ "$HRC" -ne 2 ]; then
+      why="게이트가 켜져야 하는데 rc=$HRC (기대 2) / stderr=[$(printf '%s' "$HERR" | head -c 200)]"
+    else
+      case "$HERR" in
+        *"$TOK_KNOWLEDGE"*) ;;
+        *) why="지식 게이트가 아닌 다른 이유로 막았다: [$(printf '%s' "$HERR" | head -c 200)]" ;;
+      esac
+    fi
+  else
+    if [ "$HRC" -ne 0 ]; then
+      why="게이트가 꺼져야 하는데 rc=$HRC / stderr=[$(printf '%s' "$HERR" | head -c 200)]"
+    elif [ -n "$HERR" ]; then
+      why="꺼진 게이트가 stderr 를 냈다: [$(printf '%s' "$HERR" | head -c 200)]"
+    fi
   fi
   report "$name" "$why"
 }
@@ -317,6 +369,24 @@ i12() { hcase '리터럴 빈 값은 "빈 값으로 설정됨" 으로 알린다' 
 i13() { hcase '선언 2개는 "읽지 못함" 으로 알린다'            2 "$TOK_UNREADABLE" "$TOK_TC_FAIL" \
         "$KEY=\"false\""$'\n'"$KEY=\"false\""$'\n'; }
 
+# --- 지식 게이트 케이스 — ADR-0008 의 "기본 켜짐" 계약 ------------------
+# 이 게이트가 **꺼지는 방향으로 틀리는 것**이 최악이다. 사용자는 지식이 쌓인다고 믿는데
+# 그 턴부터 아무것도 안 남고, 아무 에러도 안 난다. 그래서 표명이 없거나 모호하면 켠다.
+
+g01() { gcase '키가 아예 없으면 켜짐 (기존 설치본 동작 보존)' on \
+        "$KEY=\"true\""$'\n'; }
+g02() { gcase '"on" 이면 켜짐'                    on  "$GKEY=\"on\""$'\n'; }
+g03() { gcase '리터럴로 비우면 꺼짐 — 유일한 끄는 법' off "$GKEY=\"\""$'\n'; }
+g04() { gcase '"off" 라고 적어도 켜짐 (비어 있지 않다)' on "$GKEY=\"off\""$'\n'; }
+g05() { gcase '선언이 2개면 켜짐 (어느 게 이기는지 모른다)' on \
+        "$GKEY=\"\""$'\n'"$GKEY=\"\""$'\n'; }
+g06() { gcase '히어독 본문의 빈 값으로는 못 끈다'  on \
+        'cat <<EOF'$'\n'"$GKEY=\"\""$'\n''EOF'$'\n'; }
+g07() { gcase '들여쓴 위장으로는 못 끈다'          on  "  $GKEY=\"\""$'\n'; }
+g08() { gcase '주석 처리된 선언으로는 못 끈다'      on  "# $GKEY=\"\""$'\n'; }
+g09() { gcase 'harness.env 가 없으면 켜짐'         on  '__NOFILE__'; }
+g10() { gcase 'CRLF 로 비워도 꺼진다'              off "$GKEY=\"\""$'\r\n'; }
+
 # --- 러너 ----------------------------------------------------------------
 
 CASES='
@@ -327,8 +397,9 @@ p31 p32 p33 p34 p35 p36 p37 p38 p39 p40
 p41 p42 p43 p44 p45 p46 p47
 i01 i02 i03 i04 i05 i06 i07 i08 i09 i10
 i11 i12 i13
+g01 g02 g03 g04 g05 g06 g07 g08 g09 g10
 '
-EXPECTED_CASES=60
+EXPECTED_CASES=70
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이 상쇄돼
 # 그대로 초록이 된다 — 목록을 직접 봐야 그 조합이 잡힌다.

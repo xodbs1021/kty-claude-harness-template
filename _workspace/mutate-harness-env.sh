@@ -95,7 +95,7 @@ run_mutation 'CR 제거를 지운다' "$COMMON" \
   '  # (변이) CR 제거 삭제'
 
 run_mutation '등호 뒤 선행 공백 거부를 지운다' "$COMMON" \
-  '  if (substr(v, 1, 1) == " " || substr(v, 1, 1) == "\\t") { BAD = 1; return "" }' \
+  '  if (substr(v, 1, 1) == " " || substr(v, 1, 1) == "\t") { BAD = 1; return "" }' \
   '  # (변이) 선행 공백 거부 삭제'
 
 run_mutation '인용 없는 값의 후행 공백 절단을 지운다' "$COMMON" \
@@ -115,7 +115,7 @@ run_mutation '안 닫힌 인용 거부를 지운다' "$COMMON" \
   '  # (변이) 안 닫힌 인용 거부 삭제'
 
 run_mutation '닫는 따옴표 뒤 공백 요구를 지운다' "$COMMON" \
-  '      if (substr(tail, 1, 1) != " " && substr(tail, 1, 1) != "\\t") { BAD = 1; return "" }' \
+  '      if (substr(tail, 1, 1) != " " && substr(tail, 1, 1) != "\t") { BAD = 1; return "" }' \
   '      :'
 
 run_mutation '안 닫힌 히어독 거부를 지운다' "$COMMON" \
@@ -135,7 +135,7 @@ run_mutation '따옴표 뒤 후행 주석 허용을 잡음 취급한다' "$COMMO
   '    if (tail != "") { BAD = 1; return "" }'
 
 run_mutation '인용 없는 값의 후행 주석 절단을 지운다' "$COMMON" \
-  '    if (c == "#") {
+  '    if (c == "#" && i > 1) {
       p = substr(v, i - 1, 1)
       if (p == " " || p == "\t") break
     }' \
@@ -145,10 +145,14 @@ run_mutation '히어독 <<- 의 탭 종결어 처리를 지운다' "$COMMON" \
   '    if (HDASH) sub(/^\t+/, "", t)' \
   '    # (변이) <<- 탭 처리 삭제'
 
-run_mutation '히어독 탐지의 따옴표 상태 추적을 지운다' "$COMMON" \
-  '    if (q != "") { if (c == q) q = ""; i++; continue }
-    if (c == "\"" || c == SQ) { q = c; i++; continue }' \
-  '    # (변이) 따옴표 상태 추적 삭제'
+run_mutation '종결어의 인용 조각 이어붙이기를 지운다' "$COMMON" \
+  '        if (c == "\"" || c == SQ) {
+          q2 = c; j++
+          while (j <= n && substr(s, j, 1) != q2) { t = t substr(s, j, 1); j++ }
+          j++
+          continue
+        }' \
+  '        # (변이) 종결어 인용 조각 처리 삭제'
 
 run_mutation '읽기 실패 경고를 지운다' "$COMMON" \
   "    printf '[하네스] harness.env 를 읽지 못했습니다 — 미설정으로 봅니다: %s\\n' \"\$file\" >&2" \

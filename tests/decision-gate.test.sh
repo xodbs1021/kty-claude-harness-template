@@ -102,6 +102,20 @@ for spec in sys.argv[2:]:
                      "message": {"role": "user",
                                  "content": [{"type": "tool_result", "content": val}]}})
         continue
+    # 실제 기록에서는 두 표식이 **항상 함께** 온다(실측 69/69). 그래서 둘 다 보는 판정은
+    # 서로를 가려, 한쪽을 지워도 아무 케이스가 안 빨개진다 — 변이 측정에서 실제로 드러났다.
+    # 각각을 **독립적으로** 지키려면 표식이 하나뿐인 기록이 필요하다. 형식이 바뀌어 한쪽만
+    # 남는 날, 남은 한쪽이 실제로 일하는지를 재는 것이 이 두 항목이다.
+    if kind == "toolresult_top":       # 상단 toolUseResult 만 (content 는 평문)
+        rows.append({"type": "user", "isSidechain": False,
+                     "toolUseResult": {"stdout": val},
+                     "message": {"role": "user", "content": val}})
+        continue
+    if kind == "toolresult_blk":       # tool_result 블록만 (상단 키 없음)
+        rows.append({"type": "user", "isSidechain": False,
+                     "message": {"role": "user",
+                                 "content": [{"type": "tool_result", "content": val}]}})
+        continue
     side = False
     if kind == "side":
         side, kind = True, "text"
@@ -258,6 +272,13 @@ d17() { silent_case '질문형 문장은 표지로 세지 않는다' \
           'text:이건 범위 밖으로 둘까요?'; }
 d18() { silent_case '선택을 요청하는 문장도 세지 않는다' \
           'text:범위 밖으로 뺄지 어느 쪽이 좋은지 말씀해 주세요.'; }
+# **묻겠다는 말이 서술형으로 끝나는 경우가 질문 신호 판정의 진짜 시험대다.** d17·d18 은
+# 종결이 "…까요/…세요"라 서술형 요구에서 이미 걸러져 질문 판정에 도달조차 하지 않는다 —
+# 그래서 질문 판정을 지워도 아무것도 안 빨개졌다(변이 측정에서 드러났다).
+d18b() { silent_case '묻겠다는 말이 서술형으로 끝나도 세지 않는다' \
+          'text:이게 범위 밖인지 여쭙겠습니다.'; }
+d18c() { silent_case '물어보겠다는 말도 세지 않는다' \
+          'text:이걸 별도로 뺄지 사용자에게 물어보겠습니다.'; }
 d19() { silent_case 'thinking 블록은 스캔하지 않는다' \
           'think:이건 범위 밖이라 그대로 뒀습니다.'; }
 d20() { silent_case '서브에이전트 발화는 스캔하지 않는다' \
@@ -279,6 +300,17 @@ d25() { silent_case '도구 결과 뒤라도 표지가 없으면 안 막는다' 
           'text:작업을 시작합니다.' 'toolresult:ok' 'text:테스트가 전부 통과했습니다.'; }
 d25b() { blocked_case '도구 결과 뒤의 자백도 같은 턴으로 본다' '범위 밖' \
           'text:작업을 시작합니다.' 'toolresult:ok' 'text:나머지는 범위 밖이라 뒀습니다.'; }
+# **자백이 도구 결과보다 앞에 있는 경우가 판정의 진짜 시험대다.** 도구 결과를 턴 경계로
+# 오인하면 그 앞의 발화가 통째로 창 밖으로 밀려 사라지는데, d25b 는 자백이 뒤에 있어서
+# 그 오인을 못 잡는다(경계가 밀려도 뒤 문장은 여전히 창 안이다).
+d25c() { blocked_case '도구 결과 앞의 자백도 놓치지 않는다' '범위 밖' \
+          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult:ok' 'text:작업을 마쳤습니다.'; }
+# 표식이 하나뿐인 도구 결과. 두 판정(상단 키 / 블록)을 **각각** 지킨다 — 실제 기록은 둘 다
+# 갖고 있어서 서로를 가리고, 그러면 한쪽을 지워도 아무 케이스가 안 빨개진다.
+d25d() { blocked_case '상단 키만 있는 도구 결과도 턴 경계가 아니다' '범위 밖' \
+          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult_top:ok' 'text:작업을 마쳤습니다.'; }
+d25e() { blocked_case '블록만 있는 도구 결과도 턴 경계가 아니다' '범위 밖' \
+          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult_blk:ok' 'text:작업을 마쳤습니다.'; }
 
 # ── 3. 발동 조건 — 어느 플래그에서 도나 ──────────────────────────────
 # 사용자 확정(2026-08-10): 코드뿐 아니라 **결정 문서·설계 산출물** 턴에서도 돈다.
@@ -452,7 +484,8 @@ d41() {
 # --- 실행 ----------------------------------------------------------------
 # 목록을 **명시적으로** 센다. 실행 수만 세면 중복 1건 + 누락 1건이 상쇄돼 초록이 된다.
 CASES='d01 d02 d03 d04 d05 d06 d07 d08 d09
-d10 d11 d12 d13 d14 d15 d16 d17 d18 d19 d20 d21 d22 d23 d24 d25 d25b
+d10 d11 d12 d13 d14 d15 d16 d17 d18 d18b d18c d19 d20 d21 d22 d23 d24
+d25 d25b d25c d25d d25e
 d26 d27 d28 d29 d30 d30b
 d31 d32 d33 d34 d35
 d36 d37 d38

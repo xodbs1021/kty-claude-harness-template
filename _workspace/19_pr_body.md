@@ -28,7 +28,7 @@ ADR-0010 이 못박은 지식 회수의 공백 4개(트리거·선택·표명·c
 - `tests/retrieval-attestation.test.sh` **27케이스** (EXPECTED_CASES 고정, 통과 케이스는 후속 게이트 도달 문구 요구)
 - `tests/mark-needs-audit.{test,cases}.sh` 75케이스 (FLAG_NAMES 5종·designdoc 3플래그·codex 이름 비제외 74·75)
 - 변이 `_workspace/mutate-retrieval-gate.sh` **18종 전건 적색 · 미방어 0** (기준선 확인·앵커 1회 매치·HEAD 복원 해시 대조)
-- 기존 6개 스위트 전건 초록 (총 334케이스) + CI 스텝 추가
+- 기존 7개 스위트 포함 전 스위트(8개) 전건 초록 (총 334케이스) + CI 스텝 추가
 - 공시된 측정 공백 1건: exit 0 경로 decision_note 방출(도달 불가 방어) — ADR·테스트 헤더·변이 하네스에 3중 공시
 
 ## Review

@@ -53,7 +53,7 @@ new_project() {
   local p
   p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || return 1
   p="$(CDPATH='' cd -- "$p" && pwd -P)"
-  "$INSTALL" "$p" >/dev/null 2>&1 || return 1
+  "$INSTALL" "$p" --allow-dirty >/dev/null 2>&1 || return 1
   # 구판 식별 표식 — "복원됐나"를 판정하려면 구판이 식별 가능해야 한다.
   printf 'OLD\n' > "$p/.claude/hooks/.old-marker"
   # **사용자 파일** — 템플릿에 없는 것. 디렉터리를 통째로 바꾸는 설계에서 이게 사라지면
@@ -89,11 +89,37 @@ SHIM
 
 run_install() {   # $1=프로젝트  [$2=shim 디렉터리]
   RC=999; OUT=''; DID_RUN=1
+  # --allow-dirty: 이 스위트는 훅 교체 원자성을 재는 곳이고, 배포 가드(락·dirty)는
+  # c10~c13 이 **자기 픽스처 저장소**로 따로 잰다. 여기서 실저장소의 dirty 여부에
+  # 케이스가 좌우되면 개발 중(트리 dirty)에는 스위트 전체가 빨개진다.
   if [ -n "${2-}" ]; then
-    OUT="$(PATH="$2:$PATH" "$INSTALL" "$1" 2>&1)"
+    OUT="$(PATH="$2:$PATH" "$INSTALL" "$1" --allow-dirty 2>&1)"
   else
-    OUT="$("$INSTALL" "$1" 2>&1)"
+    OUT="$("$INSTALL" "$1" --allow-dirty 2>&1)"
   fi
+  RC=$?
+}
+
+# new_tpl — 배포 가드 케이스 전용의 **독립 정본 픽스처**(자기 git 저장소).
+# 실저장소에 락을 만들거나 dirty 를 강요하면 테스트가 개발 트리를 오염시킨다.
+new_tpl() {
+  local t
+  t="$(mktemp -d "$TMPROOT/tpl.XXXXXX")" || return 1
+  t="$(CDPATH='' cd -- "$t" && pwd -P)"
+  cp -R "$REPO_ROOT/template" "$t/template" || return 1
+  mkdir -p "$t/scripts"
+  cp "$REPO_ROOT/install.sh" "$t/install.sh" || return 1
+  cp "$REPO_ROOT/scripts/deploy-guard.sh" "$t/scripts/deploy-guard.sh" || return 1
+  git -C "$t" init -q && git -C "$t" config user.email t@t && git -C "$t" config user.name t \
+    && git -C "$t" add -A >/dev/null && git -C "$t" commit -qm base || return 1
+  printf '%s\n' "$t"
+}
+
+# run_tpl_install <tpl> <프로젝트> [추가 인자...] — 픽스처 정본의 install.sh 를 돌린다.
+run_tpl_install() {
+  local t="$1" p="$2"; shift 2
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$("$t/install.sh" "$p" ${@+"$@"} 2>&1)"
   RC=$?
 }
 
@@ -230,7 +256,7 @@ c08() {
   shim="$TMPROOT/shim.noerr.$$"
   if ! make_mv_shim "$shim" 2 TERM; then report "$name" '픽스처 실패: shim'; return 0; fi
   DID_RUN=1
-  PATH="$shim:$PATH" "$INSTALL" "$p" >/dev/null 2>&-
+  PATH="$shim:$PATH" "$INSTALL" "$p" --allow-dirty >/dev/null 2>&-
   RC=$?
   if [ ! -f "$shim/.hit" ]; then why='주입이 빗나갔다'
   elif [ "$RC" -ne 143 ]; then why="rc=$RC (기대 143 — set +e 가 없으면 1 이 된다)"
@@ -242,8 +268,65 @@ c08() {
 
 # --- 러너 ----------------------------------------------------------------
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09'
-EXPECTED_CASES=9
+# --- 배포 안전 가드 (C안 — 변이 락 무조건 거부 · dirty 는 --allow-dirty 옵트인) ----
+# rc 만 보지 않는다: 거부 케이스는 **대상이 안 만들어졌는지**(부수 효과 부재)와
+# 사유 문구까지 요구한다 — 가드가 늦게 서서 반쯤 배포한 뒤 거부해도 rc 는 같다.
+
+c10() {
+  local name='c10 변이 락 → 거부 + 대상 무변경' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  mkdir "$t/.git/mutate-decision-gate.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -eq 0 ];                          then why='락이 있는데 설치가 성공했다'
+  elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why="거부 사유가 없다: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ -e "$p/.claude/hooks" ];              then why='거부인데 훅이 배포됐다 (가드가 너무 늦다)'
+  fi
+  report "$name" "$why"
+}
+
+c11() {
+  local name='c11 dirty 정본 → 거부 + --allow-dirty 안내' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  printf 'dirty\n' >> "$t/template/.claude/hooks/_common.sh"
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -eq 0 ];                          then why='dirty 인데 설치가 성공했다'
+  elif ! printf '%s' "$OUT" | grep -q '미커밋 변경'; then why='거부 사유가 없다'
+  elif ! printf '%s' "$OUT" | grep -q -- '--allow-dirty'; then why='옵트인 안내가 없다 (막힌 사람이 우회를 발명한다)'
+  elif [ -e "$p/.claude/hooks" ];              then why='거부인데 훅이 배포됐다'
+  fi
+  report "$name" "$why"
+}
+
+c12() {
+  local name='c12 dirty + --allow-dirty → 설치 진행 (정상 개발 흐름)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  printf '# dirty-marker\n' >> "$t/template/.claude/hooks/_common.sh"
+  run_tpl_install "$t" "$p" --allow-dirty
+  if [ "$RC" -ne 0 ];                          then why="옵트인인데 거부됐다 rc=$RC: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  elif ! grep -q 'dirty-marker' "$p/.claude/hooks/_common.sh"; then
+    why='dirty 상태(수정본)가 배포되지 않았다 — 시험 설치의 목적 자체가 안 됐다'
+  fi
+  report "$name" "$why"
+}
+
+c13() {
+  local name='c13 락 + --allow-dirty → 그래도 거부 (락에는 옵트인 없음)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  mkdir "$t/.git/mutate-retrieval-gate.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  run_tpl_install "$t" "$p" --allow-dirty
+  if [ "$RC" -eq 0 ];             then why='--allow-dirty 가 락 거부까지 뚫었다'
+  elif [ -e "$p/.claude/hooks" ]; then why='거부인데 훅이 배포됐다'
+  fi
+  report "$name" "$why"
+}
+
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13'
+EXPECTED_CASES=13
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

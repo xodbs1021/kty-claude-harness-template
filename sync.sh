@@ -12,12 +12,35 @@ set -euo pipefail
 TPL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$TPL_ROOT/template/.claude"
 
-PROJECT_ARG="${1:?사용법: sync.sh <프로젝트-경로> [--no-pull]}"
+ALLOW_DIRTY=0
+NO_PULL=0
+_args=()
+for _a in "$@"; do
+  case "$_a" in
+    --allow-dirty) ALLOW_DIRTY=1 ;;
+    --no-pull)     NO_PULL=1 ;;
+    *) _args+=("$_a") ;;
+  esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+
+PROJECT_ARG="${1:?사용법: sync.sh <프로젝트-경로> [--no-pull] [--allow-dirty]}"
 PROJECT="$(cd "$PROJECT_ARG" && pwd)"
 DST="$PROJECT/.claude"
 
+# ── 0) 배포 안전 가드 — **pull 보다 먼저.** 변이 측정 중에 pull 로 트리를 바꾸면
+#      변이 하네스의 복원 앵커까지 깨진다. install.sh 도 같은 가드를 다시 지나지만
+#      (그쪽이 정본), 여기서 미리 서는 이유는 pull·diff 미리보기 전에 멈추기 위해서다.
+if [ -f "$TPL_ROOT/scripts/deploy-guard.sh" ]; then
+  # shellcheck source=scripts/deploy-guard.sh
+  . "$TPL_ROOT/scripts/deploy-guard.sh"
+  deploy_guard "$TPL_ROOT" "$ALLOW_DIRTY" || exit 1
+else
+  echo "   ⚠ 배포 가드를 찾지 못했습니다($TPL_ROOT/scripts/deploy-guard.sh) — 락·dirty 검사 없이 진행합니다." >&2 || true
+fi
+
 # ── 1) 정본 갱신 ─────────────────────────────────────────────────────
-if [ "${2:-}" != "--no-pull" ] && git -C "$TPL_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+if [ "$NO_PULL" -ne 1 ] && git -C "$TPL_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   if git -C "$TPL_ROOT" pull --ff-only 2>/dev/null; then
     echo "== 템플릿 정본 pull 완료"
   else
@@ -90,8 +113,14 @@ if [ "$changed" -eq 0 ]; then
 fi
 
 # ── 3) 적용 (install.sh 멱등 재실행 — 슬롯·CLAUDE.md·settings는 보존/생략됨) ──
+# --allow-dirty 는 그대로 넘긴다 — 안 넘기면 여기(0단계)는 통과했는데 install 쪽
+# 가드에서 다시 막혀, 사용자가 같은 옵트인을 두 번 강요당한다.
 echo ""
-"$TPL_ROOT/install.sh" "$PROJECT"
+if [ "$ALLOW_DIRTY" -eq 1 ]; then
+  "$TPL_ROOT/install.sh" "$PROJECT" --allow-dirty
+else
+  "$TPL_ROOT/install.sh" "$PROJECT"
+fi
 
 # 슬롯 키 덧붙이기 — install.sh **뒤**다. install 이 harness.env 를 새로 만들었다면
 # 템플릿에 이미 키가 들어 있어 여기 올 일이 없다(위 판정은 install 이전 상태를 봤다).

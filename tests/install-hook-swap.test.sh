@@ -361,16 +361,20 @@ c15() { # sync 의 --allow-dirty **전달** — 내부 install 호출로 그대�
 }
 
 c16() { # sync 의 가드는 **pull·미리보기보다 앞**이다. 자기 가드를 지워도 내부 install 이
-        # 어차피 거부하므로 rc 로는 구별이 안 된다 — "미리보기 출력이 안 나왔는가"로 잰다.
-  local name='c16 sync + 락 → 미리보기 전에 거부 (조기 가드)' t p why=''
+        # 어차피 거부하므로 rc 로는 구별이 안 된다 — "pull·미리보기의 흔적이 없는가"로 잰다.
+        # --no-pull 을 **쓰지 않는다**: 쓰면 pull 경로가 비활성이라 "가드가 pull 보다 앞"
+        # 계약을 아무것도 안 잰다([cx] r2 지적). 픽스처에 원격이 없으므로 pull 이 실제로
+        # 돌면 "pull 완료/실패" 중 하나가 반드시 찍힌다 — 그 부재가 곧 조기 가드의 증거다.
+  local name='c16 sync + 락 → pull·미리보기 전에 거부 (조기 가드)' t p why=''
   if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
   p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
   mkdir "$t/.git/mutate-harness-env.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
   RC=999; OUT=''; DID_RUN=1
-  OUT="$("$t/sync.sh" "$p" --no-pull 2>&1)"; RC=$?
+  OUT="$("$t/sync.sh" "$p" 2>&1)"; RC=$?
   if [ "$RC" -eq 0 ];                          then why='락인데 sync 가 성공했다'
   elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why='거부 사유가 없다'
-  elif printf '%s' "$OUT" | grep -q '갱신될 글루 diff'; then why='가드가 미리보기 뒤에 섰다 (조기 가드 계약 위반)'
+  elif printf '%s' "$OUT" | grep -q 'pull'; then why='가드가 pull 뒤에 섰다 (조기 가드 계약 위반)'
+  elif printf '%s' "$OUT" | grep -q '갱신될 글루 diff'; then why='가드가 미리보기 뒤에 섰다'
   fi
   report "$name" "$why"
 }
@@ -401,8 +405,28 @@ c18() { # 가드 파일 부재(부분 복사본) — 역시 진행하되 경고.
   report "$name" "$why"
 }
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 c18'
-EXPECTED_CASES=18
+c19() { # 오염된 GIT_DIR/GIT_WORK_TREE 아래서도 가드는 **정본을** 검사한다. 소거가
+        # 없으면 -C 가 무시돼 깨끗한 남의 저장소를 보고 락을 통과시킨다([cx] HIGH 회귀).
+        # 공시: git status 가 "성공한 rev-parse 뒤에만 실패"하는 상태는 이식성 있게
+        # 재현할 방법을 못 찾아 케이스가 없다 — fail-closed 방향은 코드 계약으로만 남는다.
+  local name='c19 오염된 GIT_DIR 아래서도 정본의 락을 본다' t p other why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  other="$(mktemp -d "$TMPROOT/other.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  ( cd "$other" && git init -q . && git config user.email t@t && git config user.name t \
+    && printf 'x\n' > x && git add x && git commit -qm base ) >/dev/null 2>&1 \
+    || { report "$name" '픽스처 실패: other repo'; return 0; }
+  mkdir "$t/.git/mutate-decision-gate.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$(GIT_DIR="$other/.git" GIT_WORK_TREE="$other" "$t/install.sh" "$p" 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ]; then why='오염된 환경에서 락을 못 보고 통과했다'
+  elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why="거부 사유가 없다: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  fi
+  report "$name" "$why"
+}
+
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19'
+EXPECTED_CASES=19
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

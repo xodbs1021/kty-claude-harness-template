@@ -40,8 +40,11 @@ else
 fi
 
 # ── 1) 정본 갱신 ─────────────────────────────────────────────────────
-if [ "$NO_PULL" -ne 1 ] && git -C "$TPL_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-  if git -C "$TPL_ROOT" pull --ff-only 2>/dev/null; then
+# GIT_DIR/GIT_WORK_TREE 소거 — 가드와 같은 이유(검수 [cx]): 오염된 환경에서 -C 가
+# 무시되면 **남의 저장소에** pull 을 때리거나 정본 갱신이 조용히 빗나간다.
+if [ "$NO_PULL" -ne 1 ] \
+   && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$TPL_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  if env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$TPL_ROOT" pull --ff-only 2>/dev/null; then
     echo "== 템플릿 정본 pull 완료"
   else
     echo "== pull 실패(원격 없음/오프라인/충돌) — 로컬 정본으로 진행"

@@ -37,7 +37,15 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
   exit 1
 fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# **락만 걷어내는 트랩은 부족하다.** 측정 도중 SIGINT 로 끊기면 주입된 변이가 작업
+# 트리에 그대로 남고, 이 저장소는 **측정 중인 트리를 커밋해 변이가 섞여 들어간 사고를
+# 이미 겪었다.** 다음 실행이 dirty 검사로 거부해 주긴 하지만, 그 사이에 커밋하면 늦는다.
+# 대상 파일에 미커밋 변경이 없음은 위에서 이미 확인했으므로 restore 는 안전하다.
+cleanup() {
+  git restore --source=HEAD --worktree -- "$COMMON" "$STOP" 2>/dev/null
+  rmdir "$LOCK" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
 
 restore_and_verify() {   # $1 = 파일
   git restore --source=HEAD --worktree -- "$1" || { echo "✗ restore 실패: $1" >&2; exit 1; }
@@ -240,6 +248,84 @@ run_mutation '기록을 못 읽어도 조용히 넘어간다' "$COMMON" \
 run_mutation '턴 시작점을 못 찾으면 전체를 훑는다' "$COMMON" \
   '    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")' \
   '    start = -1'
+
+echo
+echo '── F. 듀얼 검수 1라운드 반영분 ([cx] 지적) ─────────────────────────'
+
+run_mutation '"묻지 않았다" 예외를 지운다 (자백이 샌다)' "$COMMON" \
+  '            if QUESTION.search(whole) and not NEG_ASK.search(whole):' \
+  '            if QUESTION.search(whole):'
+
+run_mutation '마침표를 무조건 종결로 되돌린다' "$COMMON" \
+  'SENT       = re.compile("([\n!?…。！？]+|\\.(?=\\s)|\\.$)")' \
+  'SENT       = re.compile("([\n.!?…。！？]+)")'
+
+run_mutation '물결 펜스 지원을 지운다' "$COMMON" \
+  '    for fence in ("```", "~~~"):' \
+  '    for fence in ("```",):'
+
+run_mutation '이중 백틱 지원을 지운다' "$COMMON" \
+  'INLINE     = re.compile("``[^`\n]*``|`[^`\n]*`")' \
+  'INLINE     = re.compile("`[^`\n]*`")'
+
+run_mutation '문자열 content 를 건너뛴다 (발화가 사라진다)' "$COMMON" \
+  '    if isinstance(content, str):
+        # 문자열 본문도 발화다. 건너뛰면 그 발화가 스캔에서 통째로 사라진다.
+        texts.append(content)
+        continue' \
+  '    if isinstance(content, str):
+        continue'
+
+run_mutation '부분 손상을 건너뛴다 (전멸일 때만 실패)' "$COMMON" \
+  'if broken:
+    fail("대화 기록 %d줄을 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)" % broken)
+if not entries:
+    fail("대화 기록이 비어 있습니다")' \
+  'if lines and not entries:
+    fail("대화 기록을 한 줄도 파싱하지 못했습니다")'
+
+run_mutation 'message 형식 검사를 지운다' "$COMMON" \
+  '    msg = e.get("message")
+    if not isinstance(msg, dict):' \
+  '    msg = e.get("message") or {}
+    if False:'
+
+run_mutation 'content 형식 검사를 지운다' "$COMMON" \
+  '    if not isinstance(content, list):
+        # 볼 수 없는 발화가 있다 = 사각지대다. 조용히 건너뛰면 게이트가 죽은 줄도 모른다.
+        fail("assistant 항목의 content 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")' \
+  '    if not isinstance(content, list):
+        continue'
+
+# **예상 밖 rc 를 통과로 읽던 경로.** 정상 경로가 모르는 코드를 내게 만들면, 호출부의
+# catch-all 이 살아 있는 한 위양성 케이스들이 "판독 불가 경고"를 보고 빨개진다.
+# 그 catch-all 을 지우면 이 변이가 초록으로 남는다 — 그게 이 항목이 재는 것이다.
+run_mutation '정상 경로가 예상 밖 rc 를 낸다 (호출부 catch-all 검출)' "$COMMON" \
+  'if not hits:
+    raise SystemExit(3)' \
+  'if not hits:
+    raise SystemExit(9)'
+
+# **공시된 측정 공백:** 호출부의 `*)` catch-all 만 지우는 변이는 **원리적으로 초록**이다.
+# 정상 동작에서는 예상 밖 rc 가 나오지 않으므로 그 가지에 도달하는 입력이 없기 때문이다
+# (python3 를 없애면 json_get 이 먼저 죽어 transcript_path 가 비고, 그러면 rc=2 경로로
+# 빠져 catch-all 을 안 탄다). 그래서 바로 위 항목 — **정상 경로가 rc=9 를 내게 만드는
+# 변이** — 가 그 가지의 생존을 대신 증명한다: catch-all 이 살아 있으면 위양성 케이스들이
+# 판독 불가 경고를 보고 빨개지고, catch-all 을 지우면 그 변이가 초록으로 돌아선다.
+# 두 항목은 짝이다. 하나만 보고 판단하지 마라(위음성 카탈로그 17번).
+
+run_mutation '발동을 플래그가 아니라 조기 종료에 맡긴다' "$STOP" \
+  'if [ -s "$AUDIT_FLAG" ] || [ -s "$EXPLAIN_FLAG" ] || [ -s "$DUALREVIEW_FLAG" ] || knowledge_gate_active; then
+  decision_armed=1
+fi' \
+  'decision_armed=1'
+
+# 앞 게이트에서 사유를 빼면 d51 만 빨개져야 한다. 함수를 통째로 무력화하면 판독 불가
+# 케이스가 전부 빨개져서 "앞 게이트에도 실리는가"를 격리해 재지 못한다.
+run_mutation '앞 게이트(듀얼리뷰)에서 사유를 뺀다' "$STOP" \
+  '    emit_decision_note
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"' \
+  '    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"'
 
 echo
 echo '── E. 순서 계약 — 게이트를 뒤로 옮긴다 ─────────────────────────────'

@@ -108,6 +108,17 @@ gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출�
   fi
 }
 
+# 결정 게이트가 대화 기록을 못 읽었으면 **어느 게이트가 막든** 그 사유를 함께 낸다.
+# 감사 게이트에만 실으면, 앞 게이트가 먼저 막은 턴에는 안 보이고 그 플래그를 지운 다음
+# 턴에는 조기 종료로 **영영 사라진다**(검수 [cx] 지적). 조용히 사라지는 것이 이 게이트를
+# 만든 이유 그 자체라, 경고를 삼키지 않는 것이 fail-open 의 조건이다.
+emit_decision_note() {
+  [ -n "${decision_note:-}" ] || return 0
+  echo
+  echo "참고: $decision_note"
+  echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
+}
+
 bump_and_block() {
   if ! printf '%s\n' "$((count + 1))" > "$BLOCK_COUNT" 2>/dev/null; then
     # 카운터를 못 쓰면 무한루프 위험 → 표준 가드로 폴백
@@ -179,13 +190,28 @@ fi
 #      노력을 쓰기 전에 묻는 편이 싸다. (push 탐지와 달리 순서가 정확성을 바꾸지는 않는다 —
 #      대화 기록은 이미 다 쓰였고 게이트 순서가 그 내용을 바꾸지 않기 때문이다.)
 decision_note=""
-if ! hook_disabled "stop:decision"; then
+# **발동 조건은 플래그다.** 조기 종료는 push 미완만으로도 풀리므로, 그것만 보고 스캔하면
+# 아무것도 안 바꾼 읽기 전용 턴까지 검사하게 된다 — "플래그와 무관하게 항상"은 사용자가
+# 기각한 보기다. 여기서 한 번 더 물어 발동 계약을 조기 종료와 분리한다.
+decision_armed=0
+if [ -s "$AUDIT_FLAG" ] || [ -s "$EXPLAIN_FLAG" ] || [ -s "$DUALREVIEW_FLAG" ] || knowledge_gate_active; then
+  decision_armed=1
+fi
+if [ "$decision_armed" -eq 1 ] && ! hook_disabled "stop:decision"; then
   decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?
-  if [ "$decision_rc" -eq 2 ]; then
-    # **이 게이트의 유일한 fail-open.** 통과시키되 사유를 (6) 의 메시지에 실어 보낸다.
-    # 대화 기록 형식은 하네스 소유가 아니라, 여기서 차단하면 그 세션 안에 고칠 방법이 없다.
-    decision_note="결정 게이트 생략 ($decision_hits)"
-  elif [ "$decision_rc" -eq 0 ]; then
+  case "$decision_rc" in
+    3) : ;;   # 표지 없음 · 또는 이 턴에 물었음
+    2)
+      # **이 게이트의 유일한 fail-open.** 통과시키되 사유를 게이트 메시지에 실어 보낸다.
+      # 대화 기록 형식은 하네스 소유가 아니라, 여기서 차단하면 그 세션 안에 고칠 방법이 없다.
+      decision_note="결정 게이트 생략 ($decision_hits)" ;;
+    0) ;;     # 아래에서 차단한다 (case 안에서 하면 들여쓰기가 깊어져 메시지가 안 읽힌다)
+    *)
+      # **모르는 rc 는 통과가 아니라 판독 불가다.** python3 부재(127)·처리 못 한 예외(1)·
+      # 신호 종료가 전부 여기로 온다. 이걸 통과로 읽으면 게이트가 조용히 사라진다.
+      decision_note="결정 게이트 생략 (스캐너가 예상 밖 상태로 끝남 rc=$decision_rc — python3 부재·예외·신호 종료일 수 있습니다)" ;;
+  esac
+  if [ "$decision_rc" -eq 0 ]; then
     gate_budget "decision"
     {
       echo "[완료 차단] 혼자 정한 것이 있는데 이 턴에 사용자에게 한 번도 묻지 않았습니다."
@@ -232,6 +258,7 @@ if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
     echo "     codex 미설치·호출 실패면 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을 명시한 뒤에 지운다."
     echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
     echo
+    emit_decision_note
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
   } >&2
   bump_and_block
@@ -254,6 +281,7 @@ if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
     echo "  2. 설명을 낸 뒤에만:  rm -f .claude/.needs-explain"
     echo "     설명 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
     echo
+    emit_decision_note
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"
   } >&2
   bump_and_block
@@ -287,6 +315,7 @@ if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
     echo "     completion-auditor 가 그 증거(또는 불요 사유의 타당성)를 검증한다."
     echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
     echo
+    emit_decision_note
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
   } >&2
   bump_and_block
@@ -312,6 +341,7 @@ if [ -n "$push_unsent" ]; then
     echo "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && git fetch origin"
     echo "  push 여부가 로컬에서 안 보이는 것 자체가 위험합니다 — 29개를 잃을 때 그랬습니다."
     echo
+    emit_decision_note
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
   } >&2
   bump_and_block
@@ -328,13 +358,7 @@ gate_budget "audit"
     echo
     echo "참고: $typecheck_note"
   fi
-  # 결정 게이트가 대화 기록을 못 읽었으면 **여기서 소리를 낸다.** 그 게이트만 조용히
-  # 사라지면 "물어봤나"를 아무도 안 보게 되고, 그게 정확히 이 게이트를 만든 이유다.
-  if [ -n "$decision_note" ]; then
-    echo
-    echo "참고: $decision_note"
-    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
-  fi
+  emit_decision_note
   echo
   echo "해야 할 일:"
   echo "  1. completion-auditor 에이전트로 완료 주장을 1차 증거로 검증한다."

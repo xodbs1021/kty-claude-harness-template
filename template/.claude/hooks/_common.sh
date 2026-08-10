@@ -316,8 +316,14 @@ print(data)
 #
 # ── 반환 계약 ─────────────────────────────────────────────────────────
 #   rc=0 : 차단해야 한다. stdout = 걸린 문장들(줄당 하나)
-#   rc=1 : 차단 불필요 (표지 없음 · 또는 이 턴에 질문을 했음)
 #   rc=2 : **판독 불가.** stdout = 사유 한 줄
+#   rc=3 : 차단 불필요 (표지 없음 · 또는 이 턴에 질문을 했음)
+#   그 밖 : **예상 밖.** python3 부재(127) · 처리 못 한 예외(1) · 신호 종료 등
+#
+# "차단 불필요"에 1 이 아니라 **3** 을 쓰는 이유: python 이 처리 못 한 예외로 죽으면
+# 그것도 1 이라, 1 을 정상 통과로 쓰면 **크래시가 조용한 통과로 위장된다.** 정상 경로에
+# 흔한 코드를 주지 않으면 호출부가 "모르는 rc = 무언가 잘못됐다"로 갈라낼 수 있다.
+# 호출부는 0·2·3 만 알고 나머지는 전부 판독 불가로 취급해야 한다.
 #
 # ── rc=2 가 이 게이트의 유일한 fail-open 지점이다 ────────────────────
 # 대화 기록의 형식은 하네스가 소유하지 않는다 — 도구 제공자가 정하고 예고 없이 바뀐다.
@@ -351,15 +357,26 @@ QUESTION = re.compile(
     "\\?|까요|나요|ㄹ까|을까|할까|여쭤|여쭈|여쭙|물어|어떠신|어느 쪽"
     "|골라|선택해|정해 ?주|알려 ?주|괜찮으신|의견"
 )
+# **"묻지 않았다"는 물음이 아니라 자백이다.** 이게 없으면 겨누는 문장 자체가 빠져나간다 —
+# "사용자에게 물어보지 않고 제 판단으로 진행했습니다" 는 `물어` 때문에 질문으로 오인된다.
+# 부정이 붙으면 위 QUESTION 제외를 적용하지 않는다.
+NEG_ASK = re.compile(
+    "물어보지 ?않|물어보지도|묻지 ?않|묻지도|여쭙지 ?않|여쭈지 ?않|여쭤보지 ?않"
+    "|확인하지 ?않|확인 ?없이|의견을 받지 ?않|물어보는 대신|묻는 대신|묻지 못"
+)
 # 서술형 종결. "내가 그렇게 했다"는 단정만 잡는다.
 DECLARATIVE = re.compile("(?:다|음|함|됨|임|옴)$")
 
-INLINE     = re.compile("`[^`\n]*`")
+# 이중 백틱 코드 span 이 먼저다 — 단일 규칙만 두면 ``a`b`` 의 안쪽이 산문으로 샌다.
+INLINE     = re.compile("``[^`\n]*``|`[^`\n]*`")
 QUOTED     = re.compile("\"[^\"\n]*\"|'[^'\n]*'|“[^”\n]*”"
                         "|‘[^’\n]*’|「[^」\n]*」"
                         "|『[^』\n]*』")
 BLOCKQUOTE = re.compile("^\\s{0,3}>")
-SENT       = re.compile("([\n.!?…。！？]+)")
+# 마침표는 **뒤에 공백이나 줄끝이 올 때만** 문장 종결이다. 무조건 종결로 보면
+# `README.md`·`_common.sh`·버전 번호가 한 문장을 쪼개, 표지와 서술형 종결이 서로 다른
+# 조각으로 갈라져 **둘 다 만족하는 조각이 없어진다**(위음성).
+SENT       = re.compile("([\n!?…。！？]+|\\.(?=\\s)|\\.$)")
 LEAD       = re.compile("^[\\s*_>#\\-–—•·]+")
 TRAIL      = re.compile("[\\s*_`~\\[\\](){}<>:;,·…\\-—–]+$")
 
@@ -374,7 +391,10 @@ def fail(reason):
 def drop_fences(s):
     # 짝수 조각만 코드 **밖**이다. 펜스가 안 닫혔으면 마지막 조각은 코드 안으로 친다 —
     # 스트리밍 중 잘린 기록에서 코드가 산문으로 새는 것을 막는다.
-    return "\n".join(p for i, p in enumerate(s.split("```")) if i % 2 == 0)
+    # 백틱만 보면 `~~~` 펜스의 예문이 산문으로 검사된다(문서가 약속한 범위보다 좁다).
+    for fence in ("```", "~~~"):
+        s = "\n".join(p for i, p in enumerate(s.split(fence)) if i % 2 == 0)
+    return s
 
 
 def is_user_prompt(e):
@@ -400,14 +420,19 @@ except Exception as exc:
     fail("대화 기록을 열지 못했습니다: %s" % exc.__class__.__name__)
 
 lines = [ln for ln in raw.splitlines() if ln.strip()]
-entries = []
+entries, broken = [], 0
 for ln in lines:
     try:
         entries.append(json.loads(ln))
     except Exception:
-        pass                # 개별 줄 손상은 건너뛴다. 전멸이면 바로 아래에서 걸린다
-if lines and not entries:
-    fail("대화 기록을 한 줄도 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+        broken += 1
+# **한 줄이라도 못 읽으면 판독 불가다.** 건너뛰면 그 줄이 하필 자백이 담긴 발화이거나
+# 이 턴의 사용자 프롬프트일 때 조용히 새고, 후자는 경계가 **지난 턴으로 밀려** 위양성까지
+# 낳는다. "전멸일 때만 실패"로 두면 부분 손상이라는 가장 흔한 경우를 정확히 놓친다.
+if broken:
+    fail("대화 기록 %d줄을 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)" % broken)
+if not entries:
+    fail("대화 기록이 비어 있습니다")
 
 start = -1
 for i, e in enumerate(entries):
@@ -422,9 +447,19 @@ asked, texts = 0, []
 for e in entries[start + 1:]:
     if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):
         continue
-    content = (e.get("message") or {}).get("content")
-    if not isinstance(content, list):
+    msg = e.get("message")
+    if not isinstance(msg, dict):
+        # truthy 비-dict 를 `or {}` 로 받으면 여기서 예외가 나고, 그 예외는 아래 "표지 없음"과
+        # 구별되지 않는 종료 코드로 나간다 — 조용한 통과다. 형식 변화로 보고 소리를 낸다.
+        fail("assistant 항목의 message 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
+    content = msg.get("content")
+    if isinstance(content, str):
+        # 문자열 본문도 발화다. 건너뛰면 그 발화가 스캔에서 통째로 사라진다.
+        texts.append(content)
         continue
+    if not isinstance(content, list):
+        # 볼 수 없는 발화가 있다 = 사각지대다. 조용히 건너뛰면 게이트가 죽은 줄도 모른다.
+        fail("assistant 항목의 content 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
     for b in content:
         if not isinstance(b, dict):
             continue
@@ -437,7 +472,7 @@ for e in entries[start + 1:]:
                 texts.append(t)
 
 if asked > 0:
-    raise SystemExit(1)
+    raise SystemExit(3)
 
 hits, seen = [], set()
 for text in texts:
@@ -449,7 +484,8 @@ for text in texts:
         for i in range(0, len(chunks), 2):
             body = chunks[i]
             whole = body + (chunks[i + 1] if i + 1 < len(chunks) else "")
-            if QUESTION.search(whole):
+            # 부정이 붙으면 물음이 아니라 자백이다 — "물어보지 않고 …했습니다".
+            if QUESTION.search(whole) and not NEG_ASK.search(whole):
                 continue
             core = TRAIL.sub("", LEAD.sub("", body).strip())
             if not core or not MARKER.search(core) or not DECLARATIVE.search(core):
@@ -460,7 +496,7 @@ for text in texts:
             hits.append(core if len(core) <= MAX_LEN else core[:MAX_LEN] + "…")
 
 if not hits:
-    raise SystemExit(1)
+    raise SystemExit(3)
 for h in hits[:MAX_HITS]:
     sys.stdout.write(h + "\n")
 if len(hits) > MAX_HITS:

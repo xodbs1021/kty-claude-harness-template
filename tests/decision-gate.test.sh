@@ -116,6 +116,21 @@ for spec in sys.argv[2:]:
                      "message": {"role": "user",
                                  "content": [{"type": "tool_result", "content": val}]}})
         continue
+    # 형식이 어긋난 항목들. 전부 "판독 불가"로 떨어져야 하는 입력이다 —
+    # 조용히 건너뛰면 그 발화가 스캔에서 사라지고 게이트가 죽은 줄도 모른다.
+    if kind == "broken":               # JSON 이 아닌 줄
+        rows.append("\x00RAW\x00" + (val or "not json at all {{{"))
+        continue
+    if kind == "strtext":              # content 가 문자열인 assistant (형식 변형)
+        rows.append({"type": "assistant", "isSidechain": False,
+                     "message": {"content": val}})
+        continue
+    if kind == "badmsg":               # message 가 truthy 비-dict
+        rows.append({"type": "assistant", "isSidechain": False, "message": "문자열 메시지"})
+        continue
+    if kind == "badcontent":           # content 가 list 도 str 도 아님
+        rows.append({"type": "assistant", "isSidechain": False, "message": {"content": 42}})
+        continue
     side = False
     if kind == "side":
         side, kind = True, "text"
@@ -134,7 +149,10 @@ for spec in sys.argv[2:]:
 
 with open(out, "w", encoding="utf-8") as fh:
     for row in rows:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        if isinstance(row, str) and row.startswith("\x00RAW\x00"):
+            fh.write(row[5:] + "\n")     # 일부러 깨뜨린 줄은 그대로 쓴다
+        else:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 PY
 }
 
@@ -481,6 +499,79 @@ d41() {
   report "$name" "$why"
 }
 
+# ── 8. 듀얼 검수 1라운드 반영분 ([cx] 지적) ──────────────────────────
+# 고침의 실측과 회귀 방어는 다른 일이다. 고쳤으면 "이 줄을 지우면 무엇이 빨개지나"에
+# 답이 있어야 한다 — 아래가 그 답이다.
+
+# [cx] **"묻지 않았다"가 질문 신호에 걸려 제외됐다** — 겨누는 문장 자체가 빠져나갔다.
+d42() { blocked_case '"물어보지 않고 …했습니다" 를 막는다' '제 판단으로' \
+          'text:사용자에게 물어보지 않고 제 판단으로 진행했습니다.'; }
+d43() { blocked_case '"확인하지 않고 …했습니다" 를 막는다' '가정하여' \
+          'text:사용자 의견을 확인하지 않고 가정하여 구현했습니다.'; }
+# [cx] 마침표를 무조건 종결로 보면 파일명이 문장을 쪼개 **표지와 종결이 갈린다**.
+d44() { blocked_case '파일명 속 마침표가 문장을 쪼개지 않는다' '별도로' \
+          'text:나머지는 별도로 README.md 에 기록했습니다.'; }
+# [cx] 문서가 한정 없이 "코드펜스·인라인 코드는 안 본다"고 약속했는데 형태가 좁았다.
+d45() { silent_case '물결 펜스 안도 스캔하지 않는다' \
+          'text:예시:
+~~~
+이건 범위 밖이라 그대로 뒀습니다.
+~~~
+위가 걸리는 형태다.'; }
+d46() { silent_case '이중 백틱 코드 span 도 스캔하지 않는다' \
+          'text:표지 어휘는 ``범위 밖`` 이다.'; }
+# [cx] 문자열 content 를 건너뛰면 그 발화가 스캔에서 통째로 사라진다.
+d47() { blocked_case 'content 가 문자열인 발화도 스캔한다' '범위 밖' \
+          'strtext:이건 범위 밖이라 그대로 뒀습니다.'; }
+# [cx] **일부** 손상이 "표지 없음"으로 조용히 통과하던 경로. 전멸만 잡으면 가장 흔한
+# 경우를 정확히 놓친다 — 깨진 줄이 하필 자백이거나 이 턴의 프롬프트일 수 있다.
+d48() { openq_case '일부 줄만 깨져도 통과 + 경고' prep_partial; }
+d49() { openq_case 'message 형식이 다르면 통과 + 경고' prep_badmsg; }
+d50() { openq_case 'content 형식이 다르면 통과 + 경고' prep_badcontent; }
+prep_partial() {
+  local f="$1/partial.jsonl"
+  mk_transcript "$f" 'text:작업을 시작합니다.' 'broken:' 'text:이건 범위 밖이라 그대로 뒀습니다.'
+  printf '%s\n' "$f"
+}
+prep_badmsg()     { local f="$1/badmsg.jsonl";     mk_transcript "$f" 'badmsg:';     printf '%s\n' "$f"; }
+prep_badcontent() { local f="$1/badcontent.jsonl"; mk_transcript "$f" 'badcontent:'; printf '%s\n' "$f"; }
+
+# [cx] **판독 불가 경고가 감사 게이트에만 실렸다.** 앞 게이트가 먼저 막으면 그 턴에
+# 안 보이고, 그 플래그를 지운 다음 턴엔 조기 종료로 영영 사라진다.
+d51() {
+  local name='판독 불가 경고가 앞 게이트 메시지에도 실린다' why=''
+  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+  setup_flags "$p" dualreview          # 감사 플래그를 **일부러 안 세운다**
+  run_stop "$p" "$p/does-not-exist.jsonl"
+  if   [ "$RC" -ne 2 ];                       then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" '듀얼 리뷰 미수행';  then why='듀얼리뷰 게이트가 막은 게 아니다'
+  elif ! contains "$ERR" "$TOK_NOTE";         then why='앞 게이트 메시지에 판독 불가 사유가 없다'
+  fi
+  report "$name" "$why"
+}
+
+# [cx] **push 미완만으로 조기 종료가 풀린 턴**은 아무것도 안 바꾼 읽기 전용 턴이다.
+# 거기서 결정 게이트가 돌면 "플래그가 서 있고"라는 발동 계약보다 넓어진다.
+d52() {
+  local name='push 미완만 있는 턴에는 결정 게이트가 돌지 않는다' why=''
+  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+  local tp="$p/transcript.jsonl"
+  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+  setup_flags "$p"                      # 플래그 0개
+  # 원격은 있는데 한 번도 push 되지 않은 브랜치를 만든다.
+  ( cd "$p" && git init -q . \
+      && git config user.email t@t && git config user.name t \
+      && git remote add origin "$p/../origin.git" \
+      && git commit -q --allow-empty -m x ) >/dev/null 2>&1 \
+    || { report "$name" '픽스처 실패: git 저장소'; return 0; }
+  run_stop "$p" "$tp"
+  if   [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2 — push 게이트가 막아야 한다)"
+  elif contains "$ERR" "$TOK_DECISION";   then why='플래그가 없는데 결정 게이트가 막았다'
+  elif ! contains "$ERR" '원격에 없습니다'; then why="push 게이트가 막은 게 아니다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+  fi
+  report "$name" "$why"
+}
+
 # --- 실행 ----------------------------------------------------------------
 # 목록을 **명시적으로** 센다. 실행 수만 세면 중복 1건 + 누락 1건이 상쇄돼 초록이 된다.
 CASES='d01 d02 d03 d04 d05 d06 d07 d08 d09
@@ -489,7 +580,8 @@ d25 d25b d25c d25d d25e
 d26 d27 d28 d29 d30 d30b
 d31 d32 d33 d34 d35
 d36 d37 d38
-d39 d40 d41'
+d39 d40 d41
+d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52'
 
 echo "결정 게이트 회귀 테스트"
 expected=0

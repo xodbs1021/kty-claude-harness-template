@@ -102,18 +102,26 @@ run_install() {   # $1=프로젝트  [$2=shim 디렉터리]
 
 # new_tpl — 배포 가드 케이스 전용의 **독립 정본 픽스처**(자기 git 저장소).
 # 실저장소에 락을 만들거나 dirty 를 강요하면 테스트가 개발 트리를 오염시킨다.
-new_tpl() {
+new_tpl() {   # $1 이 no-git 이면 git 저장소를 만들지 않는다(비-git 정본 케이스용)
   local t
   t="$(mktemp -d "$TMPROOT/tpl.XXXXXX")" || return 1
   t="$(CDPATH='' cd -- "$t" && pwd -P)"
   cp -R "$REPO_ROOT/template" "$t/template" || return 1
   mkdir -p "$t/scripts"
   cp "$REPO_ROOT/install.sh" "$t/install.sh" || return 1
+  cp "$REPO_ROOT/sync.sh" "$t/sync.sh" || return 1
   cp "$REPO_ROOT/scripts/deploy-guard.sh" "$t/scripts/deploy-guard.sh" || return 1
-  git -C "$t" init -q && git -C "$t" config user.email t@t && git -C "$t" config user.name t \
-    && git -C "$t" add -A >/dev/null && git -C "$t" commit -qm base || return 1
+  if [ "${1-}" != 'no-git' ]; then
+    git -C "$t" init -q && git -C "$t" config user.email t@t && git -C "$t" config user.name t \
+      && git -C "$t" add -A >/dev/null && git -C "$t" commit -qm base || return 1
+  fi
   printf '%s\n' "$t"
 }
+
+# empty_dir <경로> — 디렉터리가 비어 있는가 (거부 케이스의 "대상 무변경" 단언).
+# .claude/hooks 존재만 보면 가드가 legacy 플래그 이행 뒤로 밀려 대상을 일부 건드려도
+# 통과한다([cx] MEDIUM) — 대상 전체가 손대지지 않았음을 잰다.
+empty_dir() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 
 # run_tpl_install <tpl> <프로젝트> [추가 인자...] — 픽스처 정본의 install.sh 를 돌린다.
 run_tpl_install() {
@@ -280,7 +288,7 @@ c10() {
   run_tpl_install "$t" "$p"
   if [ "$RC" -eq 0 ];                          then why='락이 있는데 설치가 성공했다'
   elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why="거부 사유가 없다: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
-  elif [ -e "$p/.claude/hooks" ];              then why='거부인데 훅이 배포됐다 (가드가 너무 늦다)'
+  elif ! empty_dir "$p";                       then why='거부인데 대상이 변경됐다 (가드가 너무 늦다)'
   fi
   report "$name" "$why"
 }
@@ -294,7 +302,7 @@ c11() {
   if [ "$RC" -eq 0 ];                          then why='dirty 인데 설치가 성공했다'
   elif ! printf '%s' "$OUT" | grep -q '미커밋 변경'; then why='거부 사유가 없다'
   elif ! printf '%s' "$OUT" | grep -q -- '--allow-dirty'; then why='옵트인 안내가 없다 (막힌 사람이 우회를 발명한다)'
-  elif [ -e "$p/.claude/hooks" ];              then why='거부인데 훅이 배포됐다'
+  elif ! empty_dir "$p";                       then why='거부인데 대상이 변경됐다'
   fi
   report "$name" "$why"
 }
@@ -325,8 +333,76 @@ c13() {
   report "$name" "$why"
 }
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13'
-EXPECTED_CASES=13
+c14() { # **기본 경로** — 깨끗한 git 정본에서 옵션 없이 설치가 성공한다. 이 케이스가
+        # 없으면 "가드가 클린 트리까지 막는" 회귀를 어떤 케이스도 못 본다([cx] 지적 —
+        # 나머지 전부가 --allow-dirty 이거나 거부 기대라서).
+  local name='c14 클린 정본 + 옵션 없음 → 설치 성공 (기본 경로)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -ne 0 ];                          then why="클린 트리인데 거부됐다 rc=$RC: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+c15() { # sync 의 --allow-dirty **전달** — 내부 install 호출로 그대로 넘어가야 한다.
+        # 전달을 지우면 sync 쪽 가드는 통과하고 install 쪽 가드가 막아 이 케이스가 빨개진다.
+  local name='c15 sync dirty + --allow-dirty → 전달되어 완주' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  printf '# dirty\n' >> "$t/template/.claude/hooks/_common.sh"
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$("$t/sync.sh" "$p" --no-pull --allow-dirty 2>&1)"; RC=$?
+  if [ "$RC" -ne 0 ];                          then why="옵트인이 전달되지 않았다 rc=$RC: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='sync 가 완주하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+c16() { # sync 의 가드는 **pull·미리보기보다 앞**이다. 자기 가드를 지워도 내부 install 이
+        # 어차피 거부하므로 rc 로는 구별이 안 된다 — "미리보기 출력이 안 나왔는가"로 잰다.
+  local name='c16 sync + 락 → 미리보기 전에 거부 (조기 가드)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  mkdir "$t/.git/mutate-harness-env.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$("$t/sync.sh" "$p" --no-pull 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ];                          then why='락인데 sync 가 성공했다'
+  elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why='거부 사유가 없다'
+  elif printf '%s' "$OUT" | grep -q '갱신될 글루 diff'; then why='가드가 미리보기 뒤에 섰다 (조기 가드 계약 위반)'
+  fi
+  report "$name" "$why"
+}
+
+c17() { # 비-git 정본 — 검사할 것이 없으니 생략하되 **소리를 낸다**(조용한 생략 금지).
+  local name='c17 비-git 정본 → 경고 내고 설치 진행' t p why=''
+  if ! t="$(new_tpl no-git)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -ne 0 ];                          then why="비-git 인데 거부됐다 rc=$RC"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  elif ! printf '%s' "$OUT" | grep -q '배포 가드 생략'; then why='생략이 조용했다 (경고 문구 없음)'
+  fi
+  report "$name" "$why"
+}
+
+c18() { # 가드 파일 부재(부분 복사본) — 역시 진행하되 경고. 경고 문구까지 요구해야
+        # "가드 소멸이 조용히 지나가는" 회귀를 잡는다.
+  local name='c18 가드 파일 부재 → 경고 내고 설치 진행' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  rm "$t/scripts/deploy-guard.sh"
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -ne 0 ];                          then why="가드 부재인데 거부됐다 rc=$RC"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  elif ! printf '%s' "$OUT" | grep -q '배포 가드를 찾지 못했습니다'; then why='가드 소멸이 조용했다'
+  fi
+  report "$name" "$why"
+}
+
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 c18'
+EXPECTED_CASES=18
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

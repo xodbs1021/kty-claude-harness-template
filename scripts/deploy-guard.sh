@@ -30,7 +30,11 @@
 # 거부 경로는 어차피 rc=1 로 끝나므로 그대로 둔다(메시지가 유실돼도 거부는 거부다).
 deploy_guard() {
   local tpl="$1" allow_dirty="$2" gitdir l locks="" st
-  if ! gitdir="$(git -C "$tpl" rev-parse --git-dir 2>/dev/null)"; then
+  # GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE 소거 — git 훅 안에서 불리면 이 변수들이
+  # **다른 저장소**를 가리켜, 정본에 락·dirty 가 있는데 깨끗한 남의 저장소를 검사하고
+  # 통과시킨다(검수 [cx] HIGH). mark-needs-audit 의 git_toplevel 과 같은 처리다.
+  if ! gitdir="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+                 git -C "$tpl" rev-parse --git-dir 2>/dev/null)"; then
     echo "   (배포 가드 생략 — 정본이 git 저장소가 아닙니다: 락·dirty 검사 불가)" >&2 || true
     return 0
   fi
@@ -53,7 +57,8 @@ deploy_guard() {
   fi
 
   # ② dirty — status 실패는 "모름"이라 fail-closed.
-  if ! st="$(git -C "$tpl" status --porcelain 2>/dev/null)"; then
+  if ! st="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+             git -C "$tpl" status --porcelain 2>/dev/null)"; then
     if [ "$allow_dirty" -eq 1 ]; then
       echo "   (배포 가드 — git status 실패, --allow-dirty 지정으로 진행합니다)" >&2 || true
       return 0

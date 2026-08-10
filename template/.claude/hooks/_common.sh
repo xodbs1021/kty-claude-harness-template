@@ -283,3 +283,188 @@ for key in sys.argv[1].split("."):
 print(data)
 ' "$1" 2>/dev/null
 }
+
+# 이 턴의 대화 기록을 읽어 **"물어봤어야 할 것을 혼자 정했다"는 자백**을 찾는다.
+#
+# 왜 이런 게이트가 필요한가: 완료 게이트 넷(타입체크·듀얼리뷰·변경설명·지식반영)은 전부
+# **산출물**을 본다. 에이전트 자신의 행동을 겨눈 것은 없었고, 그 비대칭이 실물로 드러났다 —
+# 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에
+# 한 줄 적었다. 그 "한 줄"은 **도구 호출이 아니라 문장**이라 어떤 PreToolUse 훅도 볼 수 없고
+# 승인창도 안 뜬다(승인창은 *한 일*에만 뜬다). 그래서 Stop 이 대화 기록을 직접 읽는다.
+#
+# ── 판정 ─────────────────────────────────────────────────────────────
+#   결정 표지 어휘를 담은 **서술형** 문장이 있는데  AND  이 턴에 AskUserQuestion 이 0회
+#   → 차단. 질문을 한 번 하면 풀리므로 세션이 벽돌이 되지 않는다.
+#
+# 표지 어휘를 이렇게 고른 이유: 저 말들은 "물어봤어야 할 것을 혼자 정했다"를 **자백**할
+# 때만 나온다. 자백은 있는데 질문이 0회면 그 자체가 위반이다.
+#
+# ── 좁히는 장치 셋 (위양성 억제) ─────────────────────────────────────
+# 어휘만 보면 이 게이트를 **유지보수하는 작업 자체가 매번 걸린다** — 훅·테스트·결정 문서가
+# 그 어휘를 데이터로 품기 때문이다. 그러면 사람이 게이트를 끄게 되고 그게 최악이다.
+#   1) 구조적 제외 — 코드펜스 · 인라인 코드 · 인용줄(>) · 따옴표로 감싼 부분은 안 본다.
+#      그래서 어휘를 **인용부호로 감싸 언급하는 것**은 안 걸린다(문서·설명의 정상 형태다).
+#   2) 질문 신호 제외 — 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+#   3) 서술형 종결 요구 — "…했다/…습니다" 같은 단정으로 끝나야 "내가 그렇게 했다"이다.
+# 대가는 위음성 증가다. 표현을 바꾸면 빠져나간다 — 겨누는 것이 적대적 회피가 아니라
+# **무의식적 습관**이라 그래도 실효가 남는다. guard-hook-disable 과 같은 판단 구조다.
+#
+# **도구 입력은 보지 않는다(text 블록만 본다).** 그래서 이 패턴이 적힌 파일을 Write/Edit
+# 로 쓰는 것은 안 걸린다 — 자기참조 폭발을 원천에서 없애는 장치다.
+# thinking 블록도 안 본다: 거기서 선택지를 저울질하는 것은 결정 통보가 아니다.
+# 서브에이전트 발화(isSidechain)도 뺀다: 서브에이전트는 사용자에게 물을 수 없다.
+#
+# ── 반환 계약 ─────────────────────────────────────────────────────────
+#   rc=0 : 차단해야 한다. stdout = 걸린 문장들(줄당 하나)
+#   rc=1 : 차단 불필요 (표지 없음 · 또는 이 턴에 질문을 했음)
+#   rc=2 : **판독 불가.** stdout = 사유 한 줄
+#
+# ── rc=2 가 이 게이트의 유일한 fail-open 지점이다 ────────────────────
+# 대화 기록의 형식은 하네스가 소유하지 않는다 — 도구 제공자가 정하고 예고 없이 바뀐다.
+# 형식이 바뀌었다고 차단하면 **세션이 통째로 벽돌이 되는데 그 세션 안에 고칠 방법이 없다**
+# (기록을 고칠 수는 없으므로 어떤 행동으로도 게이트가 안 풀린다). 그래서 여기서만 통과로
+# 간다. 나머지 판정은 전부 fail-closed 다.
+# **조건은 경고를 삼키지 않는 것이다** — 호출부가 이 사유를 마지막 게이트 메시지에 싣는다.
+# 조용히 통과하면 게이트가 죽은 것을 아무도 모르고, 그것이 이 저장소가 부르는 조용한 실패다.
+decision_scan() {   # $1 = 대화 기록(JSONL) 경로
+  local path="$1"
+  [ -n "$path" ] || { printf '%s\n' '대화 기록 경로가 훅 입력에 없습니다'; return 2; }
+  [ -r "$path" ] || { printf '%s\n' "대화 기록을 읽을 수 없습니다: $path"; return 2; }
+  python3 - "$path" <<'PY'
+import json, re, sys
+
+# 결정 표지. 굴절 변형만 최소로 넓혔고 그 이상 넓히지 않는다 — 넓히면 위양성이 늘고,
+# 위양성이 늘면 질문이 소음이 되고, 소음이 되면 진짜 질문도 무시된다.
+MARKER = re.compile(
+    "공시하|공시했|공시함"
+    "|범위 ?밖"
+    "|별도로"
+    "|그대로 (?:뒀|두었|남겼|남겨)"
+    "|(?:제|내) 판단으로"
+    "|가정하(?:고|여|였|겠)|가정했"
+    "|수용(?:된|한) 한계"
+    "|트레이드오프"
+    "|안 했(?:습니다|다|음)"
+)
+# 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+QUESTION = re.compile(
+    "\\?|까요|나요|ㄹ까|을까|할까|여쭤|여쭈|여쭙|물어|어떠신|어느 쪽"
+    "|골라|선택해|정해 ?주|알려 ?주|괜찮으신|의견"
+)
+# 서술형 종결. "내가 그렇게 했다"는 단정만 잡는다.
+DECLARATIVE = re.compile("(?:다|음|함|됨|임|옴)$")
+
+INLINE     = re.compile("`[^`\n]*`")
+QUOTED     = re.compile("\"[^\"\n]*\"|'[^'\n]*'|“[^”\n]*”"
+                        "|‘[^’\n]*’|「[^」\n]*」"
+                        "|『[^』\n]*』")
+BLOCKQUOTE = re.compile("^\\s{0,3}>")
+SENT       = re.compile("([\n.!?…。！？]+)")
+LEAD       = re.compile("^[\\s*_>#\\-–—•·]+")
+TRAIL      = re.compile("[\\s*_`~\\[\\](){}<>:;,·…\\-—–]+$")
+
+MAX_HITS, MAX_LEN = 8, 140
+
+
+def fail(reason):
+    sys.stdout.write(reason + "\n")
+    raise SystemExit(2)
+
+
+def drop_fences(s):
+    # 짝수 조각만 코드 **밖**이다. 펜스가 안 닫혔으면 마지막 조각은 코드 안으로 친다 —
+    # 스트리밍 중 잘린 기록에서 코드가 산문으로 새는 것을 막는다.
+    return "\n".join(p for i, p in enumerate(s.split("```")) if i % 2 == 0)
+
+
+def is_user_prompt(e):
+    if e.get("type") != "user" or e.get("isSidechain"):
+        return False
+    if "toolUseResult" in e:            # 도구 결과는 사용자 발화가 아니다
+        return False
+    msg = e.get("message")
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if isinstance(content, list):
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                return False
+    return True
+
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as fh:
+        raw = fh.read()
+except Exception as exc:
+    fail("대화 기록을 열지 못했습니다: %s" % exc.__class__.__name__)
+
+lines = [ln for ln in raw.splitlines() if ln.strip()]
+entries = []
+for ln in lines:
+    try:
+        entries.append(json.loads(ln))
+    except Exception:
+        pass                # 개별 줄 손상은 건너뛴다. 전멸이면 바로 아래에서 걸린다
+if lines and not entries:
+    fail("대화 기록을 한 줄도 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+
+start = -1
+for i, e in enumerate(entries):
+    if isinstance(e, dict) and is_user_prompt(e):
+        start = i
+if start < 0:
+    # 사용자 프롬프트가 없는 기록은 있을 수 없다 — 경계를 못 찾았다는 뜻이다.
+    # 전체를 훑으면 지난 턴의 문장까지 걸려 위양성이 폭주하므로 판독 불가로 떨어뜨린다.
+    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+
+asked, texts = 0, []
+for e in entries[start + 1:]:
+    if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):
+        continue
+    content = (e.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        continue
+    for b in content:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "tool_use":
+            if b.get("name") == "AskUserQuestion":
+                asked += 1
+        elif b.get("type") == "text":
+            t = b.get("text")
+            if isinstance(t, str):
+                texts.append(t)
+
+if asked > 0:
+    raise SystemExit(1)
+
+hits, seen = [], set()
+for text in texts:
+    for line in drop_fences(text).split("\n"):
+        if BLOCKQUOTE.match(line):
+            continue
+        line = QUOTED.sub(" ", INLINE.sub(" ", line))
+        chunks = SENT.split(line)
+        for i in range(0, len(chunks), 2):
+            body = chunks[i]
+            whole = body + (chunks[i + 1] if i + 1 < len(chunks) else "")
+            if QUESTION.search(whole):
+                continue
+            core = TRAIL.sub("", LEAD.sub("", body).strip())
+            if not core or not MARKER.search(core) or not DECLARATIVE.search(core):
+                continue
+            if core in seen:
+                continue
+            seen.add(core)
+            hits.append(core if len(core) <= MAX_LEN else core[:MAX_LEN] + "…")
+
+if not hits:
+    raise SystemExit(1)
+for h in hits[:MAX_HITS]:
+    sys.stdout.write(h + "\n")
+if len(hits) > MAX_HITS:
+    sys.stdout.write("... 그리고 %d개 더\n" % (len(hits) - MAX_HITS))
+raise SystemExit(0)
+PY
+}

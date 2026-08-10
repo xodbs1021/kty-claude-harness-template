@@ -17,6 +17,10 @@ hook_disabled "$HOOK_ID" && exit 0
 
 payload="$(cat)"
 stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
+# 대화 기록 경로. 결정 게이트(3.2)가 이 턴의 발화를 읽는 데 쓴다. 비어 있거나 못 읽으면
+# 그 게이트만 생략되고 **사유가 마지막 게이트 메시지에 실린다** — 조용히 사라지지 않는
+# 것이 이 fail-open 의 조건이다(decision_scan 주석 참조).
+transcript_path="$(printf '%s' "$payload" | json_get transcript_path)"
 
 # (0) push 미완 **탐지** — 조기 종료보다 **먼저** 해야 한다.
 #     플래그를 다 처리해 지운 뒤가 바로 위험한 시점인데(29커밋을 잃은 그 상태),
@@ -167,6 +171,49 @@ else
   fi
 fi
 
+# (3.2) **결정 게이트** — "물어봤어야 할 것을 혼자 정했나".
+#      나머지 게이트가 전부 **산출물**을 볼 때 이것만 **에이전트 자신의 행동**을 본다.
+#      판정 규칙·좁히는 장치 셋·fail-open 사유는 _common.sh 의 decision_scan 주석이 정본이다.
+#
+#      **다른 게이트보다 앞에 둔다.** 질문의 답이 코드를 바꿀 수 있으므로, 리뷰·설명·감사에
+#      노력을 쓰기 전에 묻는 편이 싸다. (push 탐지와 달리 순서가 정확성을 바꾸지는 않는다 —
+#      대화 기록은 이미 다 쓰였고 게이트 순서가 그 내용을 바꾸지 않기 때문이다.)
+decision_note=""
+if ! hook_disabled "stop:decision"; then
+  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?
+  if [ "$decision_rc" -eq 2 ]; then
+    # **이 게이트의 유일한 fail-open.** 통과시키되 사유를 (6) 의 메시지에 실어 보낸다.
+    # 대화 기록 형식은 하네스 소유가 아니라, 여기서 차단하면 그 세션 안에 고칠 방법이 없다.
+    decision_note="결정 게이트 생략 ($decision_hits)"
+  elif [ "$decision_rc" -eq 0 ]; then
+    gate_budget "decision"
+    {
+      echo "[완료 차단] 혼자 정한 것이 있는데 이 턴에 사용자에게 한 번도 묻지 않았습니다."
+      echo
+      echo "걸린 문장:"
+      printf '%s\n' "$decision_hits" | sed 's/^/  - /'
+      echo
+      echo "이 게이트가 겨누는 것:"
+      echo "  게이트가 막을 때는 따르면서, 게이트가 없는 자리에서는 혼자 정하고 보고서에"
+      echo "  한 줄 적는 부류입니다. 그 '한 줄'은 도구 호출이 아니라 문장이라 승인창이"
+      echo "  안 뜨고, 그래서 이 저장소가 겪은 실패 대부분이 이 축에서 났습니다."
+      echo
+      echo "해야 할 일:"
+      echo "  1. 위 문장들이 정말 **사용자가 정할 일**이었는지 본다."
+      echo "     '범위 밖'·'별도로'·'그대로 뒀'는 대개 선택지를 줬어야 하는 자리입니다."
+      echo "  2. AskUserQuestion 으로 **실제로 묻는다.** 보고서에 적는 것은 묻는 것이 아닙니다."
+      echo "  3. 질문을 한 번이라도 하면 이 게이트는 풀립니다."
+      echo
+      echo "위양성이라면(그 어휘를 설명·인용한 것이지 결정이 아니라면):"
+      echo "  - 백틱이나 따옴표로 감싸면 스캔에서 빠집니다 — 인용은 결정이 아니니까요."
+      echo "  - 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받으세요."
+      echo
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+    } >&2
+    bump_and_block
+  fi
+fi
+
 # (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
 #      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
 #      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
@@ -280,6 +327,13 @@ gate_budget "audit"
   if [ -n "$typecheck_note" ]; then
     echo
     echo "참고: $typecheck_note"
+  fi
+  # 결정 게이트가 대화 기록을 못 읽었으면 **여기서 소리를 낸다.** 그 게이트만 조용히
+  # 사라지면 "물어봤나"를 아무도 안 보게 되고, 그게 정확히 이 게이트를 만든 이유다.
+  if [ -n "$decision_note" ]; then
+    echo
+    echo "참고: $decision_note"
+    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
   fi
   echo
   echo "해야 할 일:"

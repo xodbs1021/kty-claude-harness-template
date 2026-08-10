@@ -18,11 +18,46 @@ hook_disabled "$HOOK_ID" && exit 0
 payload="$(cat)"
 stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 
+# (0) push 미완 **탐지** — 조기 종료보다 **먼저** 해야 한다.
+#     플래그를 다 처리해 지운 뒤가 바로 위험한 시점인데(29커밋을 잃은 그 상태),
+#     아래 조기 종료가 먼저 걸리면 push 게이트는 영영 안 돈다(검수 [치명] 지적).
+#     탐지만 여기서 하고 차단은 예산·지문 기계가 준비된 뒤에 한다.
+push_unsent=""
+push_branch=""
+if ! hook_disabled "stop:push" && git -C "$PROJECT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+  push_branch="$(git -C "$PROJECT_DIR" symbolic-ref --short HEAD 2>/dev/null)"
+  if [ -n "$push_branch" ] && git -C "$PROJECT_DIR" remote get-url origin >/dev/null 2>&1; then
+    if git -C "$PROJECT_DIR" rev-parse --verify -q "refs/remotes/origin/$push_branch" >/dev/null 2>&1; then
+      # rc 를 따로 본다. 실패를 "ahead 0" 으로 읽으면 게이트가 조용히 사라진다([cx] 지적).
+      if push_n="$(git -C "$PROJECT_DIR" rev-list --count "refs/remotes/origin/$push_branch..HEAD" 2>/dev/null)"; then
+        [ -n "$push_n" ] && [ "$push_n" != "0" ] && push_unsent="원격보다 ${push_n}개 앞서 있습니다"
+      else
+        push_unsent="원격과의 차이를 셀 수 없습니다(저장소 상태 이상) — 직접 확인하세요"
+      fi
+    elif git -C "$PROJECT_DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+      # ref 가 없다. 다만 **HEAD 가 이미 다른 원격 브랜치에 있으면** 새 커밋이 없는
+      # 갓 만든 브랜치이므로 요구하지 않는다 — 안 그러면 브랜치를 파자마자 막힌다.
+      # 파이프 안 서브셸에서 exit 로 신호하면 그 rc 가 밖으로 안 나온다 — 실제로 그렇게
+      # 짰다가 조건이 항상 거짓이 됐다. 서브셸 없는 for 루프로 판정한다(ref 이름에는
+      # 공백이 못 들어가므로 단어 분리가 안전하다).
+      head_on_remote=0
+      for _r in $(git -C "$PROJECT_DIR" for-each-ref --format='%(refname)' refs/remotes 2>/dev/null); do
+        if git -C "$PROJECT_DIR" merge-base --is-ancestor HEAD "$_r" 2>/dev/null; then
+          head_on_remote=1; break
+        fi
+      done
+      if [ "$head_on_remote" -eq 0 ]; then
+        push_unsent="이 브랜치의 원격 추적 ref 가 없습니다 (한 번도 push 되지 않았거나, refspec 이 좁혀져 보이지 않습니다)"
+      fi
+    fi
+  fi
+fi
+
 # (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
 #     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
 #     지식 플래그는 **게이트가 켜져 있을 때만** 할 일로 센다 — 껐는데 예전에 남은
 #     플래그 파일이 읽기 전용 턴의 조기 종료를 막으면 안 된다.
-if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then
+if [ -z "$push_unsent" ] && [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then
   rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
   exit 0
 fi
@@ -45,6 +80,9 @@ flags_fp=""
 [ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
 knowledge_gate_active     && flags_fp="${flags_fp}k"
 [ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
+# push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
+# 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
+[ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
 new_fp=""
 
 gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출력 전에 호출한다.
@@ -203,6 +241,31 @@ if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
     echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
     echo
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
+  } >&2
+  bump_and_block
+fi
+
+# (5.5) **커밋했는데 원격에 없다** — 이 저장소가 커밋 29개를 잃은 바로 그 상태다.
+#      그때는 "아직 PR 전이니까"라며 라운드 6개를 미뤘고, 임시 폴더째 사라졌다.
+#      탐지는 (0) 에서 이미 했다 — 조기 종료보다 앞이어야 하기 때문이다.
+if [ -n "$push_unsent" ]; then
+  gate_budget "push"
+  {
+    echo "[완료 차단] 커밋이 원격에 없습니다 — $push_unsent"
+    echo
+    echo "이 저장소는 이 상태로 **커밋 29개를 잃은 적이 있습니다.** 그때도 코드는"
+    echo "다 짜여 있었고, \"아직 PR 전이니까\"라며 push 를 미뤘습니다."
+    echo
+    echo "해야 할 일:"
+    echo "  git push -u origin $push_branch"
+    echo "  그리고 실제로 올라갔는지 확인하세요:"
+    echo "  git rev-list --left-right --count HEAD...origin/$push_branch   → 0 0"
+    echo
+    echo "  원격에는 있는데 위 명령이 실패한다면 refspec 이 좁혀진 것입니다:"
+    echo "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && git fetch origin"
+    echo "  push 여부가 로컬에서 안 보이는 것 자체가 위험합니다 — 29개를 잃을 때 그랬습니다."
+    echo
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
   } >&2
   bump_and_block
 fi

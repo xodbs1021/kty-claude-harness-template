@@ -34,6 +34,9 @@ jobs:
       # 거짓 보고로 나오므로 rc 만이 아니라 파일 상태·잔류물·문구까지 잰다.
       - name: 훅 교체 원자성 회귀 테스트
         run: ./tests/install-hook-swap.test.sh
+      # 에이전트가 자기 규율을 우회하는 것을 막는 게이트들. 위음성이 유일한 치명 결함이다.
+      - name: 자기 규율 게이트 회귀 테스트
+        run: ./tests/self-discipline-gates.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh
       # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를

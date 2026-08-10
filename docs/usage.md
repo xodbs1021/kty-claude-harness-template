@@ -61,13 +61,21 @@ cd ~/.claude/harness-template
 | 훅 | 시점 | 강제 내용 |
 |---|---|---|
 | guard-master-commit | Bash 실행 전 | master/main 직접 `git commit` 차단 |
+| guard-hook-disable | Bash 실행 전 | 에이전트가 `HARNESS_HOOKS`·`ECC_DISABLED_HOOKS`·`ECC_GATEGUARD` 를 끄려 할 때 한 번 세운다. **과속방지턱이지 방벽이 아니다** — 아래 참조. 탈출구가 **없다** |
 | guard-codex-invocation | Bash 실행 전 | `codex exec` 호출의 모델(`gpt-5.6-sol`)·effort(`high`) 미달 차단 — 임의 하향 금지 (2026-08-01 사용자 지시) |
 | mark-needs-audit | 파일 편집 후 | 게이트 플래그 4종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview` (코드는 4종 전부 · 설계·계획 산출물은 듀얼리뷰+지식 · 결정 문서는 지식만). 검사 범위는 아래 "완료 게이트 검사 범위" 참조 |
-| verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
+| verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → **push 미완** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
 
 **지식 저장소 게이트가 아는 것은 계약 하나뿐이다** — "지식 저장소가 설정돼 있으면, 결정·설계가 나온 턴은 반영 없이 끝낼 수 없다." **어디에 어떤 구조로 반영하는지는 하네스가 모른다.** 그건 사용자 층 설정(전역 `CLAUDE.md` 등)이 답하고, 하네스에는 켜짐/꺼짐 1비트만 있다. 그래서 지식 저장소를 바꿔도 하네스는 고치지 않고, 아예 안 쓰는 프로젝트에서도 그대로 돈다.
 
-**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) 나열. 예외: guard-codex-invocation은 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만.
+**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
+**`guard-hook-disable` 은 과속방지턱이지 보안 경계가 아니다.** 판정이 정규식 하나라 셸을 해석하지 못한다 — `read`+`export`, 따옴표로 쪼갠 `env 'X''=off'`, 변수 조립, `eval`, 생성한 스크립트 실행은 전부 통과한다(실측). 그럼에도 값을 하는 이유는 막으려는 것이 적대적 공격자가 아니라 **막힌 에이전트의 직진 충동**이고, 그건 `HARNESS_HOOKS=off ...` 라는 직진형으로 나오기 때문이다. 제대로 막으려면 셸 파서가 필요한데, 반쯤 만든 셸 파서는 안 만든 것보다 나쁘다(막힌다고 믿게 하면서 안 막는다 — 이 저장소가 `harness.env` 판독기에서 겪은 늪).
+
+**그래서 위양성 쪽으로 기운다.** 실행 구문과 인용문을 구분하지 않아 `git grep 'HARNESS_HOOKS=off'` 같은 정당한 검색도 막힌다. 의도된 선택이다 — 따옴표 안을 건너뛰면 위양성은 사라지지만 `bash -c 'HARNESS_HOOKS=off ...'` 가 뚫린다. 둘은 문자열로 구별되지 않는 같은 모호성의 양면이고, 위양성은 메시지 한 번이 비용이지만 위음성은 **게이트가 꺼진 걸 아무도 모르는** 것이 비용이다. 차단 메시지가 위양성일 때의 대안(패턴 쪼개기·Write 도구 사용)을 함께 안내한다.
+
+**그리고 환경변수로 끌 수 없다.** 그 탈출구가 있으면 에이전트가 그것으로 이 훅을 끄고 나머지를 전부 끌 수 있어 존재 이유가 사라진다. 사용자가 정말 끄려면 셸에서 직접 `export` 하고 세션을 새로 띄우거나 `settings.json` 배선을 지운다 — 둘 다 사람이 하는 행위다.
+
+**push 게이트가 있는 이유:** 이 저장소는 커밋 29개를 잃은 적이 있다. 코드는 다 짜여 있었고 "아직 PR 전이니까"라며 push 를 미뤘다. 게이트는 **네트워크를 쓰지 않는다** — 로컬 remote-tracking ref 만 본다. 원격에 있는데도 ref 가 안 보이면(`remote.origin.fetch` 가 좁혀진 경우) 그 사실을 사유에 적는다. push 여부가 로컬에서 안 보이는 것 자체가 위험이기 때문이다. 예외: guard-codex-invocation은 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만.
 
 ### 완료 게이트 검사 범위 (mark-needs-audit)
 

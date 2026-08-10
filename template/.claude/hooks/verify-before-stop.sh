@@ -93,18 +93,27 @@ fi
 prev_fp="$(cat "$BLOCK_FP" 2>/dev/null)"
 # 지문 = 서 있는 플래그의 집합(내용 아님). 내용을 넣으면 갇힌 채 새 파일만 편집해도
 # 리셋되고(무한 차단), cksum 충돌로 실제 진전이 리셋 안 될 수도 있다([cx] 지적).
+#
+# **함수인 이유:** 3.4 게이트가 실행 도중 자기 플래그를 지운다(자동 해제). 진입 시 1회
+# 스냅숏만 쓰면 그 턴의 하위 게이트(3.5~6)가 이미 지워진 "r" 비트가 든 stale 지문으로
+# 예산을 매기고, 다음 턴의 지문과 달라져 **진전이 아닌데 카운터가 리셋**된다 — 벽돌
+# 방지가 한 사이클 헛돈다(구현 검수 [cc]가 4회 연속 실행으로 재현: 1/3→1/3→2/3→3/3).
+compute_flags_fp() {
+  flags_fp=""
+  [ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
+  [ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
+  knowledge_gate_active     && flags_fp="${flags_fp}k"
+  [ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
+  # 회수 플래그도 **존재 비트만** 넣는다. 불량 파일 목록은 retrieval 게이트 자신의 예산
+  # 키에만 결합한다(아래 3.4) — 여기(공유 지문)에 넣으면 결정 게이트에 갇힌 채 불량 집합만
+  # 바뀌어도 그쪽 예산이 리셋돼, 위 "내용을 넣으면"의 경고 그대로가 된다([cc·cx] 검수).
+  retrieval_pending         && flags_fp="${flags_fp}r"
+  # push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
+  # 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
+  [ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
+}
 flags_fp=""
-[ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
-[ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
-knowledge_gate_active     && flags_fp="${flags_fp}k"
-[ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
-# 회수 플래그도 **존재 비트만** 넣는다. 불량 파일 목록은 retrieval 게이트 자신의 예산
-# 키에만 결합한다(아래 3.4) — 여기(공유 지문)에 넣으면 결정 게이트에 갇힌 채 불량 집합만
-# 바뀌어도 그쪽 예산이 리셋돼, 위 "내용을 넣으면"의 경고 그대로가 된다([cc·cx] 검수).
-retrieval_pending         && flags_fp="${flags_fp}r"
-# push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
-# 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
-[ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
+compute_flags_fp
 new_fp=""
 
 gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출력 전에 호출한다.
@@ -286,7 +295,10 @@ if retrieval_pending; then
   fi
   retrieval_bad_paths=""   # 불량 항목의 경로(정렬 전, 줄 단위) — 예산 키용
   retrieval_bad_msgs=""    # "경로 — 사유" (차단 메시지용)
-  while IFS= read -r entry; do
+  # `|| [ -n "$entry" ]` 가 필수다: 마지막 줄이 개행 없이 끝나면 read 가 값을 담고도
+  # rc=1 을 내 본문이 안 돌고, 그 항목이 **조용히 스킵**된다 — record_flag 쓰기가
+  # 중단된 플래그에서 표명 없는 산출물이 통과하는 경로였다(구현 검수 [cx] HIGH).
+  while IFS= read -r entry || [ -n "$entry" ]; do
     [ -n "$entry" ] || continue                     # 빈 줄은 기록 계약 밖 — 건너뛴다
     case "$entry" in
       /*) rfile="$entry" ;;
@@ -339,6 +351,9 @@ if retrieval_pending; then
     # 전부 형식 준수(또는 소실뿐) → 자동 해제. rm 이 실패하면 플래그가 남아 다음 턴에
     # 다시 검사된다 — 게이트가 죽는 방향이 아니라 남는 방향이므로 조용해도 안전하다.
     rm -f "$RETRIEVAL_FLAG" 2>/dev/null
+    # 지문을 다시 계산한다 — 진입 시 스냅숏에는 방금 지운 "r" 비트가 남아 있어, 이 턴의
+    # 하위 게이트가 stale 지문으로 예산을 매기고 다음 턴에 거짓 리셋이 난다([cc] HIGH).
+    compute_flags_fp
     if ! work_pending; then
       # 이 턴의 할 일이 이것뿐이었다 — 여기서 끝내지 않으면 맨 아래 감사 게이트가
       # 빈 목록으로 허위 차단한다([cc·cx] 검수). 술어는 조기 종료와 같은 것을 쓴다 —
@@ -355,7 +370,12 @@ if retrieval_pending; then
     # 예산 키는 게이트 자신에게만 결합한다. 불량 목록을 공유 지문(flags_fp)에 넣으면
     # 다른 게이트의 예산까지 리셋된다. 목록이 줄면(파일을 고치면) 이 게이트의 카운터만
     # 리셋된다 — push 가 "몇 개 남았나"를 지문에 넣는 것과 같은 의도다.
-    retrieval_bad_sorted="$(printf '%s' "$retrieval_bad_paths" | sort -u | tr '\n' ' ')"
+    # 파이프가 실패하거나 빈 값을 내면(제한된 PATH·I/O 오류) 예산 키가 비어 "진전이
+    # 리셋을 못 만드는" 상태가 된다([cx] 지적) — 외부 명령 없는 bash 치환으로 폴백한다.
+    # 폴백은 정렬이 없어 키 안정성이 낮지만, 같은 플래그 파일은 순서가 유지되므로 실효는 같다.
+    retrieval_bad_sorted="$(printf '%s' "$retrieval_bad_paths" | sort -u | tr '\n' ' ')" \
+      || retrieval_bad_sorted=""
+    [ -n "$retrieval_bad_sorted" ] || retrieval_bad_sorted="${retrieval_bad_paths//$'\n'/ }"
     gate_budget "retrieval:${retrieval_bad_sorted}"
     {
       echo "[완료 차단] 설계·계획 산출물에 회수 표명이 없습니다 — 선행 결정을 회수하지 않고 만든 산출물로는 끝낼 수 없습니다."

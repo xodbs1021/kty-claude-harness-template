@@ -57,14 +57,14 @@ case_05() { # D2 설계 산출물 — 듀얼리뷰+지식. 기록값은 프로�
   local p; p="$(new_project)"
   mkfile "$p/_workspace/00_design.md"
   run_hook "$p" "$p/_workspace/00_design.md"
-  check_case '05 프로젝트 안 설계 문서 → 듀얼리뷰+지식(상대경로)' 0 designdoc '_workspace/00_design.md'
+  check_case '05 프로젝트 안 설계 문서 → 듀얼리뷰+지식+회수(상대경로)' 0 designdoc '_workspace/00_design.md'
 }
 
 case_06() { # D2 계획 산출물 — 01_plan 축.
   local p; p="$(new_project)"
   mkfile "$p/_workspace/01_plan.v2.md"
   run_hook "$p" "$p/_workspace/01_plan.v2.md"
-  check_case '06 프로젝트 안 계획 문서 → 듀얼리뷰+지식(상대경로)' 0 designdoc '_workspace/01_plan.v2.md'
+  check_case '06 프로젝트 안 계획 문서 → 듀얼리뷰+지식+회수(상대경로)' 0 designdoc '_workspace/01_plan.v2.md'
 }
 
 case_07() { # 순서계약 (나) — .claude/* 제외가 하네스 앵커보다 **먼저**.
@@ -199,7 +199,7 @@ case_23() { # B1 본체 — 밖 설계 문서에도 듀얼리뷰 게이트가 �
   local p hr; p="$(new_project)"; hr="$(new_harness_repo)"
   mkfile "$hr/_workspace/00_design.md"
   run_hook "$p" "$hr/_workspace/00_design.md"
-  check_case '23 밖+정본 _workspace/00_design.md → 듀얼리뷰+지식(절대경로)' 0 designdoc "$hr/_workspace/00_design.md"
+  check_case '23 밖+정본 _workspace/00_design.md → 듀얼리뷰+지식+회수(절대경로)' 0 designdoc "$hr/_workspace/00_design.md"
 }
 
 case_24() { # 순서계약 (나) — 정본 저장소가 **자기 자신에 설치한** 소비 사본은 스킵.
@@ -305,14 +305,14 @@ case_34() { # D2 본체 — **이 세션 형태**. _workspace/ 가 어느 git �
   local p nogit; p="$(new_project)"; nogit="$(new_dir nogit)"
   mkfile "$nogit/_workspace/00_design.md"
   run_hook "$p" "$nogit/_workspace/00_design.md"
-  check_case '34 밖+git 아님 _workspace/00_design.md → 듀얼리뷰+지식(절대경로)' 0 designdoc "$nogit/_workspace/00_design.md"
+  check_case '34 밖+git 아님 _workspace/00_design.md → 듀얼리뷰+지식+회수(절대경로)' 0 designdoc "$nogit/_workspace/00_design.md"
 }
 
 case_35() { # D2 — 01_plan 축.
   local p nogit; p="$(new_project)"; nogit="$(new_dir nogit)"
   mkfile "$nogit/_workspace/01_plan.md"
   run_hook "$p" "$nogit/_workspace/01_plan.md"
-  check_case '35 밖+git 아님 _workspace/01_plan.md → 듀얼리뷰+지식(절대경로)' 0 designdoc "$nogit/_workspace/01_plan.md"
+  check_case '35 밖+git 아님 _workspace/01_plan.md → 듀얼리뷰+지식+회수(절대경로)' 0 designdoc "$nogit/_workspace/01_plan.md"
 }
 
 case_36() { # D3-3 의 음성 쪽 — .git/ 귀속이 "무조건 발화"가 되면 안 된다.
@@ -428,7 +428,7 @@ case_46() { # 순서계약 (가) — 듀얼 판정은 정규화 **뒤**.
   local p; p="$(new_project)"
   mkfile "$p/_workspace/01_plan.md"
   run_hook "$p" '_workspace/01_plan.md'
-  check_case '46 상대경로 입력 _workspace/01_plan.md → 듀얼리뷰+지식' 0 designdoc '_workspace/01_plan.md'
+  check_case '46 상대경로 입력 _workspace/01_plan.md → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/01_plan.md'
 }
 
 case_47() { # 순서계약 (가) — 기록값 축. 듀얼 판정을 정규화 앞으로 되돌리면 판정은 살아도
@@ -437,7 +437,7 @@ case_47() { # 순서계약 (가) — 기록값 축. 듀얼 판정을 정규화 �
   local p; p="$(new_project)"
   mkfile "$p/.claude/../_workspace/00_design.md"
   run_hook "$p" "$p/.claude/../_workspace/00_design.md"
-  check_case '47 .claude/../_workspace/00_design.md → 듀얼리뷰+지식(정규화된 값)' 0 designdoc '_workspace/00_design.md'
+  check_case '47 .claude/../_workspace/00_design.md → 듀얼리뷰+지식+회수(정규화된 값)' 0 designdoc '_workspace/00_design.md'
 }
 
 case_48() { # H1 — global-agents/ 는 전역 에이전트 **정본**이고 install/sync 가 배포한다.
@@ -501,7 +501,7 @@ case_55() { # 3단계 대소문자 축 — 듀얼 매칭은 소문자화해 비�
   local p; p="$(new_project)"
   mkfile "$p/_workspace/00_Design.md"
   run_hook "$p" "$p/_workspace/00_Design.md"
-  check_case '55 _workspace/00_Design.md(대문자) → 듀얼리뷰+지식(원본 대소문자로 기록)' 0 designdoc '_workspace/00_Design.md'
+  check_case '55 _workspace/00_Design.md(대문자) → 듀얼리뷰+지식+회수(원본 대소문자로 기록)' 0 designdoc '_workspace/00_Design.md'
 }
 
 # === F. 3중 검수에서 추가된 행 ============================================
@@ -650,7 +650,7 @@ case_66() { # 듀얼 글롭의 접미사 축 — 00_design* 쪽. 케이스 06 �
   local p; p="$(new_project)"
   mkfile "$p/_workspace/00_design.v2.md"
   run_hook "$p" "$p/_workspace/00_design.v2.md"
-  check_case '66 프로젝트 안 _workspace/00_design.v2.md → 듀얼리뷰+지식' 0 designdoc '_workspace/00_design.v2.md'
+  check_case '66 프로젝트 안 _workspace/00_design.v2.md → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design.v2.md'
 }
 
 # === G. PR 점검(C1)에서 추가된 행 — 물리 경로 정규화 축 ====================

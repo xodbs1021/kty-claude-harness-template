@@ -28,6 +28,14 @@ for f in "$VSTOP" "$MARK" "$COMMON"; do
   fi
 done
 
+# **기준선 확인이 먼저다.** 변이 전 테스트가 이미 빨간 상태면 모든 변이가 "적색"으로
+# 집계돼 하네스가 성공을 위장한다 — 적색의 원인이 방어인지 무관한 회귀인지 구별이 안 된다
+# (구현 검수 [cx] 지적).
+if ! "$TEST" >/dev/null 2>&1; then
+  echo "✗ 기준선 실패 — 변이 없이도 테스트가 빨갛습니다. 먼저 초록으로 만들고 재세요" >&2
+  exit 1
+fi
+
 total=0; red=0; green=0
 
 restore() {   # $1 = 파일
@@ -174,6 +182,13 @@ fi
 mutate 'm16 retrieval_pending 의 비활성 접기 제거' "$COMMON" \
   '  ! hook_disabled "stop:retrieval"' \
   '  true'
+
+# 17. 자동 해제 후 지문 재계산 제거 (stale 지문 → 하위 게이트 카운터 거짓 리셋 재현)
+mutate 'm17 해제 후 compute_flags_fp 재호출 제거' "$VSTOP" \
+  '    # 지문을 다시 계산한다 — 진입 시 스냅숏에는 방금 지운 "r" 비트가 남아 있어, 이 턴의
+    # 하위 게이트가 stale 지문으로 예산을 매기고 다음 턴에 거짓 리셋이 난다([cc] HIGH).
+    compute_flags_fp' \
+  '    :'
 
 echo
 echo "총 $total 건 — 적색 $red · 초록 $green"

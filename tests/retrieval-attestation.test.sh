@@ -569,10 +569,47 @@ r25() { # 첫 줄의 BOM·CR 은 걷어낸 뒤 판정한다 — 눈에 안 보�
   report "$name" "$why"
 }
 
+r26() { # 플래그 마지막 줄이 **개행 없이** 끝나도 그 항목은 검사된다. read 는 마지막
+        # 불완전 줄에서 값을 담고도 rc=1 을 내 `|| [ -n "$entry" ]` 가 없으면 본문이
+        # 안 돌고 — 표명 없는 산출물이 조용히 통과한다(구현 검수 [cx] HIGH).
+  local name='r26 개행 없는 마지막 플래그 줄도 검사된다' why=''
+  local p; p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" '표명 없음.'
+  printf '_workspace/00_design.md' > "$p/.claude/.needs-retrieval"   # 개행 없음
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if ! contains "$ERR" "$TOK_RET"; then why="차단하지 않았다 (마지막 줄이 스킵됨): $(printf '%s' "$ERR" | head -1 | head -c 90)"
+  fi
+  report "$name" "$why"
+}
+
+r27() { # 자동 해제 뒤 공유 지문을 **다시 계산**한다. 진입 시 스냅숏을 그대로 쓰면 이
+        # 턴의 하위 게이트(예: 듀얼리뷰)가 이미 지워진 "r" 비트가 든 지문으로 예산을
+        # 매기고, 다음 턴 지문과 달라져 진전이 아닌데 카운터가 리셋된다 — 벽돌 방지가
+        # 한 사이클 헛돈다(구현 검수 [cc] HIGH, 1/3→1/3→2/3→3/3 실측 재현).
+  local name='r27 자동 해제 후 지문 재계산 (하위 게이트 카운터 연속)' why=''
+  local p; p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST"
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" dualreview '_workspace/00_design.md'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"     # 1회차: 해제 + 듀얼리뷰 차단 (지문은 해제 후 상태여야 한다)
+  if ! contains "$ERR" "$TOK_DUAL"; then why="듀얼리뷰 게이트 미도달: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+  elif ! contains "$ERR" '차단 1/';  then why='1회차가 1/N 이 아니다'
+  else
+    run_stop "$p" "$p/tx.jsonl"   # 2회차: 같은 상태 — 카운터가 이어져야 한다
+    if ! contains "$ERR" "$TOK_DUAL"; then why='2회차에 듀얼리뷰 게이트 미도달'
+    elif ! contains "$ERR" '차단 2/';  then why="stale 지문으로 카운터가 리셋됐다: $(printf '%s' "$ERR" | tail -1 | head -c 60)"
+    fi
+  fi
+  report "$name" "$why"
+}
+
 # --- 실행 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=25
-CASES='r01 r02 r03 r04 r05 r06 r07 r08 r09 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25'
+EXPECTED_CASES=27
+CASES='r01 r02 r03 r04 r05 r06 r07 r08 r09 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27'
 
 echo "retrieval-attestation.test.sh — 회수 표명 게이트(stop:retrieval) 회귀"
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"

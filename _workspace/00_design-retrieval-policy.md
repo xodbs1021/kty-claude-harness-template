@@ -238,7 +238,7 @@ verify-before-stop(Stop):
 20. **이름에 codex 가 든 정상 설계서**(`00_design-codex-gate.md`)와 **경로에 codex 가 든 프로젝트** → 플래그 3종이 전부 **선다** (v2 제외 철회의 케이스화 — [cc·cx] r2 D)
 21. 표명 문자열 드리프트 — `사전 결정 회수:` 리터럴이 훅·SKILL.md·프로필 템플릿에서 동일 (대상 파일 목록은 테스트 상수로 고정)
 22. **정상 해제 + push 미완 → push 게이트가 차단** (재평가가 push 를 삼키지 않음 — [cc·cx] r2 B)
-23. **정상 해제 + 결정 판독 불가 + 다른 게이트 없음 → exit 0 이되 decision_note 가 systemMessage 로 실림** ([cc·cx] r2 C)
+23. ~~정상 해제 + 결정 판독 불가 + 다른 게이트 없음 → exit 0 + decision_note systemMessage~~ **구현에서 도달 불가 판명** — decision_note 가 서려면 결정 게이트 발동 플래그가 서야 하는데 그 플래그가 work_pending 을 참으로 유지해 exit 0 에 못 간다. 방출 코드는 방어로 남기고 공시(테스트 헤더·ADR). 대체 케이스: **정상 해제 + 지식 게이트 켜짐 → 지식 게이트 도달** (재평가가 과하게 exit 0 하지 않음)
 24. **다른 게이트(결정)에 갇힌 채 불량 집합만 바뀌어도 그 게이트의 예산은 리셋되지 않음** (flags_fp 불변식 — [cc·cx] r2 E)
 25. 첫 줄 BOM·CRLF → 걷어낸 뒤 정상 판정 ([cc] r2 M)
 

@@ -283,3 +283,253 @@ for key in sys.argv[1].split("."):
 print(data)
 ' "$1" 2>/dev/null
 }
+
+# 이 턴의 대화 기록을 읽어 **"물어봤어야 할 것을 혼자 정했다"는 자백**을 찾는다.
+#
+# 왜 이런 게이트가 필요한가: 완료 게이트 넷(타입체크·듀얼리뷰·변경설명·지식반영)은 전부
+# **산출물**을 본다. 에이전트 자신의 행동을 겨눈 것은 없었고, 그 비대칭이 실물로 드러났다 —
+# 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에
+# 한 줄 적었다. 그 "한 줄"은 **도구 호출이 아니라 문장**이라 어떤 PreToolUse 훅도 볼 수 없고
+# 승인창도 안 뜬다(승인창은 *한 일*에만 뜬다). 그래서 Stop 이 대화 기록을 직접 읽는다.
+#
+# ── 판정 ─────────────────────────────────────────────────────────────
+#   결정 표지 어휘를 담은 **서술형** 문장이 있는데  AND  이 턴에 AskUserQuestion 이 0회
+#   → 차단. 질문을 한 번 하면 풀리므로 세션이 벽돌이 되지 않는다.
+#
+# 표지 어휘를 이렇게 고른 이유: 저 말들은 "물어봤어야 할 것을 혼자 정했다"를 **자백**할
+# 때만 나온다. 자백은 있는데 질문이 0회면 그 자체가 위반이다.
+#
+# ── 좁히는 장치 셋 (위양성 억제) ─────────────────────────────────────
+# 어휘만 보면 이 게이트를 **유지보수하는 작업 자체가 매번 걸린다** — 훅·테스트·결정 문서가
+# 그 어휘를 데이터로 품기 때문이다. 그러면 사람이 게이트를 끄게 되고 그게 최악이다.
+#   1) 구조적 제외 — 코드펜스 · 인라인 코드 · 인용줄(>) · 따옴표로 감싼 부분은 안 본다.
+#      그래서 어휘를 **인용부호로 감싸 언급하는 것**은 안 걸린다(문서·설명의 정상 형태다).
+#   2) 질문 신호 제외 — 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+#   3) 서술형 종결 요구 — "…했다/…습니다" 같은 단정으로 끝나야 "내가 그렇게 했다"이다.
+# 대가는 위음성 증가다. 표현을 바꾸면 빠져나간다 — 겨누는 것이 적대적 회피가 아니라
+# **무의식적 습관**이라 그래도 실효가 남는다. guard-hook-disable 과 같은 판단 구조다.
+#
+# **도구 입력은 보지 않는다(text 블록만 본다).** 그래서 이 패턴이 적힌 파일을 Write/Edit
+# 로 쓰는 것은 안 걸린다 — 자기참조 폭발을 원천에서 없애는 장치다.
+# thinking 블록도 안 본다: 거기서 선택지를 저울질하는 것은 결정 통보가 아니다.
+# 서브에이전트 발화(isSidechain)도 뺀다: 서브에이전트는 사용자에게 물을 수 없다.
+#
+# ── 반환 계약 ─────────────────────────────────────────────────────────
+#   rc=0 : 차단해야 한다. stdout = 걸린 문장들(줄당 하나)
+#   rc=2 : **판독 불가.** stdout = 사유 한 줄
+#   rc=3 : 차단 불필요 (표지 없음 · 또는 이 턴에 질문을 했음)
+#   그 밖 : **예상 밖.** python3 부재(127) · 처리 못 한 예외(1) · 신호 종료 등
+#
+# "차단 불필요"에 1 이 아니라 **3** 을 쓰는 이유: python 이 처리 못 한 예외로 죽으면
+# 그것도 1 이라, 1 을 정상 통과로 쓰면 **크래시가 조용한 통과로 위장된다.** 정상 경로에
+# 흔한 코드를 주지 않으면 호출부가 "모르는 rc = 무언가 잘못됐다"로 갈라낼 수 있다.
+# 호출부는 0·2·3 만 알고 나머지는 전부 판독 불가로 취급해야 한다.
+#
+# ── rc=2 가 이 게이트의 유일한 fail-open 지점이다 ────────────────────
+# 대화 기록의 형식은 하네스가 소유하지 않는다 — 도구 제공자가 정하고 예고 없이 바뀐다.
+# 형식이 바뀌었다고 차단하면 **세션이 통째로 벽돌이 되는데 그 세션 안에 고칠 방법이 없다**
+# (기록을 고칠 수는 없으므로 어떤 행동으로도 게이트가 안 풀린다). 그래서 여기서만 통과로
+# 간다. 나머지 판정은 전부 fail-closed 다.
+# **조건은 경고를 삼키지 않는 것이다** — 호출부가 이 사유를 마지막 게이트 메시지에 싣는다.
+# 조용히 통과하면 게이트가 죽은 것을 아무도 모르고, 그것이 이 저장소가 부르는 조용한 실패다.
+decision_scan() {   # $1 = 대화 기록(JSONL) 경로
+  local path="$1"
+  [ -n "$path" ] || { printf '%s\n' '대화 기록 경로가 훅 입력에 없습니다'; return 2; }
+  [ -r "$path" ] || { printf '%s\n' "대화 기록을 읽을 수 없습니다: $path"; return 2; }
+  python3 - "$path" <<'PY'
+import json, re, sys
+
+# 결정 표지. 굴절 변형만 최소로 넓혔고 그 이상 넓히지 않는다 — 넓히면 위양성이 늘고,
+# 위양성이 늘면 질문이 소음이 되고, 소음이 되면 진짜 질문도 무시된다.
+MARKER = re.compile(
+    "공시하|공시했|공시함"
+    "|범위 ?밖"
+    "|별도로"
+    "|그대로 (?:뒀|두었|남겼|남겨)"
+    "|(?:제|내) 판단으로"
+    "|가정하(?:고|여|였|겠)|가정했"
+    "|수용(?:된|한) 한계"
+    "|트레이드오프"
+    "|안 했(?:습니다|다|음)"
+)
+# 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+QUESTION = re.compile(
+    "\\?|까요|나요|ㄹ까|을까|할까|여쭤|여쭈|여쭙|물어|어떠신|어느 쪽"
+    "|골라|선택해|정해 ?주|알려 ?주|괜찮으신|의견"
+)
+# **"묻지 않았다"는 물음이 아니라 자백이다.** 이게 없으면 겨누는 문장 자체가 빠져나간다 —
+# "사용자에게 물어보지 않고 제 판단으로 진행했습니다" 는 `물어` 때문에 질문으로 오인된다.
+# 부정이 붙으면 위 QUESTION 제외를 적용하지 않는다.
+NEG_ASK = re.compile(
+    "물어 ?보지 ?않|물어 ?보지도|묻지 ?않|묻지도|여쭙지 ?않|여쭈지 ?않|여쭤 ?보지 ?않"
+    "|확인(?:도)? ?하지 ?않|확인 ?없이|의견을 받지 ?않|물어 ?보는 대신|묻는 대신|묻지 못"
+)
+# 서술형 종결. "내가 그렇게 했다"는 단정만 잡는다.
+DECLARATIVE = re.compile("(?:다|음|함|됨|임|옴)$")
+
+# 이중 백틱 코드 span 이 먼저다 — 단일 규칙만 두면 ``a`b`` 의 안쪽이 산문으로 샌다.
+INLINE     = re.compile("``[^`\n]*``|`[^`\n]*`")
+QUOTED     = re.compile("\"[^\"\n]*\"|'[^'\n]*'|“[^”\n]*”"
+                        "|‘[^’\n]*’|「[^」\n]*」"
+                        "|『[^』\n]*』")
+BLOCKQUOTE = re.compile("^\\s{0,3}>")
+# **공시된 한계:** 약어(`e.g.` 등)는 뒤에 공백이 오므로 여전히 문장을 자른다. 그 조각에
+# 표지와 서술형 종결이 갈리면 놓친다. 약어 목록을 들고 다니는 것은 또 하나의 추측이라
+# 하지 않는다 — 좁은 창으로 공시한다.
+# 마침표는 **뒤에 공백이나 줄끝이 올 때만** 문장 종결이다. 무조건 종결로 보면
+# `README.md`·`_common.sh`·버전 번호가 한 문장을 쪼개, 표지와 서술형 종결이 서로 다른
+# 조각으로 갈라져 **둘 다 만족하는 조각이 없어진다**(위음성).
+SENT       = re.compile("([\n!?…。！？]+|\\.(?=\\s)|\\.$)")
+LEAD       = re.compile("^[\\s*_>#\\-–—•·]+")
+TRAIL      = re.compile("[\\s*_`~\\[\\](){}<>:;,·…\\-—–]+$")
+
+MAX_HITS, MAX_LEN = 8, 140
+# 아는 블록 타입. 이 밖이 나오면 그 발화를 볼 수 없다는 뜻이라 판독 불가로 떨어뜨린다.
+KNOWN_BLOCKS = ("text", "thinking", "redacted_thinking", "tool_use", "tool_result", "image")
+
+
+def fail(reason):
+    sys.stdout.write(reason + "\n")
+    raise SystemExit(2)
+
+
+def drop_fences(s):
+    # 짝수 조각만 코드 **밖**이다. 펜스가 안 닫혔으면 마지막 조각은 코드 안으로 친다 —
+    # 스트리밍 중 잘린 기록에서 코드가 산문으로 새는 것을 막는다.
+    # 백틱만 보면 `~~~` 펜스의 예문이 산문으로 검사된다(문서가 약속한 범위보다 좁다).
+    for fence in ("```", "~~~"):
+        s = "\n".join(p for i, p in enumerate(s.split(fence)) if i % 2 == 0)
+    return s
+
+
+def is_user_prompt(e):
+    if e.get("type") != "user" or e.get("isSidechain"):
+        return False
+    if e.get("isMeta"):
+        # **사람이 하지 않은 발화다.** 훅 피드백·자동 이어하기가 여기 온다.
+        # 경계로 세면 이 훅이 낸 차단 메시지가 스스로 새 턴을 열어, 방금 막은 자백이
+        # 다음 턴의 창 **밖**으로 밀려난다 — 게이트가 한 번 막고 스스로 물러난다.
+        # 질문을 한 번도 안 했는데 rc=3(차단 불필요)으로 통과하고 경고조차 안 남는다.
+        # 검수 CRITICAL 로 적발됐고 실기록에서 재현했다([cc] 2라운드).
+        #
+        # **구조 표시로 판정한다.** 메시지 문구("Stop hook feedback:")로 거르면 문구가
+        # 바뀌는 날 아무도 모르게 이 결함으로 되돌아간다 — 이 저장소가 반복해서 데인 부류다.
+        return False
+    if "toolUseResult" in e:            # 도구 결과는 사용자 발화가 아니다
+        return False
+    msg = e.get("message")
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if isinstance(content, list):
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                return False
+    return True
+
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as fh:
+        raw = fh.read()
+except Exception as exc:
+    fail("대화 기록을 열지 못했습니다: %s" % exc.__class__.__name__)
+
+lines = [ln for ln in raw.splitlines() if ln.strip()]
+entries, broken = [], 0
+for ln in lines:
+    try:
+        entries.append(json.loads(ln))
+    except Exception:
+        broken += 1
+# **한 줄이라도 못 읽으면 판독 불가다.** 건너뛰면 그 줄이 하필 자백이 담긴 발화이거나
+# 이 턴의 사용자 프롬프트일 때 조용히 새고, 후자는 경계가 **지난 턴으로 밀려** 위양성까지
+# 낳는다. "전멸일 때만 실패"로 두면 부분 손상이라는 가장 흔한 경우를 정확히 놓친다.
+if broken:
+    fail("대화 기록 %d줄을 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)" % broken)
+if not entries:
+    fail("대화 기록이 비어 있습니다")
+
+start = -1
+for i, e in enumerate(entries):
+    if not isinstance(e, dict):
+        # 유효한 JSON 이지만 dict 가 아닌 줄(`[]` 등). 건너뛰면 그 줄이 무엇이었는지
+        # 모른 채 통과한다 — 형식 변화의 신호로 보고 소리를 낸다.
+        fail("대화 기록에 dict 가 아닌 항목이 있습니다 (형식이 바뀌었을 수 있습니다)")
+    if is_user_prompt(e):
+        start = i
+if start < 0:
+    # 사용자 프롬프트가 없는 기록은 있을 수 없다 — 경계를 못 찾았다는 뜻이다.
+    # 전체를 훑으면 지난 턴의 문장까지 걸려 위양성이 폭주하므로 판독 불가로 떨어뜨린다.
+    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+
+asked, texts = 0, []
+for e in entries[start + 1:]:
+    if e.get("type") != "assistant" or e.get("isSidechain"):
+        continue
+    msg = e.get("message")
+    if not isinstance(msg, dict):
+        # truthy 비-dict 를 `or {}` 로 받으면 여기서 예외가 나고, 그 예외는 아래 "표지 없음"과
+        # 구별되지 않는 종료 코드로 나간다 — 조용한 통과다. 형식 변화로 보고 소리를 낸다.
+        fail("assistant 항목의 message 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
+    content = msg.get("content")
+    if isinstance(content, str):
+        # 문자열 본문도 발화다. 건너뛰면 그 발화가 스캔에서 통째로 사라진다.
+        texts.append(content)
+        continue
+    if not isinstance(content, list):
+        # 볼 수 없는 발화가 있다 = 사각지대다. 조용히 건너뛰면 게이트가 죽은 줄도 모른다.
+        fail("assistant 항목의 content 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
+    for b in content:
+        if not isinstance(b, dict):
+            # 블록이 dict 가 아니면 그 안의 발화를 볼 수 없다 = 사각지대다.
+            # 실측: content 가 ["문장"] 형태면 조용히 버려져 rc=3 으로 통과했다.
+            fail("assistant content 블록 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
+        if b.get("type") == "tool_use":
+            if b.get("name") == "AskUserQuestion":
+                asked += 1
+        elif b.get("type") == "text":
+            t = b.get("text")
+            if not isinstance(t, str):
+                fail("text 블록의 text 필드가 문자열이 아닙니다 (형식이 바뀌었을 수 있습니다)")
+            texts.append(t)
+        elif b.get("type") not in KNOWN_BLOCKS:
+            # **블록 타입 이름이 바뀌면 발화가 조용히 사라진다.** 컨테이너만 검사하고
+            # 그 안의 타입을 안 보면 비대칭이다 — 형식 변경은 컨테이너보다 블록 쪽이
+            # 더 흔하다. 실측: {"type":"output_text","text":"…제 판단으로 정했습니다."}
+            # 가 rc=3(차단 불필요)으로 조용히 통과했다([cc] 2라운드).
+            fail("모르는 assistant 블록 타입입니다: %r (형식이 바뀌었을 수 있습니다)"
+                 % (b.get("type"),))
+
+if asked > 0:
+    raise SystemExit(3)
+
+hits, seen = [], set()
+for text in texts:
+    for line in drop_fences(text).split("\n"):
+        if BLOCKQUOTE.match(line):
+            continue
+        line = QUOTED.sub(" ", INLINE.sub(" ", line))
+        chunks = SENT.split(line)
+        for i in range(0, len(chunks), 2):
+            body = chunks[i]
+            whole = body + (chunks[i + 1] if i + 1 < len(chunks) else "")
+            # 부정이 붙으면 물음이 아니라 자백이다 — "물어보지 않고 …했습니다".
+            if QUESTION.search(whole) and not NEG_ASK.search(whole):
+                continue
+            core = TRAIL.sub("", LEAD.sub("", body).strip())
+            if not core or not MARKER.search(core) or not DECLARATIVE.search(core):
+                continue
+            if core in seen:
+                continue
+            seen.add(core)
+            hits.append(core if len(core) <= MAX_LEN else core[:MAX_LEN] + "…")
+
+if not hits:
+    raise SystemExit(3)
+for h in hits[:MAX_HITS]:
+    sys.stdout.write(h + "\n")
+if len(hits) > MAX_HITS:
+    sys.stdout.write("... 그리고 %d개 더\n" % (len(hits) - MAX_HITS))
+raise SystemExit(0)
+PY
+}

@@ -102,8 +102,11 @@ gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출�
   if [ "$count" -ge "$MAX_BLOCKS" ]; then
     changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
     rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
-    printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
-      "$1" "$MAX_BLOCKS" "$changed"
+    # 판독 불가 사유도 함께 싣는다. 여기서 빠뜨리면 **예산이 소진된 턴에 발생한**
+    # 판독 불가가 영구 소실된다 — 게이트 메시지가 이 경로로는 안 나가기 때문이다([cx] 2라운드).
+    printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s%s"}\n' \
+      "$1" "$MAX_BLOCKS" "$changed" \
+      "${decision_note:+ / $decision_note}"
     exit 0
   fi
 }

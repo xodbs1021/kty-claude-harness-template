@@ -45,7 +45,13 @@ cleanup() {
   git restore --source=HEAD --worktree -- "$COMMON" "$STOP" 2>/dev/null
   rmdir "$LOCK" 2>/dev/null
 }
-trap cleanup EXIT INT TERM
+# **신호 핸들러는 복구 후 실제로 종료해야 한다.** 정리만 하고 반환하면 락이 이미 사라진
+# 상태로 측정이 계속돼 다른 실행과 겹친다(이 저장소가 install.sh 에서 같은 계약을 못박았다).
+# 보고는 최선 노력이고 종료 코드가 계약이므로 핸들러 진입 직후 set +e.
+on_signal() { set +e; cleanup; exit "$1"; }
+trap cleanup EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 
 restore_and_verify() {   # $1 = 파일
   git restore --source=HEAD --worktree -- "$1" || { echo "✗ restore 실패: $1" >&2; exit 1; }
@@ -170,16 +176,17 @@ run_mutation '서술형 종결 요구를 지운다' "$COMMON" \
 run_mutation 'thinking 블록까지 스캔한다' "$COMMON" \
   '        elif b.get("type") == "text":
             t = b.get("text")
-            if isinstance(t, str):
-                texts.append(t)' \
+            if not isinstance(t, str):
+                fail("text 블록의 text 필드가 문자열이 아닙니다 (형식이 바뀌었을 수 있습니다)")
+            texts.append(t)' \
   '        elif b.get("type") in ("text", "thinking"):
             t = b.get("text") or b.get("thinking")
             if isinstance(t, str):
                 texts.append(t)'
 
 run_mutation '서브에이전트 발화까지 스캔한다' "$COMMON" \
-  '    if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):' \
-  '    if not isinstance(e, dict) or e.get("type") != "assistant":'
+  '    if e.get("type") != "assistant" or e.get("isSidechain"):' \
+  '    if e.get("type") != "assistant":'
 
 # 자기참조 폭발을 막는 핵심 장치다 — 이게 없으면 이 패턴이 적힌 파일을 쓰는 것만으로 막힌다.
 run_mutation '도구 입력까지 스캔한다 (자기참조 폭발)' "$COMMON" \
@@ -198,9 +205,9 @@ echo
 echo '── C. 턴 경계를 흐린다 ─────────────────────────────────────────────'
 
 run_mutation '마지막이 아니라 첫 프롬프트를 경계로 삼는다' "$COMMON" \
-  '    if isinstance(e, dict) and is_user_prompt(e):
+  '    if is_user_prompt(e):
         start = i' \
-  '    if isinstance(e, dict) and is_user_prompt(e) and start < 0:
+  '    if is_user_prompt(e) and start < 0:
         start = i'
 
 # 두 판정을 **따로** 잰다. 실제 기록은 두 표식을 함께 갖고 있어서 한쪽만 지우면 다른 쪽이
@@ -328,6 +335,54 @@ run_mutation '앞 게이트(듀얼리뷰)에서 사유를 뺀다' "$STOP" \
   '    emit_decision_note
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"' \
   '    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"'
+
+echo
+echo '── G. 듀얼 검수 2라운드 반영분 ([cx]) ──────────────────────────────'
+
+run_mutation '최상위 비-dict 검사를 지운다' "$COMMON" \
+  '    if not isinstance(e, dict):' \
+  '    if False:'
+
+run_mutation 'content 블록 형식 검사를 지운다' "$COMMON" \
+  '        if not isinstance(b, dict):
+            # 블록이 dict 가 아니면 그 안의 발화를 볼 수 없다 = 사각지대다.
+            # 실측: content 가 ["문장"] 형태면 조용히 버려져 rc=3 으로 통과했다.
+            fail("assistant content 블록 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")' \
+  '        if not isinstance(b, dict):
+            continue'
+
+run_mutation 'text 필드 형식 검사를 지운다' "$COMMON" \
+  '            if not isinstance(t, str):
+                fail("text 블록의 text 필드가 문자열이 아닙니다 (형식이 바뀌었을 수 있습니다)")
+            texts.append(t)' \
+  '            if isinstance(t, str):
+                texts.append(t)'
+
+run_mutation '부정형 예외의 띄어쓰기 변형을 지운다' "$COMMON" \
+  '    "물어 ?보지 ?않|물어 ?보지도|묻지 ?않|묻지도|여쭙지 ?않|여쭈지 ?않|여쭤 ?보지 ?않"
+    "|확인(?:도)? ?하지 ?않|확인 ?없이|의견을 받지 ?않|물어 ?보는 대신|묻는 대신|묻지 못"' \
+  '    "물어보지 ?않|물어보지도|묻지 ?않|묻지도|여쭙지 ?않|여쭈지 ?않|여쭤보지 ?않"
+    "|확인하지 ?않|확인 ?없이|의견을 받지 ?않|물어보는 대신|묻는 대신|묻지 못"'
+
+run_mutation '벽돌 방지 알림에서 판독 불가 사유를 뺀다' "$STOP" \
+  '      "${decision_note:+ / $decision_note}"' \
+  '      ""'
+
+# 다섯 게이트 전부에 사유를 싣는다는 계약 — 각 호출을 따로 지워 격리해 잰다.
+run_mutation '설명 게이트에서 사유를 뺀다' "$STOP" \
+  '    emit_decision_note
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"' \
+  '    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"'
+
+run_mutation '지식 게이트에서 사유를 뺀다' "$STOP" \
+  '    emit_decision_note
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"' \
+  '    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"'
+
+run_mutation 'push 게이트에서 사유를 뺀다' "$STOP" \
+  '    emit_decision_note
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"' \
+  '    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"'
 
 echo
 echo '── E. 순서 계약 — 게이트를 뒤로 옮긴다 ─────────────────────────────'

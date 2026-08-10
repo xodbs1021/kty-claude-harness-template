@@ -361,8 +361,8 @@ QUESTION = re.compile(
 # "사용자에게 물어보지 않고 제 판단으로 진행했습니다" 는 `물어` 때문에 질문으로 오인된다.
 # 부정이 붙으면 위 QUESTION 제외를 적용하지 않는다.
 NEG_ASK = re.compile(
-    "물어보지 ?않|물어보지도|묻지 ?않|묻지도|여쭙지 ?않|여쭈지 ?않|여쭤보지 ?않"
-    "|확인하지 ?않|확인 ?없이|의견을 받지 ?않|물어보는 대신|묻는 대신|묻지 못"
+    "물어 ?보지 ?않|물어 ?보지도|묻지 ?않|묻지도|여쭙지 ?않|여쭈지 ?않|여쭤 ?보지 ?않"
+    "|확인(?:도)? ?하지 ?않|확인 ?없이|의견을 받지 ?않|물어 ?보는 대신|묻는 대신|묻지 못"
 )
 # 서술형 종결. "내가 그렇게 했다"는 단정만 잡는다.
 DECLARATIVE = re.compile("(?:다|음|함|됨|임|옴)$")
@@ -373,6 +373,9 @@ QUOTED     = re.compile("\"[^\"\n]*\"|'[^'\n]*'|“[^”\n]*”"
                         "|‘[^’\n]*’|「[^」\n]*」"
                         "|『[^』\n]*』")
 BLOCKQUOTE = re.compile("^\\s{0,3}>")
+# **공시된 한계:** 약어(`e.g.` 등)는 뒤에 공백이 오므로 여전히 문장을 자른다. 그 조각에
+# 표지와 서술형 종결이 갈리면 놓친다. 약어 목록을 들고 다니는 것은 또 하나의 추측이라
+# 하지 않는다 — 좁은 창으로 공시한다.
 # 마침표는 **뒤에 공백이나 줄끝이 올 때만** 문장 종결이다. 무조건 종결로 보면
 # `README.md`·`_common.sh`·버전 번호가 한 문장을 쪼개, 표지와 서술형 종결이 서로 다른
 # 조각으로 갈라져 **둘 다 만족하는 조각이 없어진다**(위음성).
@@ -436,7 +439,11 @@ if not entries:
 
 start = -1
 for i, e in enumerate(entries):
-    if isinstance(e, dict) and is_user_prompt(e):
+    if not isinstance(e, dict):
+        # 유효한 JSON 이지만 dict 가 아닌 줄(`[]` 등). 건너뛰면 그 줄이 무엇이었는지
+        # 모른 채 통과한다 — 형식 변화의 신호로 보고 소리를 낸다.
+        fail("대화 기록에 dict 가 아닌 항목이 있습니다 (형식이 바뀌었을 수 있습니다)")
+    if is_user_prompt(e):
         start = i
 if start < 0:
     # 사용자 프롬프트가 없는 기록은 있을 수 없다 — 경계를 못 찾았다는 뜻이다.
@@ -445,7 +452,7 @@ if start < 0:
 
 asked, texts = 0, []
 for e in entries[start + 1:]:
-    if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):
+    if e.get("type") != "assistant" or e.get("isSidechain"):
         continue
     msg = e.get("message")
     if not isinstance(msg, dict):
@@ -462,14 +469,17 @@ for e in entries[start + 1:]:
         fail("assistant 항목의 content 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
     for b in content:
         if not isinstance(b, dict):
-            continue
+            # 블록이 dict 가 아니면 그 안의 발화를 볼 수 없다 = 사각지대다.
+            # 실측: content 가 ["문장"] 형태면 조용히 버려져 rc=3 으로 통과했다.
+            fail("assistant content 블록 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")
         if b.get("type") == "tool_use":
             if b.get("name") == "AskUserQuestion":
                 asked += 1
         elif b.get("type") == "text":
             t = b.get("text")
-            if isinstance(t, str):
-                texts.append(t)
+            if not isinstance(t, str):
+                fail("text 블록의 text 필드가 문자열이 아닙니다 (형식이 바뀌었을 수 있습니다)")
+            texts.append(t)
 
 if asked > 0:
     raise SystemExit(3)

@@ -131,6 +131,17 @@ for spec in sys.argv[2:]:
     if kind == "badcontent":           # content 가 list 도 str 도 아님
         rows.append({"type": "assistant", "isSidechain": False, "message": {"content": 42}})
         continue
+    if kind == "topnondict":           # 유효한 JSON 이지만 dict 가 아닌 줄
+        rows.append("\x00RAW\x00[]")
+        continue
+    if kind == "blocklist":            # content 는 list 인데 블록이 dict 가 아니다
+        rows.append({"type": "assistant", "isSidechain": False,
+                     "message": {"content": [val]}})
+        continue
+    if kind == "badtext":              # text 블록인데 text 필드가 문자열이 아니다
+        rows.append({"type": "assistant", "isSidechain": False,
+                     "message": {"content": [{"type": "text", "text": 42}]}})
+        continue
     side = False
     if kind == "side":
         side, kind = True, "text"
@@ -580,6 +591,41 @@ d52() {
   report "$name" "$why"
 }
 
+# ── 9. 듀얼 검수 2라운드 반영분 ([cx]) ───────────────────────────────
+# 라운드 1의 수정이 만든 잔여 구멍들이다. "엄격하게 만들었다"가 "빠짐없이 본다"를
+# 뜻하지 않는다 — 컨테이너만 보고 그 안을 안 보면 같은 조용한 통과가 남는다.
+prep_topnondict() { local f="$1/topnd.jsonl"; mk_transcript "$f" 'topnondict:'; printf '%s\n' "$f"; }
+prep_blocklist()  { local f="$1/blk.jsonl";   mk_transcript "$f" 'blocklist:이건 범위 밖이라 그대로 뒀습니다.'; printf '%s\n' "$f"; }
+prep_badtext()    { local f="$1/badtext.jsonl"; mk_transcript "$f" 'badtext:'; printf '%s\n' "$f"; }
+d53() { openq_case '최상위 항목이 dict 가 아니면 통과 + 경고' prep_topnondict 'dict 가 아닌 항목'; }
+d54() { openq_case 'content 블록이 dict 가 아니면 통과 + 경고' prep_blocklist 'content 블록 형식'; }
+d55() { openq_case 'text 필드가 문자열이 아니면 통과 + 경고'   prep_badtext 'text 필드'; }
+# [cx] 부정형 예외가 띄어쓰기·조사 변형을 놓쳐 **겨누는 문장**이 다시 샜다.
+d56() { blocked_case '"물어 보지 않고" 띄어쓰기 변형도 막는다' '제 판단으로' \
+          'text:사용자에게 물어 보지 않고 제 판단으로 진행했습니다.'; }
+d57() { blocked_case '"확인도 하지 않고" 조사 변형도 막는다' '가정하여' \
+          'text:사용자 의견을 확인도 하지 않고 가정하여 구현했습니다.'; }
+# [cx] 예산이 소진된 턴에 새로 판독 불가가 나면 사유가 **영구 소실**된다 —
+# 게이트 메시지가 그 경로로는 안 나가기 때문이다. 벽돌 방지 알림에 함께 실어야 한다.
+d58() {
+  local name='예산 소진 턴에도 판독 불가 사유가 남는다' why=''
+  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+  local tp="$p/transcript.jsonl"
+  # **표지 없는 기록으로 예산을 소진시켜야 한다.** 결정 게이트로 소진시키면 4번째 턴에
+  # 게이트가 바뀌면서 차단 지문도 바뀌어 예산이 리셋된다 — 그러면 벽돌 경로에 닿지 않는다.
+  # 감사 게이트에서 같은 지문으로 3회 막은 뒤, 그 턴에 기록이 사라지는 것이 재현 경로다.
+  mk_transcript "$tp" 'text:구현을 마쳤고 테스트가 전부 통과했습니다.'
+  setup_flags "$p" audit
+  local i
+  for i in 1 2 3; do run_stop "$p" "$tp"; done      # 감사 게이트에서 같은 지문 3회
+  run_stop "$p" "$p/does-not-exist.jsonl"            # 4번째 턴에 기록이 사라진다
+  if   [ "$RC" -ne 0 ];                then why="rc=$RC (기대 0 — 소진 후 통과)"
+  elif ! contains "$OUT" "$TOK_BRICK"; then why='벽돌 방지 알림이 없다'
+  elif ! contains "$OUT" "$TOK_NOTE";  then why='판독 불가 사유가 영구 소실됐다'
+  fi
+  report "$name" "$why"
+}
+
 # --- 실행 ----------------------------------------------------------------
 # 목록을 **명시적으로** 센다. 실행 수만 세면 중복 1건 + 누락 1건이 상쇄돼 초록이 된다.
 CASES='d01 d02 d03 d04 d05 d06 d07 d08 d09
@@ -589,7 +635,8 @@ d26 d27 d28 d29 d30 d30b
 d31 d32 d33 d34 d35
 d36 d37 d38
 d39 d40 d41
-d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52'
+d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52
+d53 d54 d55 d56 d57 d58'
 
 echo "결정 게이트 회귀 테스트"
 expected=0

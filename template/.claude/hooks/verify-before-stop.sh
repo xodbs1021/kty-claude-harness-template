@@ -57,11 +57,25 @@ if ! hook_disabled "stop:push" && git -C "$PROJECT_DIR" rev-parse --git-dir >/de
   fi
 fi
 
+# "남은 할 일" 판정을 **한 곳에 모은 술어.** 조기 종료(1)와 회수 게이트(3.4)의 자동 해제
+# 후 재평가가 같은 술어를 쓴다 — 두 자리가 따로 열거하면 언젠가 어긋나고, push 는
+# 플래그가 아니라 (0)의 계산값이라 열거 누락이 가장 나기 쉽다. 실제로 설계 검수에서
+# "재평가가 플래그만 세면 자동 해제가 push 게이트를 우회한다"([cc·cx])가 잡혔다 —
+# 커밋 29개를 잃은 그 상태가 새 게이트로 다시 열리는 경로였다.
+# 지식·회수 플래그는 **게이트가 살아 있을 때만** 할 일로 센다 — 껐는데 예전에 남은
+# 플래그 파일이 읽기 전용 턴의 조기 종료를 막으면 안 된다.
+work_pending() {
+  [ -n "$push_unsent" ] && return 0
+  [ -s "$AUDIT_FLAG" ] && return 0
+  [ -s "$EXPLAIN_FLAG" ] && return 0
+  knowledge_gate_active && return 0
+  [ -s "$DUALREVIEW_FLAG" ] && return 0
+  retrieval_pending && return 0
+  return 1
+}
+
 # (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
-#     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
-#     지식 플래그는 **게이트가 켜져 있을 때만** 할 일로 센다 — 껐는데 예전에 남은
-#     플래그 파일이 읽기 전용 턴의 조기 종료를 막으면 안 된다.
-if [ -z "$push_unsent" ] && [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then
+if ! work_pending; then
   rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
   exit 0
 fi
@@ -79,14 +93,27 @@ fi
 prev_fp="$(cat "$BLOCK_FP" 2>/dev/null)"
 # 지문 = 서 있는 플래그의 집합(내용 아님). 내용을 넣으면 갇힌 채 새 파일만 편집해도
 # 리셋되고(무한 차단), cksum 충돌로 실제 진전이 리셋 안 될 수도 있다([cx] 지적).
+#
+# **함수인 이유:** 3.4 게이트가 실행 도중 자기 플래그를 지운다(자동 해제). 진입 시 1회
+# 스냅숏만 쓰면 그 턴의 하위 게이트(3.5~6)가 이미 지워진 "r" 비트가 든 stale 지문으로
+# 예산을 매기고, 다음 턴의 지문과 달라져 **진전이 아닌데 카운터가 리셋**된다 — 벽돌
+# 방지가 한 사이클 헛돈다(구현 검수 [cc]가 4회 연속 실행으로 재현: 1/3→1/3→2/3→3/3).
+compute_flags_fp() {
+  flags_fp=""
+  [ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
+  [ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
+  knowledge_gate_active     && flags_fp="${flags_fp}k"
+  [ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
+  # 회수 플래그도 **존재 비트만** 넣는다. 불량 파일 목록은 retrieval 게이트 자신의 예산
+  # 키에만 결합한다(아래 3.4) — 여기(공유 지문)에 넣으면 결정 게이트에 갇힌 채 불량 집합만
+  # 바뀌어도 그쪽 예산이 리셋돼, 위 "내용을 넣으면"의 경고 그대로가 된다([cc·cx] 검수).
+  retrieval_pending         && flags_fp="${flags_fp}r"
+  # push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
+  # 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
+  [ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
+}
 flags_fp=""
-[ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
-[ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
-knowledge_gate_active     && flags_fp="${flags_fp}k"
-[ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
-# push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
-# 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
-[ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
+compute_flags_fp
 new_fp=""
 
 gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출력 전에 호출한다.
@@ -100,8 +127,8 @@ gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출�
     fi
   fi
   if [ "$count" -ge "$MAX_BLOCKS" ]; then
-    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
-    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$RETRIEVAL_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$RETRIEVAL_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
     # 판독 불가 사유도 함께 싣는다. 여기서 빠뜨리면 **예산이 소진된 턴에 발생한**
     # 판독 불가가 영구 소실된다 — 게이트 메시지가 이 경로로는 안 나가기 때문이다([cx] 2라운드).
     printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s%s"}\n' \
@@ -238,6 +265,135 @@ if [ "$decision_armed" -eq 1 ] && ! hook_disabled "stop:decision"; then
       echo "  - 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받으세요."
       echo
       echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+    } >&2
+    bump_and_block
+  fi
+fi
+
+# (3.4) **회수 표명 게이트** (ADR-0013) — 설계·계획 산출물의 첫 줄이 `사전 결정 회수:`
+#      표명 형식을 지키는지 본다. 표명 첫 줄은 ADR-0009 가 만든 계약인데 그 검증이
+#      산문("확인한다 — 없으면 되돌린다")으로만 있었다 — 산문 승격 부류다.
+#
+#      **형식만 본다.** 진짜 읽었는지는 기계가 못 본다(내용 검증은 층 위반 — ADR-0013 ④).
+#      **자동 해제** — 형식을 지키면 이 게이트가 스스로 플래그를 지운다. 지울 플래그를
+#      에이전트 손에 주지 않는 것이 이 게이트의 형태다(결정 게이트의 "실제로 물으면
+#      풀린다"와 같은 구조).
+#      **듀얼리뷰(3.5)보다 앞** — 표명 없는 산출물로 리뷰에 노력을 쓰기 전에 잡는 편이
+#      싸다. 정확성 문제가 아니라 비용 문제다(ADR-0012 ④와 같은 논리).
+if retrieval_pending; then
+  if [ ! -r "$RETRIEVAL_FLAG" ]; then
+    # 플래그는 서 있는데(-s) 읽을 수 없다 — "검사 대상 0건"으로 위장되면 조용한 통과라
+    # fail-closed 로 차단한다. 무엇이 대상이었는지조차 모르는 상태다.
+    gate_budget "retrieval:unreadable-flag"
+    {
+      echo "[완료 차단] 회수 표명 검사 불가 — 플래그 파일을 읽을 수 없습니다: $RETRIEVAL_FLAG"
+      echo "권한·손상을 확인한 뒤 다시 종료하세요."
+      emit_decision_note
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
+    } >&2
+    bump_and_block
+  fi
+  retrieval_bad_paths=""   # 불량 항목의 경로(정렬 전, 줄 단위) — 예산 키용
+  retrieval_bad_msgs=""    # "경로 — 사유" (차단 메시지용)
+  # `|| [ -n "$entry" ]` 가 필수다: 마지막 줄이 개행 없이 끝나면 read 가 값을 담고도
+  # rc=1 을 내 본문이 안 돌고, 그 항목이 **조용히 스킵**된다 — record_flag 쓰기가
+  # 중단된 플래그에서 표명 없는 산출물이 통과하는 경로였다(구현 검수 [cx] HIGH).
+  while IFS= read -r entry || [ -n "$entry" ]; do
+    [ -n "$entry" ] || continue                     # 빈 줄은 기록 계약 밖 — 건너뛴다
+    case "$entry" in
+      /*) rfile="$entry" ;;
+      # 기록값 계약(mark-needs-audit): 프로젝트 안은 상대경로다. 훅 실행 cwd 가 아니라
+      # **$PROJECT_DIR 기준**으로 연다 — cwd 기준이면 다른 곳에서 실행된 턴에 전부
+      # "소실"로 오인돼 불량이 조용히 통과한다([cc·cx] 검수).
+      *)  rfile="$PROJECT_DIR/$entry" ;;
+    esac
+    # 소실은 건너뛴다. 차단하면 산출물을 아카이브한 턴이 벽돌이 된다(고칠 대상이 없다).
+    # 이 스킵이 삭제 우회를 연다는 것은 ADR-0013 이 공시한다 — 실존 검증은 감사자 몫.
+    [ -e "$rfile" ] || continue
+    if [ ! -r "$rfile" ]; then
+      retrieval_bad_paths="${retrieval_bad_paths}${entry}
+"
+      retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 파일을 읽을 수 없음
+"
+      continue
+    fi
+    rline=""
+    IFS= read -r rline < "$rfile" || true
+    # 첫 줄 판정 전에 선두 BOM·후행 CR 을 걷어낸다 — harness_env_value 가 같은 부류
+    # (눈에 안 보이는 바이트가 판정을 뒤집는 것)에 데인 전례가 있다.
+    rline="${rline#$'\xEF\xBB\xBF'}"
+    rline="${rline%$'\r'}"
+    case "$rline" in
+      "사전 결정 회수:"*)
+        if [ -z "$(printf '%s' "${rline#사전 결정 회수:}" | tr -d '[:space:]')" ]; then
+          retrieval_bad_paths="${retrieval_bad_paths}${entry}
+"
+          retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 표명 접두어 뒤에 내용이 없음
+"
+        fi
+        ;;
+      "")
+        retrieval_bad_paths="${retrieval_bad_paths}${entry}
+"
+        retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 파일이 비었거나 첫 줄이 빈 줄
+"
+        ;;
+      *)
+        retrieval_bad_paths="${retrieval_bad_paths}${entry}
+"
+        retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 첫 줄이 '사전 결정 회수:' 로 시작하지 않음
+"
+        ;;
+    esac
+  done < "$RETRIEVAL_FLAG"
+
+  if [ -z "$retrieval_bad_paths" ]; then
+    # 전부 형식 준수(또는 소실뿐) → 자동 해제. rm 이 실패하면 플래그가 남아 다음 턴에
+    # 다시 검사된다 — 게이트가 죽는 방향이 아니라 남는 방향이므로 조용해도 안전하다.
+    rm -f "$RETRIEVAL_FLAG" 2>/dev/null
+    # 지문을 다시 계산한다 — 진입 시 스냅숏에는 방금 지운 "r" 비트가 남아 있어, 이 턴의
+    # 하위 게이트가 stale 지문으로 예산을 매기고 다음 턴에 거짓 리셋이 난다([cc] HIGH).
+    compute_flags_fp
+    if ! work_pending; then
+      # 이 턴의 할 일이 이것뿐이었다 — 여기서 끝내지 않으면 맨 아래 감사 게이트가
+      # 빈 목록으로 허위 차단한다([cc·cx] 검수). 술어는 조기 종료와 같은 것을 쓴다 —
+      # push 미완·다른 플래그가 남았으면 아래 게이트들로 계속 흘러간다.
+      rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+      if [ -n "${decision_note:-}" ]; then
+        # 경고를 삼키지 않는 것이 결정 게이트 fail-open 의 유일한 조건이다(ADR-0012 ②).
+        # 성공 경로에도 적용된다 — 예산 소진 경로가 같은 방식으로 싣는다.
+        printf '{"systemMessage":"참고: %s — 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."}\n' "$decision_note"
+      fi
+      exit 0
+    fi
+  else
+    # 예산 키는 게이트 자신에게만 결합한다. 불량 목록을 공유 지문(flags_fp)에 넣으면
+    # 다른 게이트의 예산까지 리셋된다. 목록이 줄면(파일을 고치면) 이 게이트의 카운터만
+    # 리셋된다 — push 가 "몇 개 남았나"를 지문에 넣는 것과 같은 의도다.
+    # 파이프가 실패하거나 빈 값을 내면(제한된 PATH·I/O 오류) 예산 키가 비어 "진전이
+    # 리셋을 못 만드는" 상태가 된다([cx] 지적) — 외부 명령 없는 bash 치환으로 폴백한다.
+    # 폴백은 정렬이 없어 키 안정성이 낮지만, 같은 플래그 파일은 순서가 유지되므로 실효는 같다.
+    retrieval_bad_sorted="$(printf '%s' "$retrieval_bad_paths" | sort -u | tr '\n' ' ')" \
+      || retrieval_bad_sorted=""
+    [ -n "$retrieval_bad_sorted" ] || retrieval_bad_sorted="${retrieval_bad_paths//$'\n'/ }"
+    gate_budget "retrieval:${retrieval_bad_sorted}"
+    {
+      echo "[완료 차단] 설계·계획 산출물에 회수 표명이 없습니다 — 선행 결정을 회수하지 않고 만든 산출물로는 끝낼 수 없습니다."
+      echo
+      echo "형식이 어긋난 파일:"
+      printf '%s' "$retrieval_bad_msgs" | sed 's/^/  - /'
+      echo
+      echo "해야 할 일:"
+      echo "  1. 프로필 9절의 지식 진입점을 읽고, 이번 작업과 관련된 항목만 따라가 읽는다."
+      echo "  2. 산출물 **첫 줄**에 표명을 적는다:"
+      echo "     사전 결정 회수: <읽은 경로>     또는     사전 결정 회수: 없음(<사유>)"
+      echo "     이어서 회수 블록: - 걸리는 선행 결정: <제목 — 한 줄> (없으면 \"걸리는 선행 결정 없음\")"
+      echo "  3. 형식을 지키면 이 게이트는 스스로 풀립니다 — 지울 플래그가 없습니다."
+      echo
+      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지는 검수(plan-reviewer·codex)가 봅니다."
+      emit_decision_note
+      echo
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
     } >&2
     bump_and_block
   fi

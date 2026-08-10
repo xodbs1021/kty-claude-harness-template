@@ -57,14 +57,14 @@ case_05() { # D2 설계 산출물 — 듀얼리뷰+지식. 기록값은 프로�
   local p; p="$(new_project)"
   mkfile "$p/_workspace/00_design.md"
   run_hook "$p" "$p/_workspace/00_design.md"
-  check_case '05 프로젝트 안 설계 문서 → 듀얼리뷰+지식(상대경로)' 0 designdoc '_workspace/00_design.md'
+  check_case '05 프로젝트 안 설계 문서 → 듀얼리뷰+지식+회수(상대경로)' 0 designdoc '_workspace/00_design.md'
 }
 
 case_06() { # D2 계획 산출물 — 01_plan 축.
   local p; p="$(new_project)"
   mkfile "$p/_workspace/01_plan.v2.md"
   run_hook "$p" "$p/_workspace/01_plan.v2.md"
-  check_case '06 프로젝트 안 계획 문서 → 듀얼리뷰+지식(상대경로)' 0 designdoc '_workspace/01_plan.v2.md'
+  check_case '06 프로젝트 안 계획 문서 → 듀얼리뷰+지식+회수(상대경로)' 0 designdoc '_workspace/01_plan.v2.md'
 }
 
 case_07() { # 순서계약 (나) — .claude/* 제외가 하네스 앵커보다 **먼저**.
@@ -199,7 +199,7 @@ case_23() { # B1 본체 — 밖 설계 문서에도 듀얼리뷰 게이트가 �
   local p hr; p="$(new_project)"; hr="$(new_harness_repo)"
   mkfile "$hr/_workspace/00_design.md"
   run_hook "$p" "$hr/_workspace/00_design.md"
-  check_case '23 밖+정본 _workspace/00_design.md → 듀얼리뷰+지식(절대경로)' 0 designdoc "$hr/_workspace/00_design.md"
+  check_case '23 밖+정본 _workspace/00_design.md → 듀얼리뷰+지식+회수(절대경로)' 0 designdoc "$hr/_workspace/00_design.md"
 }
 
 case_24() { # 순서계약 (나) — 정본 저장소가 **자기 자신에 설치한** 소비 사본은 스킵.
@@ -305,14 +305,14 @@ case_34() { # D2 본체 — **이 세션 형태**. _workspace/ 가 어느 git �
   local p nogit; p="$(new_project)"; nogit="$(new_dir nogit)"
   mkfile "$nogit/_workspace/00_design.md"
   run_hook "$p" "$nogit/_workspace/00_design.md"
-  check_case '34 밖+git 아님 _workspace/00_design.md → 듀얼리뷰+지식(절대경로)' 0 designdoc "$nogit/_workspace/00_design.md"
+  check_case '34 밖+git 아님 _workspace/00_design.md → 듀얼리뷰+지식+회수(절대경로)' 0 designdoc "$nogit/_workspace/00_design.md"
 }
 
 case_35() { # D2 — 01_plan 축.
   local p nogit; p="$(new_project)"; nogit="$(new_dir nogit)"
   mkfile "$nogit/_workspace/01_plan.md"
   run_hook "$p" "$nogit/_workspace/01_plan.md"
-  check_case '35 밖+git 아님 _workspace/01_plan.md → 듀얼리뷰+지식(절대경로)' 0 designdoc "$nogit/_workspace/01_plan.md"
+  check_case '35 밖+git 아님 _workspace/01_plan.md → 듀얼리뷰+지식+회수(절대경로)' 0 designdoc "$nogit/_workspace/01_plan.md"
 }
 
 case_36() { # D3-3 의 음성 쪽 — .git/ 귀속이 "무조건 발화"가 되면 안 된다.
@@ -428,7 +428,7 @@ case_46() { # 순서계약 (가) — 듀얼 판정은 정규화 **뒤**.
   local p; p="$(new_project)"
   mkfile "$p/_workspace/01_plan.md"
   run_hook "$p" '_workspace/01_plan.md'
-  check_case '46 상대경로 입력 _workspace/01_plan.md → 듀얼리뷰+지식' 0 designdoc '_workspace/01_plan.md'
+  check_case '46 상대경로 입력 _workspace/01_plan.md → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/01_plan.md'
 }
 
 case_47() { # 순서계약 (가) — 기록값 축. 듀얼 판정을 정규화 앞으로 되돌리면 판정은 살아도
@@ -437,7 +437,7 @@ case_47() { # 순서계약 (가) — 기록값 축. 듀얼 판정을 정규화 �
   local p; p="$(new_project)"
   mkfile "$p/.claude/../_workspace/00_design.md"
   run_hook "$p" "$p/.claude/../_workspace/00_design.md"
-  check_case '47 .claude/../_workspace/00_design.md → 듀얼리뷰+지식(정규화된 값)' 0 designdoc '_workspace/00_design.md'
+  check_case '47 .claude/../_workspace/00_design.md → 듀얼리뷰+지식+회수(정규화된 값)' 0 designdoc '_workspace/00_design.md'
 }
 
 case_48() { # H1 — global-agents/ 는 전역 에이전트 **정본**이고 install/sync 가 배포한다.
@@ -501,7 +501,7 @@ case_55() { # 3단계 대소문자 축 — 듀얼 매칭은 소문자화해 비�
   local p; p="$(new_project)"
   mkfile "$p/_workspace/00_Design.md"
   run_hook "$p" "$p/_workspace/00_Design.md"
-  check_case '55 _workspace/00_Design.md(대문자) → 듀얼리뷰+지식(원본 대소문자로 기록)' 0 designdoc '_workspace/00_Design.md'
+  check_case '55 _workspace/00_Design.md(대문자) → 듀얼리뷰+지식+회수(원본 대소문자로 기록)' 0 designdoc '_workspace/00_Design.md'
 }
 
 # === F. 3중 검수에서 추가된 행 ============================================
@@ -650,7 +650,7 @@ case_66() { # 듀얼 글롭의 접미사 축 — 00_design* 쪽. 케이스 06 �
   local p; p="$(new_project)"
   mkfile "$p/_workspace/00_design.v2.md"
   run_hook "$p" "$p/_workspace/00_design.v2.md"
-  check_case '66 프로젝트 안 _workspace/00_design.v2.md → 듀얼리뷰+지식' 0 designdoc '_workspace/00_design.v2.md'
+  check_case '66 프로젝트 안 _workspace/00_design.v2.md → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design.v2.md'
 }
 
 # === G. PR 점검(C1)에서 추가된 행 — 물리 경로 정규화 축 ====================
@@ -748,11 +748,34 @@ case_73() { # **음성 행** — 결정 경로 밖의 문서는 여전히 스킵
   check_case '73 결정 경로 밖의 문서는 스킵 (예외가 문서 전체로 새지 않는다)' 0 none ''
 }
 
+case_74() { # 이름에 codex 가 들어도 설계 산출물이면 플래그가 **선다** (ADR-0013).
+            # 설계 검수가 "codex 이름 제외" 안을 위음성 신설로 기각했다 — codex 연동
+            # 자체를 설계하는 정상 주산출물이 무게이트가 되기 때문이다. 리뷰 산출물과의
+            # 재귀는 훅이 아니라 명명 계약(리뷰 산출물은 00_design·01_plan 접두어 금지)이
+            # 막는다. 이 케이스는 그 기각을 계약으로 고정한다 — 제외를 넣으면 빨개진다.
+  local p; p="$(new_project)"
+  mkfile "$p/_workspace/00_design-codex-gate.md"
+  run_hook "$p" "$p/_workspace/00_design-codex-gate.md"
+  check_case '74 이름에 codex 가 든 설계 산출물 → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design-codex-gate.md'
+}
+
+case_75() { # 프로젝트 **경로**에 codex 가 들어도 마찬가지다 — 제외를 경로 전체 매칭으로
+            # 구현하면 codex 라는 이름의 프로젝트가 통째로 무게이트가 된다(같은 기각의
+            # 경로 축). 케이스 74 와 짝이다.
+  local p; p="$(new_dir proj-codex-tools)"
+  mkdir -p "$p/.claude/hooks"
+  cp "$HOOK"   "$p/.claude/hooks/mark-needs-audit.sh"
+  cp "$COMMON" "$p/.claude/hooks/_common.sh"
+  mkfile "$p/_workspace/00_design.md"
+  run_hook "$p" "$p/_workspace/00_design.md"
+  check_case '75 경로에 codex 가 든 프로젝트의 설계 산출물 → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design.md'
+}
+
 # --- 계약 표의 크기 -------------------------------------------------------
 # 러너가 이 두 값으로 "케이스가 조용히 빠지거나 두 번 도는 것"을 잡는다.
 # 건수는 여기 말고 어디에도 숫자로 적지 않는다 — 케이스를 추가할 때마다 낡는다.
 
-EXPECTED_CASES=73
+EXPECTED_CASES=75
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 case_10 case_11
        case_12 case_13 case_14 case_15 case_16 case_17 case_18 case_19 case_20 case_21 case_22
@@ -760,4 +783,4 @@ CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 c
        case_34 case_35 case_36 case_37 case_38 case_39 case_40 case_41 case_42 case_43 case_44
        case_45 case_46 case_47 case_48 case_49 case_50 case_51 case_52 case_53 case_54 case_55
        case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66
-       case_67 case_68 case_69 case_70 case_71 case_72 case_73'
+       case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75'

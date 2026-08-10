@@ -16,7 +16,18 @@ set -euo pipefail
 TPL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$TPL_ROOT/template/.claude"
 
-PROJECT_ARG="${1:?사용법: install.sh <프로젝트-경로> [프로젝트-이름]}"
+# --allow-dirty 는 위치와 무관하게 받는다(sync.sh 가 끝에 붙여 넘긴다).
+ALLOW_DIRTY=0
+_args=()
+for _a in "$@"; do
+  case "$_a" in
+    --allow-dirty) ALLOW_DIRTY=1 ;;
+    *) _args+=("$_a") ;;
+  esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+
+PROJECT_ARG="${1:?사용법: install.sh <프로젝트-경로> [프로젝트-이름] [--allow-dirty]}"
 PROJECT="$(cd "$PROJECT_ARG" && pwd)"
 NAME="${2:-$(basename "$PROJECT")}"
 DST="$PROJECT/.claude"
@@ -26,6 +37,19 @@ STAMP="$(date +%Y%m%d-%H%M%S)"   # 백업용 — 같은 날 재설치해도 안 
 echo "== 하네스 설치: $NAME"
 echo "   템플릿: $TPL_ROOT"
 echo "   대상:   $DST"
+
+# ── 0) 배포 안전 가드 — 대상(DST)을 건드리기 전에 정본부터 본다 ──────
+# 측정 중(변이 락) 배포는 무조건 거부, dirty 정본은 --allow-dirty 옵트인.
+# 근거·실사고·판정 불가의 방향은 scripts/deploy-guard.sh 정본 주석.
+if [ -f "$TPL_ROOT/scripts/deploy-guard.sh" ]; then
+  # shellcheck source=scripts/deploy-guard.sh
+  . "$TPL_ROOT/scripts/deploy-guard.sh"
+  deploy_guard "$TPL_ROOT" "$ALLOW_DIRTY" || exit 1
+else
+  # 부분 복사본 등으로 가드가 없으면 — 조용히 생략하지 않는다. 검사가 사라진 것을
+  # 아무도 모르는 상태가 이 저장소가 부르는 조용한 실패다.
+  echo "   ⚠ 배포 가드를 찾지 못했습니다($TPL_ROOT/scripts/deploy-guard.sh) — 락·dirty 검사 없이 진행합니다." >&2 || true
+fi
 
 # 개명 전 플래그 이행 — **배포되지 않는 이 스크립트가 맡는다.**
 # 기존 설치본에 미처리 지식 플래그가 옛 이름으로 남아 있을 수 있는데, 새 훅은 새 이름만

@@ -53,7 +53,7 @@ new_project() {
   local p
   p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || return 1
   p="$(CDPATH='' cd -- "$p" && pwd -P)"
-  "$INSTALL" "$p" >/dev/null 2>&1 || return 1
+  "$INSTALL" "$p" --allow-dirty >/dev/null 2>&1 || return 1
   # 구판 식별 표식 — "복원됐나"를 판정하려면 구판이 식별 가능해야 한다.
   printf 'OLD\n' > "$p/.claude/hooks/.old-marker"
   # **사용자 파일** — 템플릿에 없는 것. 디렉터리를 통째로 바꾸는 설계에서 이게 사라지면
@@ -89,11 +89,45 @@ SHIM
 
 run_install() {   # $1=프로젝트  [$2=shim 디렉터리]
   RC=999; OUT=''; DID_RUN=1
+  # --allow-dirty: 이 스위트는 훅 교체 원자성을 재는 곳이고, 배포 가드(락·dirty)는
+  # c10~c13 이 **자기 픽스처 저장소**로 따로 잰다. 여기서 실저장소의 dirty 여부에
+  # 케이스가 좌우되면 개발 중(트리 dirty)에는 스위트 전체가 빨개진다.
   if [ -n "${2-}" ]; then
-    OUT="$(PATH="$2:$PATH" "$INSTALL" "$1" 2>&1)"
+    OUT="$(PATH="$2:$PATH" "$INSTALL" "$1" --allow-dirty 2>&1)"
   else
-    OUT="$("$INSTALL" "$1" 2>&1)"
+    OUT="$("$INSTALL" "$1" --allow-dirty 2>&1)"
   fi
+  RC=$?
+}
+
+# new_tpl — 배포 가드 케이스 전용의 **독립 정본 픽스처**(자기 git 저장소).
+# 실저장소에 락을 만들거나 dirty 를 강요하면 테스트가 개발 트리를 오염시킨다.
+new_tpl() {   # $1 이 no-git 이면 git 저장소를 만들지 않는다(비-git 정본 케이스용)
+  local t
+  t="$(mktemp -d "$TMPROOT/tpl.XXXXXX")" || return 1
+  t="$(CDPATH='' cd -- "$t" && pwd -P)"
+  cp -R "$REPO_ROOT/template" "$t/template" || return 1
+  mkdir -p "$t/scripts"
+  cp "$REPO_ROOT/install.sh" "$t/install.sh" || return 1
+  cp "$REPO_ROOT/sync.sh" "$t/sync.sh" || return 1
+  cp "$REPO_ROOT/scripts/deploy-guard.sh" "$t/scripts/deploy-guard.sh" || return 1
+  if [ "${1-}" != 'no-git' ]; then
+    git -C "$t" init -q && git -C "$t" config user.email t@t && git -C "$t" config user.name t \
+      && git -C "$t" add -A >/dev/null && git -C "$t" commit -qm base || return 1
+  fi
+  printf '%s\n' "$t"
+}
+
+# empty_dir <경로> — 디렉터리가 비어 있는가 (거부 케이스의 "대상 무변경" 단언).
+# .claude/hooks 존재만 보면 가드가 legacy 플래그 이행 뒤로 밀려 대상을 일부 건드려도
+# 통과한다([cx] MEDIUM) — 대상 전체가 손대지지 않았음을 잰다.
+empty_dir() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
+
+# run_tpl_install <tpl> <프로젝트> [추가 인자...] — 픽스처 정본의 install.sh 를 돌린다.
+run_tpl_install() {
+  local t="$1" p="$2"; shift 2
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$("$t/install.sh" "$p" ${@+"$@"} 2>&1)"
   RC=$?
 }
 
@@ -230,7 +264,7 @@ c08() {
   shim="$TMPROOT/shim.noerr.$$"
   if ! make_mv_shim "$shim" 2 TERM; then report "$name" '픽스처 실패: shim'; return 0; fi
   DID_RUN=1
-  PATH="$shim:$PATH" "$INSTALL" "$p" >/dev/null 2>&-
+  PATH="$shim:$PATH" "$INSTALL" "$p" --allow-dirty >/dev/null 2>&-
   RC=$?
   if [ ! -f "$shim/.hit" ]; then why='주입이 빗나갔다'
   elif [ "$RC" -ne 143 ]; then why="rc=$RC (기대 143 — set +e 가 없으면 1 이 된다)"
@@ -242,8 +276,157 @@ c08() {
 
 # --- 러너 ----------------------------------------------------------------
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09'
-EXPECTED_CASES=9
+# --- 배포 안전 가드 (C안 — 변이 락 무조건 거부 · dirty 는 --allow-dirty 옵트인) ----
+# rc 만 보지 않는다: 거부 케이스는 **대상이 안 만들어졌는지**(부수 효과 부재)와
+# 사유 문구까지 요구한다 — 가드가 늦게 서서 반쯤 배포한 뒤 거부해도 rc 는 같다.
+
+c10() {
+  local name='c10 변이 락 → 거부 + 대상 무변경' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  mkdir "$t/.git/mutate-decision-gate.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -eq 0 ];                          then why='락이 있는데 설치가 성공했다'
+  elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why="거부 사유가 없다: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif ! empty_dir "$p";                       then why='거부인데 대상이 변경됐다 (가드가 너무 늦다)'
+  fi
+  report "$name" "$why"
+}
+
+c11() {
+  local name='c11 dirty 정본 → 거부 + --allow-dirty 안내' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  printf 'dirty\n' >> "$t/template/.claude/hooks/_common.sh"
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -eq 0 ];                          then why='dirty 인데 설치가 성공했다'
+  elif ! printf '%s' "$OUT" | grep -q '미커밋 변경'; then why='거부 사유가 없다'
+  elif ! printf '%s' "$OUT" | grep -q -- '--allow-dirty'; then why='옵트인 안내가 없다 (막힌 사람이 우회를 발명한다)'
+  elif ! empty_dir "$p";                       then why='거부인데 대상이 변경됐다'
+  fi
+  report "$name" "$why"
+}
+
+c12() {
+  local name='c12 dirty + --allow-dirty → 설치 진행 (정상 개발 흐름)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  printf '# dirty-marker\n' >> "$t/template/.claude/hooks/_common.sh"
+  run_tpl_install "$t" "$p" --allow-dirty
+  if [ "$RC" -ne 0 ];                          then why="옵트인인데 거부됐다 rc=$RC: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  elif ! grep -q 'dirty-marker' "$p/.claude/hooks/_common.sh"; then
+    why='dirty 상태(수정본)가 배포되지 않았다 — 시험 설치의 목적 자체가 안 됐다'
+  fi
+  report "$name" "$why"
+}
+
+c13() {
+  local name='c13 락 + --allow-dirty → 그래도 거부 (락에는 옵트인 없음)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  mkdir "$t/.git/mutate-retrieval-gate.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  run_tpl_install "$t" "$p" --allow-dirty
+  if [ "$RC" -eq 0 ];             then why='--allow-dirty 가 락 거부까지 뚫었다'
+  elif [ -e "$p/.claude/hooks" ]; then why='거부인데 훅이 배포됐다'
+  fi
+  report "$name" "$why"
+}
+
+c14() { # **기본 경로** — 깨끗한 git 정본에서 옵션 없이 설치가 성공한다. 이 케이스가
+        # 없으면 "가드가 클린 트리까지 막는" 회귀를 어떤 케이스도 못 본다([cx] 지적 —
+        # 나머지 전부가 --allow-dirty 이거나 거부 기대라서).
+  local name='c14 클린 정본 + 옵션 없음 → 설치 성공 (기본 경로)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -ne 0 ];                          then why="클린 트리인데 거부됐다 rc=$RC: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+c15() { # sync 의 --allow-dirty **전달** — 내부 install 호출로 그대로 넘어가야 한다.
+        # 전달을 지우면 sync 쪽 가드는 통과하고 install 쪽 가드가 막아 이 케이스가 빨개진다.
+  local name='c15 sync dirty + --allow-dirty → 전달되어 완주' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  printf '# dirty\n' >> "$t/template/.claude/hooks/_common.sh"
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$("$t/sync.sh" "$p" --no-pull --allow-dirty 2>&1)"; RC=$?
+  if [ "$RC" -ne 0 ];                          then why="옵트인이 전달되지 않았다 rc=$RC: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='sync 가 완주하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+c16() { # sync 의 가드는 **pull·미리보기보다 앞**이다. 자기 가드를 지워도 내부 install 이
+        # 어차피 거부하므로 rc 로는 구별이 안 된다 — "pull·미리보기의 흔적이 없는가"로 잰다.
+        # --no-pull 을 **쓰지 않는다**: 쓰면 pull 경로가 비활성이라 "가드가 pull 보다 앞"
+        # 계약을 아무것도 안 잰다([cx] r2 지적). 픽스처에 원격이 없으므로 pull 이 실제로
+        # 돌면 "pull 완료/실패" 중 하나가 반드시 찍힌다 — 그 부재가 곧 조기 가드의 증거다.
+  local name='c16 sync + 락 → pull·미리보기 전에 거부 (조기 가드)' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  mkdir "$t/.git/mutate-harness-env.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$("$t/sync.sh" "$p" 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ];                          then why='락인데 sync 가 성공했다'
+  elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why='거부 사유가 없다'
+  elif printf '%s' "$OUT" | grep -q 'pull'; then why='가드가 pull 뒤에 섰다 (조기 가드 계약 위반)'
+  elif printf '%s' "$OUT" | grep -q '갱신될 글루 diff'; then why='가드가 미리보기 뒤에 섰다'
+  fi
+  report "$name" "$why"
+}
+
+c17() { # 비-git 정본 — 검사할 것이 없으니 생략하되 **소리를 낸다**(조용한 생략 금지).
+  local name='c17 비-git 정본 → 경고 내고 설치 진행' t p why=''
+  if ! t="$(new_tpl no-git)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -ne 0 ];                          then why="비-git 인데 거부됐다 rc=$RC"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  elif ! printf '%s' "$OUT" | grep -q '배포 가드 생략'; then why='생략이 조용했다 (경고 문구 없음)'
+  fi
+  report "$name" "$why"
+}
+
+c18() { # 가드 파일 부재(부분 복사본) — 역시 진행하되 경고. 경고 문구까지 요구해야
+        # "가드 소멸이 조용히 지나가는" 회귀를 잡는다.
+  local name='c18 가드 파일 부재 → 경고 내고 설치 진행' t p why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  rm "$t/scripts/deploy-guard.sh"
+  run_tpl_install "$t" "$p"
+  if [ "$RC" -ne 0 ];                          then why="가드 부재인데 거부됐다 rc=$RC"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='설치가 완주하지 않았다'
+  elif ! printf '%s' "$OUT" | grep -q '배포 가드를 찾지 못했습니다'; then why='가드 소멸이 조용했다'
+  fi
+  report "$name" "$why"
+}
+
+c19() { # 오염된 GIT_DIR/GIT_WORK_TREE 아래서도 가드는 **정본을** 검사한다. 소거가
+        # 없으면 -C 가 무시돼 깨끗한 남의 저장소를 보고 락을 통과시킨다([cx] HIGH 회귀).
+        # 공시: git status 가 "성공한 rev-parse 뒤에만 실패"하는 상태는 이식성 있게
+        # 재현할 방법을 못 찾아 케이스가 없다 — fail-closed 방향은 코드 계약으로만 남는다.
+  local name='c19 오염된 GIT_DIR 아래서도 정본의 락을 본다' t p other why=''
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  other="$(mktemp -d "$TMPROOT/other.XXXXXX")" || { report "$name" '픽스처 실패'; return 0; }
+  ( cd "$other" && git init -q . && git config user.email t@t && git config user.name t \
+    && printf 'x\n' > x && git add x && git commit -qm base ) >/dev/null 2>&1 \
+    || { report "$name" '픽스처 실패: other repo'; return 0; }
+  mkdir "$t/.git/mutate-decision-gate.lock" || { report "$name" '픽스처 실패: lock'; return 0; }
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$(GIT_DIR="$other/.git" GIT_WORK_TREE="$other" "$t/install.sh" "$p" 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ]; then why='오염된 환경에서 락을 못 보고 통과했다'
+  elif ! printf '%s' "$OUT" | grep -q '변이 측정이 진행 중'; then why="거부 사유가 없다: $(printf '%s' "$OUT" | tail -2 | head -1 | head -c 80)"
+  fi
+  report "$name" "$why"
+}
+
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19'
+EXPECTED_CASES=19
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

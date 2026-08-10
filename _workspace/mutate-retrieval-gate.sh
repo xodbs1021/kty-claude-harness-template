@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# mutate-retrieval-gate.sh — 회수 표명 게이트(stop:retrieval) 방어의 **변이 측정**.
+# mutate-retrieval-gate.sh — 머리 표명 게이트(stop:retrieval, ADR-0013 회수 1줄 +
+# ADR-0015 레퍼런스 조사 2줄) 방어의 **변이 측정**.
 #
 # 방어를 하나씩 지우거나 뒤집고, tests/retrieval-attestation.test.sh 가 빨개지는지 잰다.
 # 케이스 수·통과 수는 아무것도 증명하지 않는다 — 변이가 유일하게 믿을 만한 지표다.
@@ -87,7 +88,7 @@ PY
   restore "$file"
 }
 
-echo "회수 표명 게이트 변이 측정"
+echo "머리 표명 게이트 변이 측정"
 
 # 1. 첫 줄 검사를 느슨하게: 접두어 매치를 무엇이든 통과로
 mutate 'm01 첫 줄 패턴을 항상 매치로' "$VSTOP" \
@@ -138,9 +139,9 @@ mutate 'm09 불량 목록을 flags_fp 로 전파' "$VSTOP" \
 
 # 10. 회수 차단 메시지에서 emit_decision_note 제거
 mutate 'm10 회수 차단의 decision_note 제거' "$VSTOP" \
-  '      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지는 검수(plan-reviewer·codex)가 봅니다."
+  '      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지·조사했는지는 검수(plan-reviewer·codex)가 봅니다."
       emit_decision_note' \
-  '      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지는 검수(plan-reviewer·codex)가 봅니다."'
+  '      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지·조사했는지는 검수(plan-reviewer·codex)가 봅니다."'
 
 # 11. 경로 해석을 cwd 기준으로 되돌림
 mutate 'm11 상대경로를 cwd 기준으로' "$VSTOP" \
@@ -170,7 +171,13 @@ if python3 - "$VSTOP" <<'PY'
 import sys
 p = sys.argv[1]
 src = open(p, encoding='utf-8').read()
-start = src.index('# (3.4) **회수 표명 게이트**')
+# 앵커 정확히 1회 계약 — mutate() 와 동일. index() 는 첫 발생만 잡아 중복 앵커에서
+# 엉뚱한 블록을 옮기고도 "순서 방어 확인"으로 집계될 수 있다(구현 검수 [cx] 지적).
+for a in ('# (3.4) **머리 표명 게이트**', '# (3.5) 듀얼 리뷰(codex) 게이트',
+          '# (4) change-explainer 게이트'):
+    if src.count(a) != 1:
+        raise SystemExit(1)
+start = src.index('# (3.4) **머리 표명 게이트**')
 end = src.index('# (3.5) 듀얼 리뷰(codex) 게이트')
 block = src[start:end]
 rest = src[:start] + src[end:]
@@ -205,6 +212,126 @@ mutate 'm17 해제 후 compute_flags_fp 재호출 제거' "$VSTOP" \
 mutate 'm18 read 의 || [ -n ] 제거' "$VSTOP" \
   '  while IFS= read -r entry || [ -n "$entry" ]; do' \
   '  while IFS= read -r entry; do'
+
+# --- ADR-0015: 둘째 줄(레퍼런스 표명) 방어 (m19~m37) -----------------------
+
+# 19. 둘째 줄 검사 통째 무력화 — if 체인 머리에 항상 참인 no-op 가지를 끼운다
+mutate 'm19 둘째 줄 검사 통째 제거' "$VSTOP" \
+  '    if [ "$ref_missing" -eq 1 ]; then' \
+  '    if : ; then :
+    elif [ "$ref_missing" -eq 1 ]; then'
+
+# 20. 접두어만 검사로 느슨화 — 접두어 매치 즉시 통과 (사유 강제가 산문으로 밀린다)
+mutate 'm20 접두어만 검사로 느슨화' "$VSTOP" \
+  '        "레퍼런스 조사:"*)
+          ref_body="${rline2#레퍼런스 조사:}"' \
+  '        "레퍼런스 조사:"*)
+          :
+          ;;
+        "__never__")
+          ref_body="${rline2#레퍼런스 조사:}"'
+
+# 21. 괄호 내용 검사 제거 (빈 괄호 허용 — 불요/실패 사유 강제 소멸)
+mutate 'm21 괄호 내용 검사 제거' "$VSTOP" \
+  "                    if [ -z \"\$(printf '%s' \"\$ref_inner\" | LC_ALL=C tr -d '[:space:]')\" ]; then" \
+  '                    if false; then'
+
+# 22. 둘째 줄 CR 스트립 제거
+mutate 'm22 둘째 줄 CR 스트립 제거' "$VSTOP" \
+  "      rline2=\"\${rline2%\$'\\r'}\"" \
+  '      :'
+
+# 23. `불요` 변형 제거
+mutate 'm23 불요 변형 제거' "$VSTOP" \
+  '              조사함|불요|실패)' \
+  '              조사함|실패)'
+
+# 24. 닫는 괄호 뒤 잡음 허용 (accept 팔을 전부 매치로 — 아래 bad 팔이 죽는다)
+mutate 'm24 꼬리 잡음 허용' "$VSTOP" \
+  '                  *\))' \
+  '                  *)'
+
+# 25. 둘째 줄 불량(접두어 사유)을 목록에 추가하지 않음 — 판정만 하고 버림
+mutate 'm25 둘째 줄 불량 목록 누락' "$VSTOP" \
+  "          retrieval_bad_paths=\"\${retrieval_bad_paths}\${entry}#2
+\"
+          retrieval_bad_msgs=\"\${retrieval_bad_msgs}\${entry} — 둘째 줄이 '레퍼런스 조사:' 로 시작하지 않음
+\"" \
+  '          :'
+
+# 26. 무개행 마지막 줄 보정 가지 제거 — 개행 없는 정상 둘째 줄이 누락으로 오판된다
+mutate 'm26 무개행 보정 elif 가지 제거' "$VSTOP" \
+  '      elif [ -n "$rline2" ]; then
+        :                   # 개행 없는 마지막 줄 — 값이 있으므로 누락이 아니다
+      else' \
+  '      else'
+
+# 27. 변형 정확 일치를 접두 일치로 — `조사함부족(x)` 이 통과한다
+mutate 'm27 변형 꼬리 허용' "$VSTOP" \
+  '              조사함|불요|실패)' \
+  '              조사함*|불요*|실패*)'
+
+# 28. 예산 키의 검사 종류 태그 제거 — 파일 내 부분 진전이 리셋을 못 만든다
+mutate 'm28 예산 키 검사 태그 제거' "$VSTOP" \
+  "    retrieval_bad_sorted=\"\$(printf '%s' \"\$retrieval_bad_paths\" | sort -u | tr '\\n' ' ')\" \\" \
+  "    retrieval_bad_sorted=\"\$(printf '%s' \"\$retrieval_bad_paths\" | sed 's/#[12]\$//' | sort -u | tr '\\n' ' ')\" \\"
+
+# 29. `실패` 변형 제거 (제3 변형)
+mutate 'm29 실패 변형 제거' "$VSTOP" \
+  '              조사함|불요|실패)' \
+  '              조사함|불요)'
+
+# 30. `조사함` 변형 제거 (변형 3종 제거 변이의 대칭 완성)
+mutate 'm30 조사함 변형 제거' "$VSTOP" \
+  '              조사함|불요|실패)' \
+  '              불요|실패)'
+
+# 31. 내부 괄호 거부 — 내용 안 `)` 를 잡음으로 오인하는 구현 재현 (r40 방어)
+mutate 'm31 내부 괄호 거부' "$VSTOP" \
+  '                case "$ref_body" in
+                  *\))' \
+  '                case "$ref_body" in
+                  *\)*\))
+                    retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+                    ;;
+                  *\))'
+
+# 32. 변형 뒤 공백 불허 — `조사함 (x)` 가 불량이 된다 (r43 방어)
+mutate 'm32 변형 뒤 공백 불허' "$VSTOP" \
+  '              *'"'"' '"'"')  ref_head="${ref_head% }" ;;' \
+  '              *'"'"' '"'"')  break ;;'
+
+# 33. SP 에서 탭 제거 — 접두어 뒤 탭이 불량이 된다 (r47 방어)
+mutate 'm33 SP 탭 제거' "$VSTOP" \
+  "              '	'*)  ref_body=\"\${ref_body#	}\" ;;" \
+  "              '	'*)  break ;;"
+
+# 34. 닫는 괄호 뒤 공백 불허 (r49 방어)
+mutate 'm34 괄호 뒤 공백 불허' "$VSTOP" \
+  '              *'"'"' '"'"')  ref_body="${ref_body% }" ;;' \
+  '              *'"'"' '"'"')  break ;;'
+
+# 36. 변형 뒤 탭 트림 제거 — `조사함<TAB>(x)` 가 불량이 된다 (r47 자리 2 방어)
+mutate 'm36 변형 뒤 탭 트림 제거' "$VSTOP" \
+  "              *'	')  ref_head=\"\${ref_head%	}\" ;;" \
+  "              *'	')  break ;;"
+
+# 37. 닫는 괄호 뒤 탭 트림 제거 — `조사함(x)<TAB>` 가 불량이 된다 (r47 자리 3 방어)
+mutate 'm37 괄호 뒤 탭 트림 제거' "$VSTOP" \
+  "              *'	')  ref_body=\"\${ref_body%	}\" ;;" \
+  "              *'	')  break ;;"
+
+# 35. 첫 줄 "빈 줄" 분기 제거 — r50(격리 픽스처)·r04(사유 단언)가 잡는다
+mutate 'm35 첫 줄 빈 줄 분기 제거' "$VSTOP" \
+  '      "")
+        retrieval_bad_paths="${retrieval_bad_paths}${entry}#1
+"
+        retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 파일이 비었거나 첫 줄이 빈 줄
+"
+        ;;' \
+  '      "")
+        ;;'
 
 echo
 echo "총 $total 건 — 적색 $red · 초록 $green"

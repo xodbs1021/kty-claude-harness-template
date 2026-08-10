@@ -15,8 +15,9 @@ KNOWLEDGE_FLAG="$STATE_DIR/.needs-knowledge"
 # 여기서 옛 이름을 알면 배포되는 글루가 구현체 이름을 다시 품게 되고, 층 경계 검사가
 # (옳게) 막는다. 배포되지 않는 설치 스크립트가 이행을 맡는 것이 층에 맞다.
 DUALREVIEW_FLAG="$STATE_DIR/.needs-dualreview"
-# 회수 표명 게이트(ADR-0013). 설계·계획 산출물(00_design*·01_plan*)이 저장되면 서고,
-# 그 첫 줄이 표명 형식(`사전 결정 회수:`)을 지키면 Stop 훅이 **자동으로** 지운다 —
+# 머리 표명 게이트(ADR-0013·ADR-0015). 설계·계획 산출물(00_design*·01_plan*)이 저장되면
+# 서고, 머리 두 줄이 표명 형식(1줄 `사전 결정 회수:` · 2줄 `레퍼런스 조사:
+# 조사함(<대상·출처>)|불요(<사유>)|실패(<사유>)`)을 지키면 Stop 훅이 **자동으로** 지운다 —
 # 지울 플래그를 에이전트 손에 주지 않는 것이 이 게이트의 형태다(결정 게이트와 같은 구조).
 RETRIEVAL_FLAG="$STATE_DIR/.needs-retrieval"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"

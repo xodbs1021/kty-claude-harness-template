@@ -385,17 +385,21 @@ r14() { # 불량 집합이 줄어드는 실제 진전은 이 게이트의 예산
 }
 
 r15() { # 예산 소진 시 회수 플래그도 정리 목록에 있다 — rm 과 changed 나열 양쪽.
+        # changed 단언은 **불량 집합에 없는 소실 항목**으로 잰다: 불량 경로는 예산 소진
+        # 메시지의 게이트 식별자("같은 지점(retrieval:...)")에도 실려서, changed 나열에서
+        # 회수 플래그를 빼도 같은 파일명이 다른 경로로 출력돼 변이가 가려진다(실측 —
+        # "데이터 중복이 방어를 가린다" 부류. m13 이 이 단언으로만 빨개진다).
   local name='r15 예산 소진 정리에 회수 플래그 포함' why=''
   local p; p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
   mk_doc "$p/_workspace/00_design.md" '표명 없음.'
-  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" retrieval '_workspace/00_design.md' '_workspace/01_plan_gone.md'
   set_flag "$p" audit 'src/x.ts'
   mk_tx "$p/tx.jsonl" neutral
   run_stop "$p" "$p/tx.jsonl"; run_stop "$p" "$p/tx.jsonl"; run_stop "$p" "$p/tx.jsonl"
   run_stop "$p" "$p/tx.jsonl"   # 4회째 — 같은 상태이므로 예산 소진
   if [ "$RC" -ne 0 ];                        then why="소진 턴 rc=$RC (기대 0)"
   elif ! contains "$OUT" "$TOK_BRICK";       then why='벽돌 방지 메시지가 없다'
-  elif ! contains "$OUT" '00_design.md';     then why='changed 나열에 회수 파일이 없다'
+  elif ! contains "$OUT" '01_plan_gone.md';  then why='changed 나열에 회수 플래그 항목이 없다 (소실 항목은 게이트 식별자에 없다)'
   elif ! flag_gone "$p";                     then why='소진 정리에서 회수 플래그가 안 지워졌다'
   fi
   report "$name" "$why"

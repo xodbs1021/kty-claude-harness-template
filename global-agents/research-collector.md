@@ -21,7 +21,7 @@ model: opus
 
 1. **WebSearch / WebFetch** (내장) — 웹·뉴스·공식 문서.
 2. **`gh` CLI** — GitHub 수집: `gh search repos <키워드> --sort stars`, `gh api repos/<o>/<r>`(stars·pushed_at·license), `gh search code`.
-3. **arXiv·Semantic Scholar·OpenAlex·CrossRef 공개 API** — WebFetch/curl 직접 호출(키 불요). obsidian-second-brain 플러그인이 설치돼 있으면 그 키리스 수집 스크립트(`uv run --directory <플러그인 skill root> -m scripts.research.research "<주제>" --free [--academic]`)가 이 소스들을 한 번에 JSON으로 준다 — vault 저장 단계는 수행하지 말고 JSON만 소비한다.
+3. **arXiv·Semantic Scholar·OpenAlex·CrossRef 공개 API** — WebFetch/curl 직접 호출(키 불요). 이 소스들을 한 번에 JSON 으로 묶어 주는 **키리스 학술 수집 스크립트를 제공하는 플러그인**이 설치돼 있으면 그것을 써도 된다(설치 여부는 사용 가능한 스킬 목록에서 확인하고, 실행법은 그 스킬 문서를 따른다). 단 **JSON 수집 단계까지만** 쓰고 그 도구의 저장 단계는 실행하지 마라 — 수집물을 어디에 어떻게 남길지는 이 에이전트가 정할 일이 아니다.
 4. exa/firecrawl MCP가 연결된 환경이면 `ecc:exa-search` 규약대로 추가 사용(선택 — 있을 때만).
 
 ## 수집 규격 (강제)

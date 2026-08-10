@@ -73,6 +73,17 @@ else
   changed=$((changed + 1))
 fi
 
+# 기존 설치본의 harness.env 에는 나중에 생긴 슬롯 키가 없다. **있는 값은 안 건드리되
+# 없는 키는 알려준다** — 키가 없어도 기본값(켜짐)으로 동작하지만, 파일에 한 줄도 없으면
+# 사용자는 그런 스위치가 있다는 것 자체를 모른다.
+add_gate_key=0
+if [ -f "$DST/harness/harness.env" ] \
+   && ! grep -qE '^(export[[:space:]]+)?HARNESS_KNOWLEDGE_GATE=' "$DST/harness/harness.env" 2>/dev/null; then
+  echo "   [슬롯 키 추가] harness/harness.env ← HARNESS_KNOWLEDGE_GATE (기본 켜짐, 기존 값 보존)"
+  add_gate_key=1
+  changed=$((changed + 1))
+fi
+
 if [ "$changed" -eq 0 ]; then
   echo "   (변경 없음 — 이미 최신)"
   exit 0
@@ -81,5 +92,34 @@ fi
 # ── 3) 적용 (install.sh 멱등 재실행 — 슬롯·CLAUDE.md·settings는 보존/생략됨) ──
 echo ""
 "$TPL_ROOT/install.sh" "$PROJECT"
+
+# 슬롯 키 덧붙이기 — install.sh **뒤**다. install 이 harness.env 를 새로 만들었다면
+# 템플릿에 이미 키가 들어 있어 여기 올 일이 없다(위 판정은 install 이전 상태를 봤다).
+#
+# **덧붙이기만 한다.** 임시 파일에 쓰고 rename 하는 "원자적 쓰기"를 쓰지 않는 것은
+# 의도적이다 — 그 방식은 검수에서 두 가지 계약 위반을 냈다. 임시 파일 글롭이 사용자의
+# 백업 파일까지 지웠고, 기존 harness.env 가 심볼릭 링크면 일반 파일로 갈아치웠다.
+# 슬롯은 프로젝트 소유이고 하네스는 그것을 **절대 덮지 않는다**가 더 강한 계약이다.
+#
+# 대가: append 는 원자적이지 않다. 중간에 끊기면 줄이 잘릴 수 있다. 다만 그 방향은
+# 안전하다 — 판독이 실패하면 게이트는 **켜진다**(기본값 보존). 그래서 덧붙인 뒤
+# 실제로 읽히는지 확인하고, 안 읽히면 조용히 넘어가지 않고 알린다.
+if [ "$add_gate_key" -eq 1 ]; then
+  envf="$DST/harness/harness.env"
+  # 검증은 **완성된 줄 전체**를 요구한다. `^HARNESS_KNOWLEDGE_GATE=` 로만 보면
+  # append 가 등호 직후에서 잘려 `HARNESS_KNOWLEDGE_GATE=` 만 남은 경우까지 통과시키는데,
+  # 그 잘린 줄은 파서에게 **완벽히 유효한 "리터럴 빈 값"** 이라 게이트를 끈다.
+  # 즉 "실패 방향은 안전하다"가 이 한 지점에서만 성립하지 않아서, 여기서 막는다.
+  if { printf '\n# 지식 반영 게이트 (하네스가 나중에 추가한 슬롯). 끄려면 값을 비운다 —\n# "off" 라고 적으면 비어 있지 않으므로 켜진 것으로 읽힌다. 이 줄이 없어도 켜짐이다.\nHARNESS_KNOWLEDGE_GATE="on"\n' >> "$envf"; } 2>/dev/null \
+     && grep -qxF 'HARNESS_KNOWLEDGE_GATE="on"' "$envf" 2>/dev/null; then
+    echo "   슬롯 키 추가 ✓  harness/harness.env  HARNESS_KNOWLEDGE_GATE=\"on\""
+  else
+    echo "   ⚠ harness/harness.env 에 HARNESS_KNOWLEDGE_GATE 를 온전히 추가하지 못했습니다." >&2
+    echo "     **파일 끝에 잘린 줄이 남았을 수 있습니다.** 그 상태로 두면 지식 게이트가" >&2
+    echo "     꺼진 것으로 읽힐 수 있으니 파일 끝을 직접 확인하고, 다음 한 줄로 고치세요:" >&2
+    echo '       HARNESS_KNOWLEDGE_GATE="on"' >&2
+  fi
+fi
+
 echo ""
-echo "== sync 완료 ($changed개 글루 갱신). 슬롯(project-profile.md·harness.env)은 그대로입니다."
+echo "== sync 완료 ($changed개 글루 갱신). 슬롯(project-profile.md·harness.env)의 **값**은 그대로입니다."

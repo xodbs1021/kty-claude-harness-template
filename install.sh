@@ -27,6 +27,26 @@ echo "== 하네스 설치: $NAME"
 echo "   템플릿: $TPL_ROOT"
 echo "   대상:   $DST"
 
+# 개명 전 플래그 이행 — **배포되지 않는 이 스크립트가 맡는다.**
+# 기존 설치본에 미처리 지식 플래그가 옛 이름으로 남아 있을 수 있는데, 새 훅은 새 이름만
+# 보므로 그대로 두면 밀린 반영 의무가 **조용히 사라진다**(하네스를 갱신했을 뿐인데).
+# 훅 쪽에서 옛 이름을 알게 하면 배포되는 글루가 구현체 이름을 다시 품어 층 경계 검사가
+# 막는다 — 그래서 이행은 여기에 있다. 새 이름이 이미 있으면 **덮지 않고 이어붙인다.**
+legacy_flag="$DST/.needs-$(printf 'vault')"
+if [ -f "$legacy_flag" ]; then
+  if [ -s "$legacy_flag" ]; then
+    if cat "$legacy_flag" >> "$DST/.needs-knowledge" 2>/dev/null; then
+      rm -f "$legacy_flag"
+      echo "   플래그 이행 ✓  미처리 지식 반영 항목을 새 이름으로 옮겼습니다"
+    else
+      echo "   ⚠ 미처리 지식 반영 플래그를 새 이름으로 옮기지 못했습니다: $legacy_flag" >&2
+      echo "     손으로 옮기지 않으면 그 항목의 반영 의무가 사라집니다." >&2
+    fi
+  else
+    rm -f "$legacy_flag"
+  fi
+fi
+
 # ── 1) 글루 복사 (덮어씀) ─────────────────────────────────────────────
 mkdir -p "$DST/agents" "$DST/skills" "$DST/hooks" "$DST/harness"
 cp "$SRC/agents/"*.md "$DST/agents/"
@@ -39,10 +59,119 @@ for skill_dir in "$SRC/skills/"*/; do
   cp -R "$skill_dir"/. "$DST/skills/$skill_name/"
   skill_count=$((skill_count + 1))
 done
-cp "$SRC/hooks/"*.sh "$DST/hooks/"
-chmod +x "$DST/hooks/"*.sh
+# ── 1a) 훅 교체는 파일 단위가 아니라 **디렉터리 rename 스왑** ────────
+#
+# 훅을 하나씩 덮으면 신·구가 섞인 중간 상태가 **반드시** 존재한다. 순서를 바꿔도 못
+# 막는다 — 훅들이 _common.sh 를 공유하므로 어느 쪽을 먼저 바꾸든 창이 열린다. 그 창에서
+# Claude 세션이 훅을 부르면 새 훅이 옛 _common.sh 를(또는 그 반대를) 읽는다.
+#
+# 그래서 스테이징 디렉터리를 만들고 **rename 2회**로 바꾼다. 혼합 상태가 원리적으로
+# 불가능해진다. 대신 두 rename 사이에 훅이 **없는** 창이 생기는데, 그건 잘못된 훅이
+# 도는 것보다 낫다(없으면 게이트가 안 설 뿐, 틀린 판정을 내지 않는다).
+#
+# 파생 계약 셋 — 전부 앞선 검수에서 **직전 수정이 만든 결함**으로 드러난 것들이다:
+#   1. 신호 핸들러는 복구 후 **실제로 종료**해야 한다. 반환만 하면 후속 명령이 계속 돌아
+#      mv 가 기존 디렉터리 **안으로** 중첩되고, 그러고도 "설치 성공"을 보고한다.
+#      그리고 그 exit 에 도달하려면 핸들러 진입 직후 `set +e` 가 필요하다 — 진단 echo
+#      하나가 실패해도(stderr 가 닫힌 채 실행 등) set -e 가 exit 전에 죽인다.
+#   2. 백업 이름은 `mktemp -d` 로 유일성을 보장한다. `$$` 는 PID 재사용으로 선점될 수 있고,
+#      선점되면 훅이 hooks/hooks/*.sh 로 깨지는데 메시지는 "되돌렸습니다"라고 말한다.
+#   3. 자리를 비우려고 `rmdir` 을 먼저 하지 않는다 — 그 사이가 TOCTOU 창이다.
+#      중첩을 **의도된 계약**으로 명시하면(mv "$DST/hooks" "$backup/hooks") 창이 없어진다.
+#
+# 남는 창(공시): 복구 **자체**가 다시 중단되면(SIGKILL·전원 차단) 훅 디렉터리가 없는
+# 상태로 남는다. install.sh 재실행이 복구하지만 그 재실행도 중단되면 같은 상태가
+# 반복된다. 이 창은 닫히지 않았다 — 닫으려면 이 스크립트 밖의 장치가 필요하다.
+if [ -L "$DST/hooks" ]; then
+  # 사용자가 훅 디렉터리를 심볼릭 링크로 두었다. rename 스왑은 그 링크를 **일반
+  # 디렉터리로 갈아치운다** — 사용자의 배치를 하네스가 마음대로 바꾸는 것이라 하지 않는다.
+  # 파일 단위 복사로 물러서고, 원자성을 못 지킨다는 사실을 **알린다**(조용히 물러서지 않는다).
+  echo "   ⚠ .claude/hooks 가 심볼릭 링크입니다 — 링크를 보존하려고 파일 단위로 복사합니다." >&2
+  echo "     교체 도중 신·구가 섞이는 창이 열립니다. 설치 중에는 Claude 세션을 띄우지 마세요." >&2
+  cp "$SRC/hooks/"*.sh "$DST/hooks/"
+  chmod +x "$DST/hooks/"*.sh
+else
+  hooks_stage="$(mktemp -d "$DST/.hooks-stage.XXXXXX")"
+  hooks_backup="$(mktemp -d "$DST/.hooks-old.XXXXXX")"
+  # **디렉터리를 통째로 바꾸므로 기존 내용물을 먼저 스테이징으로 옮겨 심는다.**
+  # 이게 없으면 템플릿에 없는 사용자 파일(custom.sh·보조 파일·하위 디렉터리)이
+  # 재설치마다 영구 삭제된다 — 파일 단위 cp 였던 구 구현에는 없던 회귀다.
+  # 슬롯이 아니어도 사용자가 그 디렉터리에 둔 것을 하네스가 지울 권한은 없다.
+  if [ -d "$DST/hooks" ]; then
+    if ! cp -R "$DST/hooks/." "$hooks_stage/"; then
+      rm -rf "$hooks_stage" "$hooks_backup"
+      echo "✗ 기존 훅 디렉터리를 스테이징으로 복사하지 못했습니다 — 사용자 파일을 잃지 않으려고 중단합니다." >&2
+      exit 1
+    fi
+  fi
+  # 템플릿이 덮을 자리에 **심링크가 보존돼 있으면 먼저 치운다.** 안 그러면 cp 가 그 링크를
+  # 따라가 링크 대상(디렉터리 밖 사용자 파일)을 덮어쓴다 — 보존하려다 파괴하는 셈이다.
+  # 지우는 것은 스테이징의 링크뿐이고, 링크 대상 파일에는 손대지 않는다.
+  for _t in "$SRC/hooks/"*.sh; do
+    _b="$(basename "$_t")"
+    [ -L "$hooks_stage/$_b" ] && rm -f "$hooks_stage/$_b"
+  done
+  cp "$SRC/hooks/"*.sh "$hooks_stage/"     # 템플릿 훅만 덮어쓴다
+  chmod +x "$hooks_stage/"*.sh
+
+  on_swap_signal() {   # $1=신호 이름  $2=종료 코드
+    set +e             # 보고는 최선 노력, **종료 코드가 계약**이다
+    # 플래그가 아니라 **파일시스템 실제 상태**로 판정한다. 첫 mv 가 끝났는데 플래그를
+    # 세우기 전에 신호가 오는 창이 있고(bash 는 외부 명령 종료 뒤 대기 중인 trap 을
+    # 먼저 실행한다), 플래그를 믿으면 그 창에서 복원하지 않고 백업까지 지운다.
+    if [ -d "$hooks_backup/hooks" ] && [ ! -e "$DST/hooks" ]; then
+      if mv "$hooks_backup/hooks" "$DST/hooks"; then
+        echo "[$1] 훅 교체 도중 중단 — 구판으로 되돌렸습니다." >&2
+        rm -rf "$hooks_stage" "$hooks_backup"
+      else
+        # 복구가 실패했다. **백업을 지우지 않는다** — 그것이 유일한 사본이다.
+        echo "[$1] 훅 교체 도중 중단됐고 **복구도 실패했습니다**." >&2
+        echo "     구판이 여기 남아 있습니다: $hooks_backup/hooks" >&2
+        echo "     손으로 옮기세요:  mv '$hooks_backup/hooks' '$DST/hooks'" >&2
+        rm -rf "$hooks_stage"
+      fi
+    else
+      echo "[$1] 중단되었습니다 (훅 교체는 시작 전이거나 이미 끝났습니다)." >&2
+      rm -rf "$hooks_stage" "$hooks_backup"
+    fi
+    exit "$2"
+  }
+  # QUIT·HUP 도 잡는다: bash 는 trap 이 없으면 QUIT 를 **무시하고 rc=0 을 낸다** —
+  # 중단됐는데 "성공"으로 보고되는 최악의 조합이다(실측).
+  trap 'on_swap_signal INT  130' INT
+  trap 'on_swap_signal TERM 143' TERM
+  trap 'on_swap_signal QUIT 131' QUIT
+  trap 'on_swap_signal HUP  129' HUP
+
+  if [ -d "$DST/hooks" ]; then
+    mv "$DST/hooks" "$hooks_backup/hooks"   # 중첩은 사고가 아니라 계약이다
+  fi
+  if ! mv "$hooks_stage" "$DST/hooks"; then
+    # rename2 실패. **성공으로 오진단하지 않는다** — 되돌리고 실패로 끝낸다.
+    # 복구 mv 의 rc 를 확인한다. 실패했는데 "되돌렸습니다"를 찍고 백업을 지우면
+    # 유일한 사본이 사라진다.
+    if [ -d "$hooks_backup/hooks" ] && [ ! -e "$DST/hooks" ]; then
+      if mv "$hooks_backup/hooks" "$DST/hooks"; then
+        echo "   구판 훅으로 되돌렸습니다." >&2
+        rm -rf "$hooks_backup"
+      else
+        echo "   **복구도 실패했습니다.** 구판이 여기 남아 있습니다: $hooks_backup/hooks" >&2
+        echo "   손으로 옮기세요:  mv '$hooks_backup/hooks' '$DST/hooks'" >&2
+      fi
+    else
+      rm -rf "$hooks_backup"
+    fi
+    rm -rf "$hooks_stage"
+    echo "✗ 훅 디렉터리를 교체하지 못했습니다: $DST/hooks" >&2
+    exit 1
+  fi
+  trap - INT TERM QUIT HUP     # 여기부터는 되돌릴 것이 없다
+  rm -rf "$hooks_backup"
+fi
+hook_count="$(ls "$DST/hooks"/*.sh 2>/dev/null | wc -l | tr -d ' ')"
+
 cp "$SRC/harness/principles.md" "$DST/harness/"
-echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 4 · 제0원칙"
+echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 $hook_count · 제0원칙"
 
 # ── 1b) 전역 에이전트 배포 (~/.claude/agents/ — 프로젝트 무관 글루, 덮어씀) ──
 # 정본은 이 repo의 global-agents/ (전역 디렉토리는 버전 관리가 안 되므로 — ADR-0002)
@@ -57,13 +186,14 @@ fi
 if [ ! -f "$DST/harness/project-profile.md" ]; then
   sed "s/{{PROJECT_NAME}}/$NAME/g" "$SRC/harness/project-profile.template.md" \
     > "$DST/harness/project-profile.md"
-  echo "   슬롯 생성 ✓  harness/project-profile.md   ← §1~§8 채우세요"
+  echo "   슬롯 생성 ✓  harness/project-profile.md   ← 1~9절 채우세요"
 else
   echo "   슬롯 보존    harness/project-profile.md   (기존 유지)"
 fi
 if [ ! -f "$DST/harness/harness.env" ]; then
   cp "$SRC/harness/harness.env.template" "$DST/harness/harness.env"
   echo "   슬롯 생성 ✓  harness/harness.env          ← HARNESS_TYPECHECK_CMD 채우세요"
+  echo "                                                 (HARNESS_KNOWLEDGE_GATE 는 기본 켜짐)"
 else
   echo "   슬롯 보존    harness/harness.env          (기존 유지)"
 fi
@@ -127,7 +257,7 @@ fi
 
 echo ""
 echo "== 완료. 다음 단계:"
-echo "   1. $DST/harness/project-profile.md 의 §1~§8 채우기 (도메인 슬롯)"
+echo "   1. $DST/harness/project-profile.md 의 1~9절 채우기 (도메인 슬롯 + 지식 진입점)"
 echo "   2. $DST/harness/harness.env 의 HARNESS_TYPECHECK_CMD 채우기"
 echo "   3. 새 Claude Code 세션 시작 (훅은 세션 시작 시 스냅샷 — 이번 세션엔 발화 안 함)"
 echo "   4. 개발 요청 → harness-orchestrator 스킬이 파이프라인 실행"

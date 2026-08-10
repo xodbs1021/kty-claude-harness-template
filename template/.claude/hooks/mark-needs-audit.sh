@@ -9,7 +9,8 @@
 #   프로젝트 안       — _workspace/·.claude/·순수 *.md|*.markdown(대소문자 무관) 를 뺀 전부
 #   밖 + 하네스 정본  — 저장소(루트에 template/.claude/) **전체**를 프로젝트와 같은 규칙으로
 #   밖 + 그 외        — .claude/ 앵커에 걸린 하네스 파일만 (git 저장소일 필요 없음)
-#   설계·계획 산출물  — 위치·git 무관하게 _workspace/00_design*.md·01_plan*.md 는 듀얼리뷰만
+#   설계·계획 산출물  — 위치·git 무관하게 _workspace/00_design*.md·01_plan*.md 는 듀얼리뷰+지식
+#   결정 문서        — docs/decisions/*.md 는 문서 제외의 예외로 지식만
 #
 # 왜 이렇게 넓나 (2026-08-04 실사고): 하네스 자신을 고치는 작업은 **늘** 별도 클론에서
 # 일어나는데 훅이 프로젝트 밖을 통째로 스킵해, 게이트가 프로젝트는 지키면서 정작 하네스
@@ -152,7 +153,7 @@ harness_anchor() {
   return 1
 }
 
-# classify <기준 상대경로> <기준 디렉토리> — gate 또는 skip 을 stdout 에.
+# classify <기준 상대경로> <기준 디렉토리> — gate · knowledge · skip 을 stdout 에.
 # 프로젝트 안(4a)과 밖-하네스정본(4b)이 **같은 규칙**을 쓰도록 공유한다.
 #
 # 순서가 계약이다:
@@ -177,6 +178,16 @@ classify() {
   esac
   # 확장자 판정은 소문자화해서 본다 — README.MD 가 코드로 취급되면 안 된다.
   lower="$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')"
+  # 결정 문서는 문서 제외의 **예외**다. 하네스가 스스로 "결정은 여기 이 이름으로 쓴다"고
+  # 규정한 경로(결정 기록 절)라 **하네스가 아는 산출물**이고, 그 자리가 편집됐다는 것은
+  # 곧 결정이 나왔다는 뜻이다. 코드가 아니므로 게이트 4종은 과하다 — 지식 게이트만 세운다.
+  #
+  # 공시된 한계: 결정 문서를 이 경로 **밖**에 두면 게이트가 서지 않는다. 하네스가 아는
+  # 경로만 알 수 있기 때문이고, 프로젝트마다 다른 위치를 알아내려면 다시 상위 층 구현을
+  # 알아야 한다. 이 공백은 회수 정책 ADR 로 넘긴다.
+  case "$lower" in
+    docs/decisions/*.md|docs/decisions/*.markdown) printf 'knowledge\n'; return 0 ;;
+  esac
   case "$lower" in
     *.md|*.markdown) printf 'skip\n'; return 0 ;;
   esac
@@ -235,10 +246,16 @@ abs="$(physical_path "$file_path")"
 # 걸리지 않고, .. 가 섞인 경로는 기록값이 .claude/../_workspace/… 로 남는다.
 # 매칭만 소문자화하고 기록은 원본 대소문자로 한다.
 lower_abs="$(printf '%s' "$abs" | tr '[:upper:]' '[:lower:]')"
+# 설계·계획 산출물은 듀얼리뷰 **와 지식 게이트**를 세운다. 코드가 아니므로 타입체크·
+# 변경설명·감사는 과하지만, 설계가 나온 턴을 지식 저장소 반영 없이 끝내면 "왜 그렇게
+# 정했나"가 그 자리에서 사라진다 — 결정을 만든 근거가 정확히 이 파일들이다.
 case "$lower_abs" in
   */_workspace/00_design*.md|*/_workspace/01_plan*.md)
     dual_value="$(project_rel "$abs")" || dual_value="$abs"
-    record_flag "$DUALREVIEW_FLAG" "$dual_value" || emit_message "$MSG_WRITE_FAIL"
+    dw=0
+    record_flag "$DUALREVIEW_FLAG" "$dual_value" || dw=1
+    record_flag "$KNOWLEDGE_FLAG"  "$dual_value" || dw=1
+    [ "$dw" -eq 1 ] && emit_message "$MSG_WRITE_FAIL"
     exit 0 ;;
 esac
 
@@ -270,17 +287,27 @@ else
   fi
 fi
 
+# 결정 문서는 지식 게이트 하나만. 코드가 아니므로 타입체크·변경설명·감사는 과하다.
+if [ "$verdict" = 'knowledge' ]; then
+  record_flag "$KNOWLEDGE_FLAG" "$value" || emit_message "$MSG_WRITE_FAIL"
+  exit 0
+fi
+
 [ "$verdict" = 'gate' ] || exit 0
 
 # 완료 게이트 4종을 동시에 세운다:
 #   .needs-audit      → completion-auditor 강제 (Phase 6)
 #   .needs-explain    → change-explainer 강제 (Phase 5)
-#   .needs-vault      → 볼트(second brain) 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
-#                       세션 내내 볼트 Auto-Save 가 기억에만 의존해 0회 이행된 실사고의 재발 방지)
+#   .needs-knowledge  → 지식 저장소 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
+#                       산문 규칙이 기억에만 의존해 세션 내내 0회 이행된 실사고의 재발 방지)
 #   .needs-dualreview → codex 듀얼 리뷰 강제 (2026-08-03 kty)
 # 각 게이트는 해당 작업이 실제로 끝난 뒤에만 수동으로 지워진다. Stop 훅이 넷 다 본다.
+#
+# 지식 게이트가 꺼져 있어도 여기서는 **기록한다.** 켜짐/꺼짐 판정은 harness.env 를 한 번
+# 더 읽는 일인데 이 훅은 편집마다 돌고 Stop 훅은 턴에 한 번 돈다 — 판정은 Stop 쪽
+# 한 곳(knowledge_gate_active)으로 모았다. 꺼져 있으면 이 파일은 아무 효력이 없다.
 write_failed=0
-for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$VAULT_FLAG" "$DUALREVIEW_FLAG"; do
+for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG"; do
   record_flag "$flag" "$value" || write_failed=1
 done
 # 넷이 다 실패해도 메시지는 한 줄만 낸다.

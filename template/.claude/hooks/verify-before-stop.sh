@@ -426,7 +426,7 @@ if retrieval_pending; then
                     if [ -z "$(printf '%s' "$ref_inner" | LC_ALL=C tr -d '[:space:]')" ]; then
                       retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
 "
-                      retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 레퍼런스 표명의 괄호 안이 비었음(불요·실패에도 사유는 필수)
+                      retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 레퍼런스 표명의 괄호 안이 비었음
 "
                     fi
                     ;;
@@ -504,7 +504,7 @@ if retrieval_pending; then
       echo "     1줄: 사전 결정 회수: <읽은 경로>      또는  사전 결정 회수: 없음(<사유>)"
       echo "     2줄: 레퍼런스 조사: 조사함(<대상·출처>) | 불요(<사유>) | 실패(<시도 — 사유>)"
       echo "          — 이 세 단어와 반각 괄호만. 괄호 안이 비면 불량입니다."
-      echo "     3줄~: - 걸리는 선행 결정: <제목 — 한 줄> (없으면 \"걸리는 선행 결정 없음\")"
+      echo "     3줄~: - 걸리는 선행 결정: <제목 — 한 줄> (없으면 \"- 걸리는 선행 결정 없음\")"
       echo "  4. 형식을 지키면 이 게이트는 스스로 풀립니다 — 지울 플래그가 없습니다."
       echo
       echo "이 게이트는 형식만 봅니다. 진짜 읽었는지·조사했는지는 검수(plan-reviewer·codex)가 봅니다."

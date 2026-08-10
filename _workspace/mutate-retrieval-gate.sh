@@ -171,6 +171,12 @@ if python3 - "$VSTOP" <<'PY'
 import sys
 p = sys.argv[1]
 src = open(p, encoding='utf-8').read()
+# 앵커 정확히 1회 계약 — mutate() 와 동일. index() 는 첫 발생만 잡아 중복 앵커에서
+# 엉뚱한 블록을 옮기고도 "순서 방어 확인"으로 집계될 수 있다(구현 검수 [cx] 지적).
+for a in ('# (3.4) **머리 표명 게이트**', '# (3.5) 듀얼 리뷰(codex) 게이트',
+          '# (4) change-explainer 게이트'):
+    if src.count(a) != 1:
+        raise SystemExit(1)
 start = src.index('# (3.4) **머리 표명 게이트**')
 end = src.index('# (3.5) 듀얼 리뷰(codex) 게이트')
 block = src[start:end]
@@ -305,6 +311,16 @@ mutate 'm33 SP 탭 제거' "$VSTOP" \
 mutate 'm34 괄호 뒤 공백 불허' "$VSTOP" \
   '              *'"'"' '"'"')  ref_body="${ref_body% }" ;;' \
   '              *'"'"' '"'"')  break ;;'
+
+# 36. 변형 뒤 탭 트림 제거 — `조사함<TAB>(x)` 가 불량이 된다 (r47 자리 2 방어)
+mutate 'm36 변형 뒤 탭 트림 제거' "$VSTOP" \
+  "              *'	')  ref_head=\"\${ref_head%	}\" ;;" \
+  "              *'	')  break ;;"
+
+# 37. 닫는 괄호 뒤 탭 트림 제거 — `조사함(x)<TAB>` 가 불량이 된다 (r47 자리 3 방어)
+mutate 'm37 괄호 뒤 탭 트림 제거' "$VSTOP" \
+  "              *'	')  ref_body=\"\${ref_body%	}\" ;;" \
+  "              *'	')  break ;;"
 
 # 35. 첫 줄 "빈 줄" 분기 제거 — r50(격리 픽스처)·r04(사유 단언)가 잡는다
 mutate 'm35 첫 줄 빈 줄 분기 제거' "$VSTOP" \

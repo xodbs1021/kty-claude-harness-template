@@ -22,6 +22,9 @@
 # 아래서 도달 불가다 — decision_note 가 서려면 4종 플래그 중 하나가 서야 하는데, 그 플래그가
 # work_pending 을 참으로 유지해 exit 0 에 못 간다. 방출 코드는 발동 규칙이 바뀌는 날을 위한
 # 방어로 남겼고, 그 제거 변이는 원리적으로 초록이다(ADR-0012 의 "모르는 rc" 공백과 같은 부류).
+# 예산 키의 sort 실패 폴백(bash 치환)도 미측정이다 — sort 만 없는 PATH 픽스처는 훅의 다른
+# 외부 명령(tr·sed·git) 동작까지 바꿔 판정이 오염된다. ADR-0013 구현부터 이월된 공백이고
+# 폴백은 최선 노력 계약이다(구현 검수 [cx] 지적 — 공시로 수용).
 #
 # 왜 set -e 가 없나: 비영 rc 를 assert 하는 테스트다.
 # 셸 이식성: macOS 기본 bash 는 3.2 다. mapfile·연관배열·${var,,} 금지.
@@ -755,6 +758,8 @@ r45() { # 파일 내 부분 진전 — 두 줄 다 불량에서 첫 줄만 고�
   mk_tx "$p/tx.jsonl" neutral
   run_stop "$p" "$p/tx.jsonl"
   if ! contains "$ERR" '차단 1/'; then why="1회차가 1/N 이 아니다: $(printf '%s' "$ERR" | tail -1 | head -c 60)"
+  elif ! contains "$ERR" '첫 줄이';  then why='1회차에 첫 줄 사유가 없다 (두 줄 동시 판정 미이행)'
+  elif ! contains "$ERR" '둘째 줄이'; then why='1회차에 둘째 줄 사유가 없다 (첫 줄 불량이 둘째 줄 검사를 건너뛰게 함 — 구현 검수 [cx] 지적의 단언화)'
   else
     mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" '무관한 둘째 줄'   # 첫 줄만 고침 = 진전
     run_stop "$p" "$p/tx.jsonl"
@@ -788,9 +793,27 @@ r46() { # 내용 검사는 세 변형 공통 단일 경로다 — 실패만 검�
   report "$name" "$why"
 }
 
-r47() { # SP 에는 탭도 든다 — 접두어·변형 사이 탭 (r43 의 짝, 허용 쪽 경계).
-  ref_pass 'r47 접두어 뒤 탭 → 정상' PRINTF_RAW \
-    "$GOOD_FIRST"$'\n''레퍼런스 조사:'$'\t''조사함(x)'$'\n''본문.'$'\n'
+r47() { # SP 에는 탭도 든다 — 트림 자리 셋(접두어 뒤·변형 뒤·닫는 괄호 뒤) 전부 잰다.
+        # 한 자리만 재면 나머지 트림 한 줄이 빠진 구현이 정상 입력을 차단해도 안 보인다
+        # (구현 검수 [cx] 지적 — [cc] 가 수동 재현으로 확인한 경계의 단언화).
+  local name='r47 탭 SP — 접두어·변형·괄호 뒤 전부 정상' why='' p s i
+  for i in 1 2 3; do
+    case "$i" in
+      1) s='레퍼런스 조사:'$'\t''조사함(x)' ;;
+      2) s='레퍼런스 조사: 조사함'$'\t''(x)' ;;
+      3) s='레퍼런스 조사: 조사함(x)'$'\t' ;;
+    esac
+    p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+    printf '%s\n%s\n본문.\n' "$GOOD_FIRST" "$s" > "$p/_workspace/00_design.md"
+    set_flag "$p" retrieval '_workspace/00_design.md'
+    set_flag "$p" audit 'src/x.ts'
+    mk_tx "$p/tx.jsonl" neutral
+    run_stop "$p" "$p/tx.jsonl"
+    if contains "$ERR" "$TOK_RET";       then why="자리 $i 의 탭이 차단됐다"; break
+    elif ! contains "$ERR" "$TOK_AUDIT"; then why="자리 $i 감사 게이트 미도달"; break
+    fi
+  done
+  report "$name" "$why"
 }
 
 r48() { # 비ASCII 공백은 SP 가 아니다 — 전각 공백이 변형과 괄호 사이에 끼면 불량.

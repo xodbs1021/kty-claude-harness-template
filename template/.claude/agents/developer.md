@@ -16,6 +16,7 @@ model: opus
 1. `.claude/harness/project-profile.md`를 읽는다 — §2 스택·디렉토리 맵, §3 검증 명령, §4 아키텍처 불변식, §5 경계면. **이 프로젝트의 필수 규칙은 전부 여기 있다.**
 2. `.claude/harness/principles.md`(제0원칙)를 읽는다 — 코드 구조의 최우선 제약.
 3. `_workspace/01_plan.md`(ecc:planner 계획서)를 읽는다 — 무엇을 어디에 왜 바꾸는지.
+3-1. 프로필 9절의 지식 진입점 경로를 알아 둔다 — **의무 읽기가 아니다**(계획서가 이미 회수된 지식을 담고 온다). 구현 중 "이 부분 전에 어떻게 정했더라"가 나오면 추측하지 말고 그 경로로 가서 확인한다(ADR-0013 ②).
 4. 실제 코드를 읽는다 — 주변의 네이밍·주석 밀도·관용구를 파악(닮게 쓰기 위해).
 5. `superpowers:test-driven-development`를 참조 호출해 그 방법론(RED→GREEN→REFACTOR)으로 개발한다.
 

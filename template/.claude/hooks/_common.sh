@@ -15,6 +15,10 @@ KNOWLEDGE_FLAG="$STATE_DIR/.needs-knowledge"
 # 여기서 옛 이름을 알면 배포되는 글루가 구현체 이름을 다시 품게 되고, 층 경계 검사가
 # (옳게) 막는다. 배포되지 않는 설치 스크립트가 이행을 맡는 것이 층에 맞다.
 DUALREVIEW_FLAG="$STATE_DIR/.needs-dualreview"
+# 회수 표명 게이트(ADR-0013). 설계·계획 산출물(00_design*·01_plan*)이 저장되면 서고,
+# 그 첫 줄이 표명 형식(`사전 결정 회수:`)을 지키면 Stop 훅이 **자동으로** 지운다 —
+# 지울 플래그를 에이전트 손에 주지 않는 것이 이 게이트의 형태다(결정 게이트와 같은 구조).
+RETRIEVAL_FLAG="$STATE_DIR/.needs-retrieval"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"
 BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플래그 상태) — 진전 인지 리셋용
 
@@ -263,6 +267,20 @@ harness_knowledge_gate_on() {
 knowledge_gate_active() {
   [ -s "$KNOWLEDGE_FLAG" ] || return 1
   harness_knowledge_gate_on
+}
+
+# 회수 표명 게이트에 **할 일이 남았는가** — 플래그가 섰고 훅도 살아 있는가.
+#
+# 이름을 *_gate_active 로 짓지 않았다. knowledge_gate_active 는 "플래그 + harness.env
+# 스위치"이고 개별 훅 비활성(stop:knowledge)은 호출부가 따로 보는데, retrieval 은 env
+# 스위치가 없어 끄는 방법이 ECC_DISABLED_HOOKS=stop:retrieval **하나뿐**이다. 그래서
+# 비활성이 곧 "할 일 없음"이고 이 함수 하나에 접는다 — 안 접으면 게이트를 끈 환경에서
+# 남은 플래그가 영영 안 지워진 채 읽기 전용 턴의 조기 종료를 막고, 그 소음이 예산을
+# 소진시켜 다른 게이트 플래그까지 지워버린다(설계 검수 [cc] r2 H5 시나리오).
+# 플래그 5종 중 이것만 이런 의미라는 사실은 docs/usage.md 에 공시돼 있다.
+retrieval_pending() {
+  [ -s "$RETRIEVAL_FLAG" ] || return 1
+  ! hook_disabled "stop:retrieval"
 }
 
 # stdin 의 JSON 에서 점 경로로 값 하나를 뽑는다. 없거나 파싱 실패면 빈 문자열.

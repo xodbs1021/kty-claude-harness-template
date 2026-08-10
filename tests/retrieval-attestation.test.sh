@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# retrieval-attestation.test.sh — Stop 훅의 **회수 표명 게이트**(stop:retrieval, ADR-0013) 회귀 방어.
+# retrieval-attestation.test.sh — Stop 훅의 **머리 표명 게이트**(stop:retrieval,
+# ADR-0013·ADR-0015) 회귀 방어.
 #
-#   "설계·계획 산출물(00_design*·01_plan*)이 저장된 턴은, 그 첫 줄이
-#    `사전 결정 회수:` 표명 형식을 지키기 전엔 끝낼 수 없다. 지키면 게이트가 스스로 풀린다."
+#   "설계·계획 산출물(00_design*·01_plan*)이 저장된 턴은, 머리 두 줄 —
+#    1줄 `사전 결정 회수:` · 2줄 `레퍼런스 조사: 조사함(<대상·출처>)|불요(<사유>)|실패(<사유>)`
+#    — 이 표명 형식을 지키기 전엔 끝낼 수 없다. 지키면 게이트가 스스로 풀린다."
 #
-# 이 게이트는 **형식만** 본다 — 진짜 읽었는지는 기계가 못 본다(ADR-0013 ④).
+# 이 게이트는 **형식만** 본다 — 진짜 읽었는지·조사했는지는 기계가 못 본다(ADR-0013 ④·ADR-0015).
 # 실패 방향이 게이트마다 다르다:
 #   위음성 — 표명 없는 산출물이 조용히 통과한다. 이 게이트가 존재하는 이유의 반대
 #   상태 오염 — 자동 해제·재평가·지문이 기존 게이트 기계(조기 종료·예산·결정 게이트)를
@@ -47,8 +49,8 @@ ran=0; pass=0; fail=0
 RC=999; ERR=''; OUT=''; DID_RUN=0
 
 # 판정 토큰 — 각 게이트 메시지의 고유 문구. 어느 게이트가 말했는지는 이걸로만 갈린다.
-TOK_RET='회수 표명이 없습니다'
-TOK_RET_FLAGFAIL='회수 표명 검사 불가'
+TOK_RET='머리 표명이 계약과 다릅니다'
+TOK_RET_FLAGFAIL='머리 표명 검사 불가'
 TOK_AUDIT='completion-auditor 미실행'
 TOK_PUSH='커밋이 원격에 없습니다'
 TOK_KNOW='지식 저장소 반영 미확인'
@@ -125,16 +127,25 @@ set_flag() {
   for v in "$@"; do printf '%s\n' "$v" >> "$p/.claude/.needs-$name"; done
 }
 
-# mk_doc <경로> <첫줄|"EMPTY"> — 산출물 파일을 만든다.
+# mk_doc <경로> <첫줄|"EMPTY"> [둘째줄|"ONELINE"] — 산출물 파일을 만든다.
+#   EMPTY          : 0바이트 파일 (셋째 인자는 무시한다 — 명시 계약)
+#   둘째줄=ONELINE : 첫 줄만 있는 1줄 파일 (둘째 줄 누락 케이스용)
+#   둘째줄 생략    : GOOD_SECOND — **불량 픽스처도 둘째 줄은 정상**으로 두어 두 검사를
+#                    격리한다(첫 줄 검사를 지우는 변이가 둘째 줄 차단에 가려지면 안 된다).
+#                    격리 예외는 EMPTY(0바이트) 하나뿐이다.
 mk_doc() {
-  local f="$1" first="$2"
+  local f="$1" first="$2" second="${3-$GOOD_SECOND}"
   case "$first" in
-    EMPTY) : > "$f" ;;
-    *) printf '%s\n본문.\n' "$first" > "$f" ;;
+    EMPTY) : > "$f"; return ;;
+  esac
+  case "$second" in
+    ONELINE) printf '%s\n' "$first" > "$f" ;;
+    *) printf '%s\n%s\n본문.\n' "$first" "$second" > "$f" ;;
   esac
 }
 
 GOOD_FIRST='사전 결정 회수: docs/decisions/'
+GOOD_SECOND='레퍼런스 조사: 조사함(docs/decisions/ — 형제 게이트 선례)'
 flag_gone() { [ ! -e "$1/.claude/.needs-retrieval" ]; }
 
 # --- 케이스 --------------------------------------------------------------
@@ -557,7 +568,7 @@ r25() { # 첫 줄의 BOM·CR 은 걷어낸 뒤 판정한다 — 눈에 안 보�
         # 불량으로 뒤집으면 안 된다(harness_env_value 가 데인 같은 부류).
   local name='r25 BOM·CRLF 첫 줄 → 정상 판정' why=''
   local p; p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
-  printf '\357\273\277사전 결정 회수: docs/decisions/\r\n본문.\n' > "$p/_workspace/00_design.md"
+  printf '\357\273\277사전 결정 회수: docs/decisions/\r\n%s\n본문.\n' "$GOOD_SECOND" > "$p/_workspace/00_design.md"
   set_flag "$p" retrieval '_workspace/00_design.md'
   set_flag "$p" audit 'src/x.ts'
   mk_tx "$p/tx.jsonl" neutral
@@ -606,12 +617,210 @@ r27() { # 자동 해제 뒤 공유 지문을 **다시 계산**한다. 진입 시
   report "$name" "$why"
 }
 
+# --- 케이스 (r28~ — 둘째 줄 레퍼런스 표명, ADR-0015) ----------------------
+
+# ref_pass <이름> <둘째줄|PRINTF_RAW> [원본파일내용] — 통과 기대 케이스 공통 골격.
+# 감사 게이트 도달 + 회수 게이트 침묵 + 플래그 자동 해제까지 요구한다(rc 단독 판정 금지).
+ref_pass() {
+  local name="$1" second="$2" raw="${3-}" why='' p
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  if [ "$second" = "PRINTF_RAW" ]; then
+    printf '%s' "$raw" > "$p/_workspace/00_design.md"
+  else
+    mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" "$second"
+  fi
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if [ "$DID_RUN" -ne 1 ];             then why='훅 미실행'
+  elif contains "$ERR" "$TOK_RET";     then why="위양성 — 머리 표명 게이트가 막았다: $(printf '%s' "$ERR" | sed -n '3,5p' | head -c 120)"
+  elif ! contains "$ERR" "$TOK_AUDIT"; then why='감사 게이트 미도달'
+  elif ! flag_gone "$p";               then why='플래그 미해제'
+  fi
+  report "$name" "$why"
+}
+
+# ref_block <이름> <둘째줄> <사유조각> — 차단 기대 케이스 공통 골격.
+ref_block() {
+  local name="$1" second="$2" frag="$3" why='' p
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" "$second"
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if [ "$DID_RUN" -ne 1 ];              then why='훅 미실행'
+  elif [ "$RC" -ne 2 ];                 then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" "$TOK_RET";    then why="머리 표명 게이트가 막지 않았다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+  elif ! contains "$ERR" "$frag";       then why="사유($frag)가 메시지에 없다: $(printf '%s' "$ERR" | sed -n '3,5p' | head -c 120)"
+  elif flag_gone "$p";                  then why='불량인데 플래그가 해제됐다'
+  fi
+  report "$name" "$why"
+}
+
+r28() { ref_pass 'r28 정상 2줄(조사함) → 통과' '레퍼런스 조사: 조사함(Netflix Live Origin — TechBlog 2025-12)'; }
+
+r29() { ref_pass 'r29 불요(<사유>) → 통과' '레퍼런스 조사: 불요(자기참조 게이트 확장 — 외부 계약 없음)'; }
+
+r30() { # 1줄 파일 — 둘째 줄 자체가 없다.
+  local name='r30 둘째 줄 없음(1줄 파일) → 차단 + 누락 사유' why='' p
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" ONELINE
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if ! contains "$ERR" "$TOK_RET";      then why='차단하지 않았다'
+  elif ! contains "$ERR" '둘째 줄 없음'; then why='사유(누락)가 없다'
+  fi
+  report "$name" "$why"
+}
+
+r31() { ref_block 'r31 둘째 줄이 무관 텍스트 → 차단' '조사는 잘 했습니다' "레퍼런스 조사:' 로 시작하지"; }
+
+r32() { ref_block 'r32 불요 단독(괄호 없음) → 차단 — 사유 강제' '레퍼런스 조사: 불요' '형식이 아님'; }
+
+r33() { ref_block 'r33 조사함() 빈 괄호 → 차단' '레퍼런스 조사: 조사함()' '괄호 안이 비었음'; }
+
+r34() { ref_block 'r34 불요(공백만) → 차단' '레퍼런스 조사: 불요(   )' '괄호 안이 비었음'; }
+
+r35() { ref_block 'r35 접두어만 → 차단' '레퍼런스 조사:' '형식이 아님'; }
+
+r36() { # 둘째 줄 CR 꼬리 → 정상 판정 (r25 의 짝).
+  ref_pass 'r36 둘째 줄 CR 꼬리 → 정상' PRINTF_RAW \
+    "$GOOD_FIRST"$'\n''레퍼런스 조사: 조사함(x)'$'\r\n''본문.'$'\n'
+}
+
+r37() { # 두 검사의 독립성 — 각각 해당 줄 사유로만 차단된다.
+  local name='r37 줄별 독립 판정 (1줄만·2줄만 불량)' why='' p p2
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" '조사 안 적음'
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if ! contains "$ERR" "$TOK_RET";     then why='(2줄 불량) 차단하지 않았다'
+  elif ! contains "$ERR" '둘째 줄이';  then why='(2줄 불량) 둘째 줄 사유가 없다'
+  elif contains "$ERR" '첫 줄이';      then why='(2줄 불량) 첫 줄 사유가 끼었다 — 독립성 위반'
+  else
+    p2="$(new_project)" || { report "$name" '픽스처 실패(2)'; return 0; }
+    mk_doc "$p2/_workspace/00_design.md" '표명 없는 첫 줄.'
+    set_flag "$p2" retrieval '_workspace/00_design.md'
+    set_flag "$p2" audit 'src/x.ts'
+    mk_tx "$p2/tx.jsonl" neutral
+    run_stop "$p2" "$p2/tx.jsonl"
+    if ! contains "$ERR" '첫 줄이';    then why='(1줄 불량) 첫 줄 사유가 없다'
+    elif contains "$ERR" '둘째 줄';    then why='(1줄 불량) 둘째 줄 사유가 끼었다 — 격리 픽스처 실패'
+    fi
+  fi
+  report "$name" "$why"
+}
+
+r38() { # 레퍼런스 표명 리터럴 드리프트 — 4자리(r21 의 짝 — plan-reviewer.md 가 하나 더).
+  local name='r38 레퍼런스 리터럴이 훅·SKILL·프로필·plan-reviewer 에 동일' why=''
+  local lit='레퍼런스 조사:' f
+  for f in \
+    "$HOOKS/verify-before-stop.sh" \
+    "$REPO_ROOT/template/.claude/skills/harness-orchestrator/SKILL.md" \
+    "$REPO_ROOT/template/.claude/harness/project-profile.template.md" \
+    "$REPO_ROOT/template/.claude/agents/plan-reviewer.md"; do
+    grep -qF "$lit" "$f" || { why="리터럴이 없다: $f"; break; }
+  done
+  report "$name" "$why"
+}
+
+r39() { ref_block 'r39 닫는 괄호 뒤 잡음 → 차단 (닫힌 문법)' '레퍼런스 조사: 불요(x) 추가설명' '형식이 아님'; }
+
+r40() { ref_pass 'r40 괄호 안 내부 괄호 → 정상' '레퍼런스 조사: 조사함(a(b) c)'; }
+
+r41() { # 개행 없는 둘째 줄 — read 가 값을 담고 rc=1 을 내는 경로 (r26 의 문서 쪽 짝).
+  ref_pass 'r41 개행 없는 둘째 줄 → 정상' PRINTF_RAW \
+    "$GOOD_FIRST"$'\n''레퍼런스 조사: 조사함(x)'
+}
+
+r42() { ref_block 'r42 변형 꼬리(조사함부족) → 차단' '레퍼런스 조사: 조사함부족(x)' '형식이 아님'; }
+
+r43() { ref_pass 'r43 변형 뒤 공백 → 정상' '레퍼런스 조사: 조사함 (x)'; }
+
+r44() { ref_pass 'r44 실패(<사유>) → 통과 (제3 변형)' '레퍼런스 조사: 실패(WebSearch 장애 — 2회 실패)'; }
+
+r45() { # 파일 내 부분 진전 — 두 줄 다 불량에서 첫 줄만 고쳐도 카운터가 리셋된다.
+        # 예산 키의 #1/#2 태그가 지킨다 — 태그를 빼는 변이(m28)가 여기서 빨개진다.
+  local name='r45 파일 내 부분 진전 → 카운터 리셋 (1/3 유지)' why='' p
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" '표명 없음.' '무관한 둘째 줄'
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if ! contains "$ERR" '차단 1/'; then why="1회차가 1/N 이 아니다: $(printf '%s' "$ERR" | tail -1 | head -c 60)"
+  else
+    mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" '무관한 둘째 줄'   # 첫 줄만 고침 = 진전
+    run_stop "$p" "$p/tx.jsonl"
+    if ! contains "$ERR" "$TOK_RET";  then why='2회차에 차단하지 않았다'
+    elif ! contains "$ERR" '둘째 줄이'; then why='2회차 사유가 둘째 줄이 아니다'
+    elif ! contains "$ERR" '차단 1/'; then why="부분 진전인데 카운터가 리셋되지 않았다: $(printf '%s' "$ERR" | tail -1 | head -c 60)"
+    fi
+  fi
+  report "$name" "$why"
+}
+
+r46() { # 내용 검사는 세 변형 공통 단일 경로다 — 실패만 검사가 빠지는 구현이 여기서 빨개진다.
+  local name='r46 실패 빈 괄호 → 차단 (변형 공통 내용 검사)' why='' p p2
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  mk_doc "$p/_workspace/00_design.md" "$GOOD_FIRST" '레퍼런스 조사: 실패()'
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if ! contains "$ERR" "$TOK_RET";          then why='실패() 를 차단하지 않았다'
+  elif ! contains "$ERR" '괄호 안이 비었음'; then why='사유(빈 괄호)가 없다'
+  else
+    p2="$(new_project)" || { report "$name" '픽스처 실패(2)'; return 0; }
+    mk_doc "$p2/_workspace/00_design.md" "$GOOD_FIRST" '레퍼런스 조사: 실패(   )'
+    set_flag "$p2" retrieval '_workspace/00_design.md'
+    set_flag "$p2" audit 'src/x.ts'
+    mk_tx "$p2/tx.jsonl" neutral
+    run_stop "$p2" "$p2/tx.jsonl"
+    contains "$ERR" '괄호 안이 비었음' || why='실패(공백만) 를 차단하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+r47() { # SP 에는 탭도 든다 — 접두어·변형 사이 탭 (r43 의 짝, 허용 쪽 경계).
+  ref_pass 'r47 접두어 뒤 탭 → 정상' PRINTF_RAW \
+    "$GOOD_FIRST"$'\n''레퍼런스 조사:'$'\t''조사함(x)'$'\n''본문.'$'\n'
+}
+
+r48() { # 비ASCII 공백은 SP 가 아니다 — 전각 공백이 변형과 괄호 사이에 끼면 불량.
+  ref_block 'r48 변형·괄호 사이 전각 공백 → 차단' '레퍼런스 조사: 조사함　(x)' '형식이 아님'
+}
+
+r49() { ref_pass 'r49 닫는 괄호 뒤 공백만 → 정상' '레퍼런스 조사: 불요(x)  '; }
+
+r50() { # 첫 줄 "빈 줄" 분기의 격리 픽스처 — 0바이트 파일 없이도 그 분기를 잰다.
+        # (r04 는 두 검사 동시 불량이라 격리 예외 — 이 케이스가 그 예외를 좁힌다.)
+  local name='r50 첫 줄 빈 줄·둘째 줄 정상 → 첫 줄 사유로만 차단' why='' p
+  p="$(new_project)" || { report "$name" '픽스처 실패'; return 0; }
+  printf '\n%s\n본문.\n' "$GOOD_SECOND" > "$p/_workspace/00_design.md"
+  set_flag "$p" retrieval '_workspace/00_design.md'
+  set_flag "$p" audit 'src/x.ts'
+  mk_tx "$p/tx.jsonl" neutral
+  run_stop "$p" "$p/tx.jsonl"
+  if ! contains "$ERR" "$TOK_RET"; then why='차단하지 않았다'
+  elif ! contains "$ERR" '비었';   then why='사유(빈 줄)가 없다'
+  elif contains "$ERR" '둘째 줄';  then why='둘째 줄 사유가 끼었다 — 격리 실패'
+  fi
+  report "$name" "$why"
+}
+
 # --- 실행 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=27
-CASES='r01 r02 r03 r04 r05 r06 r07 r08 r09 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27'
+EXPECTED_CASES=50
+CASES='r01 r02 r03 r04 r05 r06 r07 r08 r09 r10 r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 r23 r24 r25 r26 r27 r28 r29 r30 r31 r32 r33 r34 r35 r36 r37 r38 r39 r40 r41 r42 r43 r44 r45 r46 r47 r48 r49 r50'
 
-echo "retrieval-attestation.test.sh — 회수 표명 게이트(stop:retrieval) 회귀"
+echo "retrieval-attestation.test.sh — 머리 표명 게이트(stop:retrieval) 회귀"
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"
 if [ "$case_total" -ne "$EXPECTED_CASES" ] || [ "$case_uniq" -ne "$EXPECTED_CASES" ]; then

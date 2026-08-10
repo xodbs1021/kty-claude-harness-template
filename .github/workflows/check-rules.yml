@@ -24,5 +24,9 @@ jobs:
         run: ./tests/check-rule-copies.test.sh
       - name: 완료 게이트 검사 범위 회귀 테스트
         run: ./tests/mark-needs-audit.test.sh
+      # harness.env 를 실행하지 않고 원문으로 읽는 파서의 회귀 방어.
+      # 여기가 조용히 틀리면 값에 쓰레기가 섞여 rc=127 이 되고 타입체크 게이트가 사라진다.
+      - name: harness.env 원문 판독 회귀 테스트
+        run: ./tests/harness-env-read.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh

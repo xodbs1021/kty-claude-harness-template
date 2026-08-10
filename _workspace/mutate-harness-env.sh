@@ -150,26 +150,35 @@ elif [ -z "$TYPECHECK_CMD" ]; then
   'if [ -z "$TYPECHECK_CMD" ]; then
   typecheck_note="타입체크 생략 (미설정)"'
 
-# 가장 강한 변이: 파서를 이 커밋 **이전**(원문 grep + 양끝 따옴표만 벗기기)으로 되돌린다.
-# "고치기 전이라면 통과했을 입력"임을 실증하는 자리다.
+# 가장 강한 변이: 파서를 **회귀가 살아 있던 구판**(원문 grep + 양끝 따옴표만 벗기기)으로
+# 되돌린다. "고치기 전이라면 통과했을 입력"임을 실증하는 자리다.
+#
+# HEAD^ 를 쓰지 않는다 — 커밋을 하나 더 쌓는 순간 앵커가 밀려 "이미 고쳐진 파서"를
+# 되돌리게 되고, 그러면 **초록이 나는데 그게 정상인지 결함인지 구별할 수 없다**(실제로 겪었다).
+# 그래서 기준선을 고정하고, 가져온 내용이 진짜 구판인지 마커로 확인한 뒤에만 잰다.
+BASELINE='daaa745'                 # 회귀 6종이 살아 있던 마지막 커밋
+BASELINE_MARK='case "$val" in'     # 구판에만 있는 양끝-따옴표 벗기기
 echo
-echo '통째 되돌리기 — 고치기 전 파서라면 무엇이 빨개지나'
+echo "통째 되돌리기 — 고치기 전 파서($BASELINE)라면 무엇이 빨개지나"
 total=$((total + 1))
-if git show 'HEAD^:template/.claude/hooks/_common.sh' > "$COMMON" 2>/dev/null; then
+if ! git show "$BASELINE:template/.claude/hooks/_common.sh" 2>/dev/null | grep -qF "$BASELINE_MARK"; then
+  echo "  ! 기준선 $BASELINE 에서 구판 마커를 찾지 못했습니다 — 앵커가 밀렸습니다. 측정 무효." >&2
+  missed=$((missed + 1))
+elif git show "$BASELINE:template/.claude/hooks/_common.sh" > "$COMMON" 2>/dev/null; then
   out="$($TESTS 2>&1)"; rc=$?
   nfail="$(printf '%s\n' "$out" | grep -c '^  ✗')"
   restore_and_verify "$COMMON"
   if [ "$rc" -ne 0 ]; then
     caught=$((caught + 1))
-    printf '  ✓ HEAD^ 의 파서로 되돌린다 — 적색 %s건\n' "$nfail"
+    printf '  ✓ 구판 파서로 되돌린다 — 적색 %s건\n' "$nfail"
     printf '%s\n' "$out" | grep '^  ✗' | sed 's/^  ✗ /      · /; s/ —.*//'
   else
     missed=$((missed + 1))
-    echo '  ✗ HEAD^ 의 파서로 되돌린다 — **초록**. 테스트가 이 커밋의 가치를 안 붙든다'
+    echo '  ✗ 구판 파서로 되돌린다 — **초록**. 테스트가 이 커밋의 가치를 안 붙든다'
   fi
 else
   restore_and_verify "$COMMON"
-  echo '  ! HEAD^ 를 읽지 못했습니다'
+  echo "  ! $BASELINE 을 읽지 못했습니다"
   missed=$((missed + 1))
 fi
 

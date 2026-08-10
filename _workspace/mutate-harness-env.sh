@@ -27,6 +27,19 @@ for f in "$COMMON" "$STOP"; do
   fi
 done
 
+# **동시 실행 금지.** 이 하네스는 대상 파일을 일시적으로 변형한다. 두 개가 겹쳐 돌거나
+# 도는 도중에 누가 `git add -A` 를 하면 **주입된 변이가 그대로 커밋된다** — 실제로 당했다
+# (감사 에이전트가 돌리는 중에 커밋해서 `if (BAD) exit 1` 삭제본이 커밋됐다).
+# 락 디렉터리는 mkdir 의 원자성을 쓴다. trap 으로 반드시 걷어낸다.
+LOCK="$(git rev-parse --git-dir)/mutate-harness-env.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "✗ 이미 다른 변이 측정이 돌고 있습니다: $LOCK" >&2
+  echo "  겹쳐 돌리면 주입된 변이가 커밋될 수 있습니다. 끝난 뒤 다시 재세요." >&2
+  echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
+  exit 1
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 restore_and_verify() {   # $1 = 파일
   git restore --source=HEAD --worktree -- "$1" || { echo "✗ restore 실패: $1" >&2; exit 1; }
   local have want
@@ -68,8 +81,11 @@ run_mutation() {   # $1=이름 $2=파일 $3=찾을것 $4=바꿀것
   restore_and_verify "$2"
   if [ "$rc" -ne 0 ] && [ "$nfail" -gt 0 ]; then
     caught=$((caught + 1))
+    # cut -c 를 쓰지 않는다: BSD cut 은 **바이트**로 잘라 한글 중간을 끊고, 그러면 이 로그가
+    # 유효한 UTF-8 이 아니게 되어 grep 이 바이너리로 취급하고 **조용히 0건**을 낸다.
+    # 계측 도구의 출력을 계측할 수 없게 만드는 위음성이라 절단 자체를 없앤다(실측 적발).
     printf '  ✓ %-50s 적색 %2s건 · %s\n' "$1" "$nfail" \
-      "$(printf '%s\n' "$out" | grep '^  ✗' | sed 's/^  ✗ //; s/ —.*//' | tr '\n' '/' | cut -c1-80)"
+      "$(printf '%s\n' "$out" | grep '^  ✗' | sed 's/^  ✗ //; s/ —.*//' | tr '\n' '/')"
   else
     missed=$((missed + 1))
     printf '  ✗ %-50s **초록** — 이 방어를 지켜주는 케이스가 없다\n' "$1"

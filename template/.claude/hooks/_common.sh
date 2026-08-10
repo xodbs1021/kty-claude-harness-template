@@ -405,6 +405,16 @@ def drop_fences(s):
 def is_user_prompt(e):
     if e.get("type") != "user" or e.get("isSidechain"):
         return False
+    if e.get("isMeta"):
+        # **사람이 하지 않은 발화다.** 훅 피드백·자동 이어하기가 여기 온다.
+        # 경계로 세면 이 훅이 낸 차단 메시지가 스스로 새 턴을 열어, 방금 막은 자백이
+        # 다음 턴의 창 **밖**으로 밀려난다 — 게이트가 한 번 막고 스스로 물러난다.
+        # 질문을 한 번도 안 했는데 rc=3(차단 불필요)으로 통과하고 경고조차 안 남는다.
+        # 검수 CRITICAL 로 적발됐고 실기록에서 재현했다([cc] 2라운드).
+        #
+        # **구조 표시로 판정한다.** 메시지 문구("Stop hook feedback:")로 거르면 문구가
+        # 바뀌는 날 아무도 모르게 이 결함으로 되돌아간다 — 이 저장소가 반복해서 데인 부류다.
+        return False
     if "toolUseResult" in e:            # 도구 결과는 사용자 발화가 아니다
         return False
     msg = e.get("message")

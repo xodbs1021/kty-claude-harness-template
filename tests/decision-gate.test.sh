@@ -42,7 +42,6 @@ trap 'chmod -R u+rwX "$TMPROOT" 2>/dev/null; rm -rf "$TMPROOT"' EXIT
 
 ran=0; pass=0; fail=0
 RC=999; ERR=''; OUT=''; DID_RUN=0
-PROJ_N=0
 
 # 판정 토큰. 훅 메시지의 **고유 문구**를 쓴다 — 어느 게이트가 말했는지는 이걸로만 갈린다.
 TOK_DECISION='혼자 정한 것이 있는데'
@@ -65,8 +64,12 @@ contains() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 # 타입체크는 항상 리터럴로 비운다 — 이 파일이 재는 것은 결정 게이트뿐이고, 타입체크가
 # 먼저 막으면 그 케이스는 결정 게이트에 **도달조차 못 한 채** 기대값이 우연히 맞는다.
 new_project() {
-  PROJ_N=$((PROJ_N + 1))
-  local p="$TMPROOT/proj$PROJ_N"
+  # **mktemp 로 유일성을 얻는다.** 카운터를 쓰면 안 된다 — 호출부가 `p="$(new_project …)"`
+  # 라는 **명령 치환**이라 증가가 서브셸에 갇히고 부모로 안 돌아온다. 실제로 그렇게 짰다가
+  # 모든 케이스가 같은 디렉터리를 공유했고, 한 케이스가 거기에 git 저장소를 만들자
+  # **그 뒤 케이스 전부가 push 게이트에 걸렸다.** 케이스 격리가 원리적으로 없던 상태다.
+  local p
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || return 1
   mkdir -p "$p/.claude/hooks" "$p/.claude/harness" || return 1
   cp "$HOOKS/_common.sh" "$HOOKS/verify-before-stop.sh" "$p/.claude/hooks/" || return 1
   printf 'HARNESS_TYPECHECK_CMD=""\nHARNESS_KNOWLEDGE_GATE="%s"\n' "$1" \
@@ -130,6 +133,16 @@ for spec in sys.argv[2:]:
         continue
     if kind == "badcontent":           # content 가 list 도 str 도 아님
         rows.append({"type": "assistant", "isSidechain": False, "message": {"content": 42}})
+        continue
+    if kind == "hookfb":               # 훅이 낸 차단 메시지가 되돌아온 항목 (실측 형태)
+        rows.append({"type": "user", "isMeta": True, "isSidechain": False,
+                     "message": {"role": "user",
+                                 "content": "Stop hook feedback:\n[완료 차단] " + (val or "…")}})
+        continue
+    if kind == "metacont":             # 자동 이어하기 항목
+        rows.append({"type": "user", "isMeta": True, "isSidechain": False,
+                     "message": {"role": "user",
+                                 "content": "Continue from where you left off."}})
         continue
     if kind == "topnondict":           # 유효한 JSON 이지만 dict 가 아닌 줄
         rows.append("\x00RAW\x00[]")
@@ -632,6 +645,21 @@ d58() {
   report "$name" "$why"
 }
 
+# ── 10. [cc] CRITICAL — 게이트가 한 번 막고 스스로 물러나던 결함 ─────
+# 훅이 낸 차단 메시지가 대화 기록에 type:"user"(isMeta) 로 되돌아 들어와 **새 턴 경계**가
+# 됐다. 그래서 방금 막은 자백이 다음 턴의 창 밖으로 밀려나 rc=3 으로 통과했다 —
+# 질문을 한 번도 안 했는데, 경고조차 없이. 겨누던 부류에 게이트 자신이 걸린 것이다.
+d60() { blocked_case '훅 피드백은 턴 경계가 아니다 (막은 뒤에도 계속 막는다)' '범위 밖' \
+          'text:이건 범위 밖이라 그대로 뒀습니다.' 'hookfb:혼자 정한 것이 있는데' \
+          'text:알겠습니다, 계속하겠습니다.'; }
+d61() { blocked_case '자동 이어하기도 턴 경계가 아니다' '제 판단으로' \
+          'text:제 판단으로 그렇게 진행했습니다.' 'metacont:' 'text:이어서 작업합니다.'; }
+# **진짜 사용자 발화는 여전히 경계다.** isMeta 를 뺀 것이 경계 판정 자체를 망가뜨리면
+# 지난 턴 문장까지 걸려 위양성이 터진다 — d24 의 짝이다.
+d62() { silent_case '훅 피드백 뒤에 진짜 사용자 발화가 오면 그것이 경계다' \
+          'text:이건 범위 밖이라 그대로 뒀습니다.' 'hookfb:혼자 정한 것이 있는데' \
+          'prompt' 'text:이번에는 전부 처리했습니다.'; }
+
 # --- 실행 ----------------------------------------------------------------
 # 목록을 **명시적으로** 센다. 실행 수만 세면 중복 1건 + 누락 1건이 상쇄돼 초록이 된다.
 CASES='d01 d02 d03 d04 d05 d06 d07 d08 d09
@@ -642,7 +670,8 @@ d31 d32 d33 d34 d35
 d36 d37 d38
 d39 d40 d41
 d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52
-d53 d54 d55 d56 d57 d58 d59'
+d53 d54 d55 d56 d57 d58 d59
+d60 d61 d62'
 
 echo "결정 게이트 회귀 테스트"
 expected=0

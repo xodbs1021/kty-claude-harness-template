@@ -384,6 +384,10 @@ run_mutation 'push 게이트에서 사유를 뺀다' "$STOP" \
     echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"' \
   '    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"'
 
+run_mutation 'isMeta 를 다시 턴 경계로 센다 (게이트가 스스로 물러난다)' "$COMMON" \
+  '    if e.get("isMeta"):' \
+  '    if False:'
+
 echo
 echo '── E. 순서 계약 — 게이트를 뒤로 옮긴다 ─────────────────────────────'
 # 지우는 것과 옮기는 것은 다른 측정이다. 지우면 "게이트 없음"을 재고, 옮겨야

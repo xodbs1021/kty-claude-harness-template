@@ -119,7 +119,7 @@ function rtrim(s) { sub(/[ \t]+$/, "", s); return s }
 # 다른 키의 여러 줄 값 본문 안에 우리 키가 있으면 그건 선언이 아니다. 이걸 줄 단위로만
 # 보면 다른 키의 여러 줄 값 안에 있는 우리 키가 유일한 선언으로 판독돼
 # **게이트가 꺼진다**(실측). 그래서 이 함수는 줄마다 OPENQ 를 이어받아 갱신한다.
-function scan_line(s,   n, i, j, c, t, dash) {
+function scan_line(s,   n, i, j, c, t, dash, q2) {
   n = length(s); i = 1
   while (i <= n) {
     c = substr(s, i, 1)
@@ -133,20 +133,20 @@ function scan_line(s,   n, i, j, c, t, dash) {
       if (substr(s, j, 1) == "-") { dash = 1; j++ }
       while (substr(s, j, 1) == " " || substr(s, j, 1) == "\t") j++
       t = ""
-      # 종결어 인용은 세 형태다: 인용 없음 · 따옴표로 감싼 형태 · 백슬래시 접두
-      # 백슬래시 형태를 빠뜨리면 본문을 안 건너뛰어 그 안의 키가 선언으로 세어진다.
-      c = substr(s, j, 1)
-      if (c == "\\") j++
-      c = substr(s, j, 1)
-      if (c == "\"" || c == SQ) {
-        j++
-        while (j <= n && substr(s, j, 1) != c) { t = t substr(s, j, 1); j++ }
-        j++
-      } else {
-        while (j <= n) {
-          c = substr(s, j, 1)
-          if (c ~ /[A-Za-z0-9_.\/-]/) { t = t c; j++ } else break
+      # 종결어는 인용을 **섞을 수 있다**: EOF · "EOF" · EO"F" · \\EOF · E\\OF 가 전부
+      # 같은 종결어 EOF 다. 한 형태만 읽으면 나머지에서 본문을 안 건너뛰고, 그 안의 빈
+      # 게이트 선언이 진짜 선언으로 판독돼 **게이트가 꺼진다**. 그래서 조각을 이어 붙인다.
+      while (j <= n) {
+        c = substr(s, j, 1)
+        if (c == " " || c == "\t" || c == ";" || c == "&" || c == "|" || c == ">" || c == "<") break
+        if (c == "\\") { j++; if (j <= n) { t = t substr(s, j, 1); j++ } ; continue }
+        if (c == "\"" || c == SQ) {
+          q2 = c; j++
+          while (j <= n && substr(s, j, 1) != q2) { t = t substr(s, j, 1); j++ }
+          j++
+          continue
         }
+        t = t c; j++
       }
       if (t != "") { INHD = 1; HTERM = t; HDASH = dash; return }
       i = j

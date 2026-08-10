@@ -193,6 +193,25 @@ c07() {
   report "$name" "$why"
 }
 
+# 라운드 2 [HIGH] — 사용자 파일을 보존하려다 **외부 파일을 파괴**하던 자리.
+# 기존 훅 디렉터리에 템플릿 파일 이름과 같은 **심링크**가 있으면, cp -R 이 그 링크를
+# 스테이징에 보존하고 그 다음 템플릿 cp 가 링크를 따라가 **대상 파일을 덮어쓴다.**
+c09() {
+  local name='템플릿 이름과 겹치는 심링크가 링크 대상을 덮어쓰지 않는다' p why=''
+  if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  printf 'OUTSIDE\n' > "$p/outside.txt"
+  rm -f "$p/.claude/hooks/_common.sh"
+  ln -s "$p/outside.txt" "$p/.claude/hooks/_common.sh" || { report "$name" '픽스처 실패: ln'; return 0; }
+  run_install "$p"
+  if [ "$RC" -ne 0 ]; then why="rc=$RC"
+  elif ! grep -q '^OUTSIDE$' "$p/outside.txt" 2>/dev/null; then
+    why='**링크 대상(디렉터리 밖 사용자 파일)이 덮어써졌다**'
+  elif [ ! -s "$p/.claude/hooks/_common.sh" ] || [ -L "$p/.claude/hooks/_common.sh" ]; then
+    why='템플릿 훅이 제자리에 실파일로 설치되지 않았다'
+  fi
+  report "$name" "$why"
+}
+
 # 핸들러 진입 직후의 `set +e` 를 지키는 유일한 케이스.
 #
 # 왜 따로 필요한가: 다른 중단 케이스는 진단 echo 가 **성공**하므로 set +e 가 있든 없든
@@ -223,8 +242,8 @@ c08() {
 
 # --- 러너 ----------------------------------------------------------------
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08'
-EXPECTED_CASES=8
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09'
+EXPECTED_CASES=9
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

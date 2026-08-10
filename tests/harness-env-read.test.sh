@@ -402,6 +402,12 @@ p51() { pcase '인용 없는 값이 # 로 시작하면 값 그대로다'        
 p52() { pcase '인용이 EOF 까지 안 닫히면 파일을 못 믿는다'      1 '' \
         "$KEY=\"printf ok\""$'\n'"NOTES='열고 안 닫음"$'\n'; }
 
+# 라운드 2 CRITICAL — 종결어 인용을 **섞으면** 본문을 안 건너뛰던 자리.
+p53() { pcase '히어독 종결어의 인용이 섞여 있어도 본문을 건너뛴다' 0 'printf ok' \
+        'cat <<EO"F"'$'\n'"$KEY=\"evil\""$'\n''EOF'$'\n'"$KEY=\"printf ok\""$'\n'; }
+g14() { gcase '종결어 인용이 섞인 히어독 본문으로는 못 끈다' on \
+        'cat <<EO"F"'$'\n'"$GKEY=\"\""$'\n''EOF'$'\n'; }
+
 g11() { gcase '여러 줄 값 안의 키로는 못 끈다'  on \
         "NOTES='example:"$'\n'"$GKEY="$'\n'"end'"$'\n'; }
 g12() { gcase '히어독 <<\EOF 본문으로는 못 끈다' on \
@@ -415,13 +421,13 @@ p01 p02 p03 p04 p05 p06 p07 p08 p09 p10
 p11 p12 p13 p14 p15 p16 p17 p18 p19 p20
 p21 p22 p23 p24 p25 p26 p27 p28 p29 p30
 p31 p32 p33 p34 p35 p36 p37 p38 p39 p40
-p41 p42 p43 p44 p45 p46 p47 p48 p49 p50 p51 p52
+p41 p42 p43 p44 p45 p46 p47 p48 p49 p50 p51 p52 p53
 i01 i02 i03 i04 i05 i06 i07 i08 i09 i10
 i11 i12 i13
 g01 g02 g03 g04 g05 g06 g07 g08 g09 g10
-g11 g12 g13
+g11 g12 g13 g14
 '
-EXPECTED_CASES=78
+EXPECTED_CASES=80
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이 상쇄돼
 # 그대로 초록이 된다 — 목록을 직접 봐야 그 조합이 잡힌다.

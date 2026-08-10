@@ -27,6 +27,26 @@ echo "== 하네스 설치: $NAME"
 echo "   템플릿: $TPL_ROOT"
 echo "   대상:   $DST"
 
+# 개명 전 플래그 이행 — **배포되지 않는 이 스크립트가 맡는다.**
+# 기존 설치본에 미처리 지식 플래그가 옛 이름으로 남아 있을 수 있는데, 새 훅은 새 이름만
+# 보므로 그대로 두면 밀린 반영 의무가 **조용히 사라진다**(하네스를 갱신했을 뿐인데).
+# 훅 쪽에서 옛 이름을 알게 하면 배포되는 글루가 구현체 이름을 다시 품어 층 경계 검사가
+# 막는다 — 그래서 이행은 여기에 있다. 새 이름이 이미 있으면 **덮지 않고 이어붙인다.**
+legacy_flag="$DST/.needs-$(printf 'vault')"
+if [ -f "$legacy_flag" ]; then
+  if [ -s "$legacy_flag" ]; then
+    if cat "$legacy_flag" >> "$DST/.needs-knowledge" 2>/dev/null; then
+      rm -f "$legacy_flag"
+      echo "   플래그 이행 ✓  미처리 지식 반영 항목을 새 이름으로 옮겼습니다"
+    else
+      echo "   ⚠ 미처리 지식 반영 플래그를 새 이름으로 옮기지 못했습니다: $legacy_flag" >&2
+      echo "     손으로 옮기지 않으면 그 항목의 반영 의무가 사라집니다." >&2
+    fi
+  else
+    rm -f "$legacy_flag"
+  fi
+fi
+
 # ── 1) 글루 복사 (덮어씀) ─────────────────────────────────────────────
 mkdir -p "$DST/agents" "$DST/skills" "$DST/hooks" "$DST/harness"
 cp "$SRC/agents/"*.md "$DST/agents/"
@@ -84,6 +104,13 @@ else
       exit 1
     fi
   fi
+  # 템플릿이 덮을 자리에 **심링크가 보존돼 있으면 먼저 치운다.** 안 그러면 cp 가 그 링크를
+  # 따라가 링크 대상(디렉터리 밖 사용자 파일)을 덮어쓴다 — 보존하려다 파괴하는 셈이다.
+  # 지우는 것은 스테이징의 링크뿐이고, 링크 대상 파일에는 손대지 않는다.
+  for _t in "$SRC/hooks/"*.sh; do
+    _b="$(basename "$_t")"
+    [ -L "$hooks_stage/$_b" ] && rm -f "$hooks_stage/$_b"
+  done
   cp "$SRC/hooks/"*.sh "$hooks_stage/"     # 템플릿 훅만 덮어쓴다
   chmod +x "$hooks_stage/"*.sh
 
@@ -159,30 +186,10 @@ fi
 if [ ! -f "$DST/harness/project-profile.md" ]; then
   sed "s/{{PROJECT_NAME}}/$NAME/g" "$SRC/harness/project-profile.template.md" \
     > "$DST/harness/project-profile.md"
-  echo "   슬롯 생성 ✓  harness/project-profile.md   ← §1~§8 채우세요"
+  echo "   슬롯 생성 ✓  harness/project-profile.md   ← 1~9절 채우세요"
 else
   echo "   슬롯 보존    harness/project-profile.md   (기존 유지)"
 fi
-# 개명 전 플래그 이행 — **배포되지 않는 이 스크립트가 맡는다.**
-# 기존 설치본에 미처리 지식 플래그가 옛 이름으로 남아 있을 수 있는데, 새 훅은 새 이름만
-# 보므로 그대로 두면 밀린 반영 의무가 **조용히 사라진다**(하네스를 갱신했을 뿐인데).
-# 훅 쪽에서 옛 이름을 알게 하면 배포되는 글루가 구현체 이름을 다시 품어 층 경계 검사가
-# 막는다 — 그래서 이행은 여기에 있다. 새 이름이 이미 있으면 **덮지 않고 이어붙인다.**
-legacy_flag="$DST/.needs-$(printf 'vault')"
-if [ -f "$legacy_flag" ]; then
-  if [ -s "$legacy_flag" ]; then
-    if cat "$legacy_flag" >> "$DST/.needs-knowledge" 2>/dev/null; then
-      rm -f "$legacy_flag"
-      echo "   플래그 이행 ✓  미처리 지식 반영 항목을 새 이름으로 옮겼습니다"
-    else
-      echo "   ⚠ 미처리 지식 반영 플래그를 새 이름으로 옮기지 못했습니다: $legacy_flag" >&2
-      echo "     손으로 옮기지 않으면 그 항목의 반영 의무가 사라집니다." >&2
-    fi
-  else
-    rm -f "$legacy_flag"
-  fi
-fi
-
 if [ ! -f "$DST/harness/harness.env" ]; then
   cp "$SRC/harness/harness.env.template" "$DST/harness/harness.env"
   echo "   슬롯 생성 ✓  harness/harness.env          ← HARNESS_TYPECHECK_CMD 채우세요"
@@ -250,7 +257,7 @@ fi
 
 echo ""
 echo "== 완료. 다음 단계:"
-echo "   1. $DST/harness/project-profile.md 의 §1~§8 채우기 (도메인 슬롯)"
+echo "   1. $DST/harness/project-profile.md 의 1~9절 채우기 (도메인 슬롯 + 지식 진입점)"
 echo "   2. $DST/harness/harness.env 의 HARNESS_TYPECHECK_CMD 채우기"
 echo "   3. 새 Claude Code 세션 시작 (훅은 세션 시작 시 스냅샷 — 이번 세션엔 발화 안 함)"
 echo "   4. 개발 요청 → harness-orchestrator 스킬이 파이프라인 실행"

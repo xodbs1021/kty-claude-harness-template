@@ -78,9 +78,11 @@ rc=127 의 귀결이 핵심이다 — `verify-before-stop.sh` 가 그걸 "도구
 | `install-hook-swap` | 9 |
 | `check-rule-copies` | 43 |
 
-**개수는 지표가 아니다.** `_workspace/mutate-harness-env.sh` 로 방어를 하나씩 지웠다 — **변이 18건 전건 적색**, 구판 파서로 되돌리면 43건 적색. 층 경계 패턴 8종·훅 스왑 3종도 각각 해당 케이스만 빨개지는 것을 실측했다.
+**개수는 지표가 아니다.** `_workspace/mutate-harness-env.sh` 로 방어를 하나씩 지웠다 — **변이 21건 전건 적색**, 구판 파서로 되돌리면 43건 적색. 층 경계 패턴 8종·훅 스왑 3종도 각각 해당 케이스만 빨개지는 것을 실측했다.
 
 그 과정에서 **어떤 변이로도 안 죽는 줄**을 하나 찾아 지웠다(`parse_value` 의 `rtrim`). 테스트를 늘려 덮는 대신 죽은 코드를 없앴다.
+
+**변이 하네스 자신도 두 번 틀렸다.** 한 번은 `git restore --source=HEAD` 가 미커밋 수정을 지워버렸고(가드를 넣었다), 한 번은 코드가 바뀌어 앵커가 안 맞는데 그것을 "미방어"로 보고했다 — 후자는 fail-closed 로 설계한 대로 **조용히 초록이 되지 않고** 드러났다.
 
 설계 몇 곳은 **테스트가 rc 만 보지 않게** 만들었다. 타입체크를 건너뛰어도 감사 게이트가 어차피 rc=2 로 막으므로 **어느 게이트가 막았는지의 문구**까지 재야 판별력이 생긴다. 신호 종료 코드도 관례값이라 여러 경로가 같은 값을 낸다.
 
@@ -108,7 +110,7 @@ rc=127 의 귀결이 핵심이다 — `verify-before-stop.sh` 가 그걸 "도구
 ./tests/check-rule-copies.test.sh     # 43
 ./scripts/check-rule-copies.sh
 ./scripts/check-layer-boundary.sh
-./_workspace/mutate-harness-env.sh    # 변이 18건 전건 적색이어야 한다
+./_workspace/mutate-harness-env.sh    # 변이 21건 전건 적색이어야 한다
 ```
 
 CI 가 앞의 일곱을 PR마다 돌린다. 변이 하네스는 CI 에 넣지 않았다 — 검수·감사 때 손으로 돌리는 계측 도구다.

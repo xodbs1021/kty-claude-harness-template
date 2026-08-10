@@ -28,6 +28,17 @@ for f in "$VSTOP" "$MARK" "$COMMON"; do
   fi
 done
 
+# 락 — 형제 변이 하네스(decision-gate·harness-env)와 같은 관례. 겹쳐 돌리면 주입된
+# 변이가 서로의 복원을 밟고, **측정 중인 트리를 배포하는 사고**(실제로 겪음)의 탐지
+# 근거이기도 하다 — install/sync 의 배포 가드가 이 락의 존재로 "측정 중"을 판정한다.
+LOCK="$(git rev-parse --git-dir)/mutate-retrieval-gate.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "✗ 이미 다른 변이 측정이 돌고 있습니다: $LOCK" >&2
+  echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
+  exit 1
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 # **기준선 확인이 먼저다.** 변이 전 테스트가 이미 빨간 상태면 모든 변이가 "적색"으로
 # 집계돼 하네스가 성공을 위장한다 — 적색의 원인이 방어인지 무관한 회귀인지 구별이 안 된다
 # (구현 검수 [cx] 지적).

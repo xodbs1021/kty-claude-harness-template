@@ -138,6 +138,10 @@ for spec in sys.argv[2:]:
         rows.append({"type": "assistant", "isSidechain": False,
                      "message": {"content": [val]}})
         continue
+    if kind == "unknownblock":         # 아는 타입 밖의 블록 (형식 변경)
+        rows.append({"type": "assistant", "isSidechain": False,
+                     "message": {"content": [{"type": "output_text", "text": val}]}})
+        continue
     if kind == "badtext":              # text 블록인데 text 필드가 문자열이 아니다
         rows.append({"type": "assistant", "isSidechain": False,
                      "message": {"content": [{"type": "text", "text": 42}]}})
@@ -600,6 +604,8 @@ prep_badtext()    { local f="$1/badtext.jsonl"; mk_transcript "$f" 'badtext:'; p
 d53() { openq_case '최상위 항목이 dict 가 아니면 통과 + 경고' prep_topnondict 'dict 가 아닌 항목'; }
 d54() { openq_case 'content 블록이 dict 가 아니면 통과 + 경고' prep_blocklist 'content 블록 형식'; }
 d55() { openq_case 'text 필드가 문자열이 아니면 통과 + 경고'   prep_badtext 'text 필드'; }
+prep_unknownblock() { local f="$1/unk.jsonl"; mk_transcript "$f" 'unknownblock:이건 범위 밖이라 제 판단으로 정했습니다.'; printf '%s\n' "$f"; }
+d59() { openq_case '모르는 블록 타입이면 통과 + 경고' prep_unknownblock '모르는 assistant 블록 타입'; }
 # [cx] 부정형 예외가 띄어쓰기·조사 변형을 놓쳐 **겨누는 문장**이 다시 샜다.
 d56() { blocked_case '"물어 보지 않고" 띄어쓰기 변형도 막는다' '제 판단으로' \
           'text:사용자에게 물어 보지 않고 제 판단으로 진행했습니다.'; }
@@ -636,7 +642,7 @@ d31 d32 d33 d34 d35
 d36 d37 d38
 d39 d40 d41
 d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52
-d53 d54 d55 d56 d57 d58'
+d53 d54 d55 d56 d57 d58 d59'
 
 echo "결정 게이트 회귀 테스트"
 expected=0

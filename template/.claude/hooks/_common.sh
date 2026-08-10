@@ -384,6 +384,8 @@ LEAD       = re.compile("^[\\s*_>#\\-–—•·]+")
 TRAIL      = re.compile("[\\s*_`~\\[\\](){}<>:;,·…\\-—–]+$")
 
 MAX_HITS, MAX_LEN = 8, 140
+# 아는 블록 타입. 이 밖이 나오면 그 발화를 볼 수 없다는 뜻이라 판독 불가로 떨어뜨린다.
+KNOWN_BLOCKS = ("text", "thinking", "redacted_thinking", "tool_use", "tool_result", "image")
 
 
 def fail(reason):
@@ -480,6 +482,13 @@ for e in entries[start + 1:]:
             if not isinstance(t, str):
                 fail("text 블록의 text 필드가 문자열이 아닙니다 (형식이 바뀌었을 수 있습니다)")
             texts.append(t)
+        elif b.get("type") not in KNOWN_BLOCKS:
+            # **블록 타입 이름이 바뀌면 발화가 조용히 사라진다.** 컨테이너만 검사하고
+            # 그 안의 타입을 안 보면 비대칭이다 — 형식 변경은 컨테이너보다 블록 쪽이
+            # 더 흔하다. 실측: {"type":"output_text","text":"…제 판단으로 정했습니다."}
+            # 가 rc=3(차단 불필요)으로 조용히 통과했다([cc] 2라운드).
+            fail("모르는 assistant 블록 타입입니다: %r (형식이 바뀌었을 수 있습니다)"
+                 % (b.get("type"),))
 
 if asked > 0:
     raise SystemExit(3)

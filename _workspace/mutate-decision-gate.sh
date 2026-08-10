@@ -117,7 +117,7 @@ run_mutation '게이트 자체를 무력화한다' "$STOP" \
 
 run_mutation '질문 0회 조건을 지운다 (질문해도 안 풀린다)' "$COMMON" \
   'if asked > 0:
-    raise SystemExit(1)' \
+    raise SystemExit(3)' \
   '# (변이) 질문 판정 삭제'
 
 run_mutation '표지 판정을 지운다 (아무 문장이나 걸린다)' "$COMMON" \
@@ -133,7 +133,7 @@ run_mutation '예산 호출을 지운다 (영원히 막힌다)' "$STOP" \
   '    # (변이) gate_budget 호출 삭제'
 
 run_mutation '탈출구 판정을 지운다 (꺼도 안 꺼진다)' "$STOP" \
-  'if ! hook_disabled "stop:decision"; then' \
+  'if [ "$decision_armed" -eq 1 ] && ! hook_disabled "stop:decision"; then' \
   'if true; then'
 
 echo
@@ -153,11 +153,13 @@ run_mutation '인용줄 제외를 지운다' "$COMMON" \
   '        pass'
 
 run_mutation '코드펜스 제외를 지운다' "$COMMON" \
-  '    return "\n".join(p for i, p in enumerate(s.split("```")) if i % 2 == 0)' \
+  '    for fence in ("```", "~~~"):
+        s = "\n".join(p for i, p in enumerate(s.split(fence)) if i % 2 == 0)
+    return s' \
   '    return s'
 
 run_mutation '질문 신호 제외를 지운다' "$COMMON" \
-  '            if QUESTION.search(whole):
+  '            if QUESTION.search(whole) and not NEG_ASK.search(whole):
                 continue' \
   '            pass'
 
@@ -227,23 +229,19 @@ run_mutation '판독 불가를 통과로 위장한다 (사유 소실)' "$COMMON"
     sys.stdout.write(reason + "\n")
     raise SystemExit(2)' \
   'def fail(reason):
-    raise SystemExit(1)'
+    raise SystemExit(3)'
 
 run_mutation '판독 불가 사유를 안 실어 보낸다' "$STOP" \
   '    decision_note="결정 게이트 생략 ($decision_hits)"' \
   '    decision_note=""'
 
 run_mutation '판독 불가 사유를 안 출력한다' "$STOP" \
-  '  if [ -n "$decision_note" ]; then
-    echo
-    echo "참고: $decision_note"
-    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
-  fi' \
-  '  :'
+  $'\n  emit_decision_note\n' \
+  $'\n  :\n'
 
 run_mutation '기록을 못 읽어도 조용히 넘어간다' "$COMMON" \
   "  [ -r \"\$path\" ] || { printf '%s\\n' \"대화 기록을 읽을 수 없습니다: \$path\"; return 2; }" \
-  '  [ -r "$path" ] || return 1'
+  '  [ -r "$path" ] || return 3'
 
 run_mutation '턴 시작점을 못 찾으면 전체를 훑는다' "$COMMON" \
   '    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")' \
@@ -286,9 +284,13 @@ if not entries:
 
 run_mutation 'message 형식 검사를 지운다' "$COMMON" \
   '    msg = e.get("message")
-    if not isinstance(msg, dict):' \
+    if not isinstance(msg, dict):
+        # truthy 비-dict 를 `or {}` 로 받으면 여기서 예외가 나고, 그 예외는 아래 "표지 없음"과
+        # 구별되지 않는 종료 코드로 나간다 — 조용한 통과다. 형식 변화로 보고 소리를 낸다.
+        fail("assistant 항목의 message 형식이 예상과 다릅니다 (형식이 바뀌었을 수 있습니다)")' \
   '    msg = e.get("message") or {}
-    if False:'
+    if False:
+        pass'
 
 run_mutation 'content 형식 검사를 지운다' "$COMMON" \
   '    if not isinstance(content, list):

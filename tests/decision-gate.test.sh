@@ -370,8 +370,14 @@ d30b() { flag_case '지식 게이트를 끄면 결정 문서 턴은 조기 종�
 # 대화 기록 형식은 하네스가 소유하지 않는다. 형식이 바뀌었다고 차단하면 그 세션 안에
 # 고칠 방법이 없어 **세션이 통째로 벽돌이 된다.** 이 게이트의 유일한 fail-open 지점이고,
 # 조건은 **경고를 삼키지 않는 것**이다 — 조용히 통과하면 게이트가 죽은 걸 아무도 모른다.
-openq_case() {   # $1=이름 $2=기록준비함수
-  local name="$1" prep="$2" why=''
+# openq_case <이름> <기록준비함수> [기대 사유 조각]
+#
+# **사유 조각까지 요구하는 것이 계약이다.** "경고가 나왔다"만 보면, 그 판독 불가를 알아본
+# 개별 검사를 지워도 파이썬이 크래시하면서 호출부의 catch-all 이 **대신** 경고를 내
+# 초록으로 남는다(변이 측정에서 실제로 드러났다). 어떤 사유로 멈췄는지까지 봐야 그 검사
+# 자신이 지켜진다 — 위음성 카탈로그 17번("rc 단독 판정은 약하다")의 메시지 판이다.
+openq_case() {
+  local name="$1" prep="$2" want_reason="${3:-}" why=''
   local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
   local tp; tp="$("$prep" "$p")"
   setup_flags "$p" audit
@@ -380,6 +386,8 @@ openq_case() {   # $1=이름 $2=기록준비함수
   elif contains "$ERR" "$TOK_DECISION"; then why='판독 불가인데 차단했다 (세션이 벽돌이 된다)'
   elif [ "$RC" -ne 2 ];                 then why="rc=$RC (기대 2 — 감사 게이트가 막아야 한다)"
   elif ! contains "$ERR" "$TOK_NOTE";   then why='경고를 삼켰다 — 게이트가 조용히 죽은 것을 아무도 모른다'
+  elif [ -n "$want_reason" ] && ! contains "$ERR" "$want_reason"; then
+    why="사유가 다르다 (기대 조각: $want_reason) — 그 판독 불가를 알아본 검사가 사라졌다"
   fi
   report "$name" "$why"
 }
@@ -399,10 +407,10 @@ with open(sys.argv[1], "w", encoding="utf-8") as fh:
   printf '%s\n' "$f"
 }
 prep_unreadable() { local f="$1/unreadable.jsonl"; printf '{}\n' > "$f"; chmod 000 "$f" 2>/dev/null; printf '%s\n' "$f"; }
-d31() { openq_case 'transcript_path 키가 없으면 통과 + 경고' prep_nokey; }
-d32() { openq_case '기록 파일이 없으면 통과 + 경고'          prep_missing; }
-d33() { openq_case '전부 깨진 JSON 이면 통과 + 경고'         prep_garbage; }
-d34() { openq_case '턴 시작점을 못 찾으면 통과 + 경고'       prep_noprompt; }
+d31() { openq_case 'transcript_path 키가 없으면 통과 + 경고' prep_nokey '훅 입력에 없습니다'; }
+d32() { openq_case '기록 파일이 없으면 통과 + 경고'          prep_missing '읽을 수 없습니다'; }
+d33() { openq_case '전부 깨진 JSON 이면 통과 + 경고'         prep_garbage '파싱하지 못했습니다'; }
+d34() { openq_case '턴 시작점을 못 찾으면 통과 + 경고'       prep_noprompt '시작점'; }
 d35() {
   # root 로 도는 CI 에서는 chmod 000 이 읽기를 막지 못한다 — 그 환경에서 이 케이스는
   # 아무것도 재지 못하므로 **조용히 통과시키지 않고** 픽스처 무효로 빨갛게 만든다.
@@ -411,7 +419,7 @@ d35() {
     report '읽기 실패하면 통과 + 경고' 'root 라 chmod 000 이 읽기를 막지 못한다 — 이 환경에서는 측정 불가'
     return 0
   fi
-  openq_case '읽기 실패하면 통과 + 경고' prep_unreadable
+  openq_case '읽기 실패하면 통과 + 경고' prep_unreadable '읽을 수 없습니다'
 }
 
 # ── 5. 탈출구 (사용자 확정: 형제 Stop 게이트와 동일하게 제공) ────────
@@ -525,9 +533,9 @@ d47() { blocked_case 'content 가 문자열인 발화도 스캔한다' '범위 �
           'strtext:이건 범위 밖이라 그대로 뒀습니다.'; }
 # [cx] **일부** 손상이 "표지 없음"으로 조용히 통과하던 경로. 전멸만 잡으면 가장 흔한
 # 경우를 정확히 놓친다 — 깨진 줄이 하필 자백이거나 이 턴의 프롬프트일 수 있다.
-d48() { openq_case '일부 줄만 깨져도 통과 + 경고' prep_partial; }
-d49() { openq_case 'message 형식이 다르면 통과 + 경고' prep_badmsg; }
-d50() { openq_case 'content 형식이 다르면 통과 + 경고' prep_badcontent; }
+d48() { openq_case '일부 줄만 깨져도 통과 + 경고' prep_partial '1줄을 파싱하지 못했습니다'; }
+d49() { openq_case 'message 형식이 다르면 통과 + 경고' prep_badmsg 'message 형식이'; }
+d50() { openq_case 'content 형식이 다르면 통과 + 경고' prep_badcontent 'content 형식이'; }
 prep_partial() {
   local f="$1/partial.jsonl"
   mk_transcript "$f" 'text:작업을 시작합니다.' 'broken:' 'text:이건 범위 밖이라 그대로 뒀습니다.'

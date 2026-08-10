@@ -249,8 +249,8 @@ flag_bytes() {
 # verdict_mismatch <gate|dual|none> <값> — 어긋난 사유를 내고, 맞으면 아무것도 안 낸다.
 # <값>은 **줄 목록**이다 — 여러 줄이면 줄 수와 기록 **순서**까지 계약이 된다(케이스 58).
 # 기대 바이트열은 각 줄 뒤에 개행 하나씩: record_flag 가 printf '%s\n' 로 덧붙이므로.
-# gate      = 완료 게이트 4종이 그 바이트열 (**회수 플래그는 제외** — 코드 편집은 회수
-#             표명 대상이 아니다. ADR-0013 은 설계·계획 산출물의 첫 줄만 겨눈다)
+# gate      = 완료 게이트 4종이 그 바이트열 (**회수 플래그는 제외** — 코드 편집은 머리
+#             표명 대상이 아니다. ADR-0013·0015 는 설계·계획 산출물의 머리 두 줄만 겨눈다)
 # designdoc = .needs-dualreview + .needs-knowledge + .needs-retrieval (설계·계획 산출물)
 # knowledge = .needs-knowledge 만 (결정 문서 — 코드가 아니라 게이트 4종은 과하다)
 # none      = 전 플래그 부재·공백

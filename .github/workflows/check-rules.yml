@@ -28,5 +28,11 @@ jobs:
       # 여기가 조용히 틀리면 값에 쓰레기가 섞여 rc=127 이 되고 타입체크 게이트가 사라진다.
       - name: harness.env 원문 판독 회귀 테스트
         run: ./tests/harness-env-read.test.sh
+      - name: 층 경계 검사기 회귀 테스트
+        run: ./tests/check-layer-boundary.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh
+      # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를
+      # 그대로 이어받는다 — 적힌 결합이다.
+      - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
+        run: ./scripts/check-layer-boundary.sh

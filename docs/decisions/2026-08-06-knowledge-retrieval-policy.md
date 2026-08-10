@@ -1,7 +1,7 @@
 # ADR-0010: 지식 회수 정책 — 배관은 깔렸고 정책은 아직 없다
 
 **Date**: 2026-08-06 (기록 2026-08-10)
-**Status**: **proposed** — 이건 "아직 안 정했다"를 못박는 ADR이다
+**Status**: **superseded by [ADR-0013](2026-08-10-knowledge-retrieval-policy-decided.md)** (2026-08-10) — 이 ADR 이 못박은 공백 4개가 전부 답을 얻었다. 이 문서는 "공백이 명시적으로 선언됐던" 이력으로 남긴다
 **Deciders**: 김태윤(공백 지적), Claude(범위 정리)
 
 ---

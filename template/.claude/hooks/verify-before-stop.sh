@@ -207,6 +207,56 @@ if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
   bump_and_block
 fi
 
+# (5.5) **커밋했는데 원격에 없다** — 이 저장소가 커밋 29개를 잃은 바로 그 상태다.
+#      그때는 "아직 PR 전이니까"라며 라운드 6개를 미뤘고, 임시 폴더째 사라졌다.
+#      검수 통과는 push 의 전제가 아니다. 커밋했으면 올라가 있어야 한다.
+#
+#      **네트워크에 의존하지 않는다.** 원격 조회가 실패했을 때 차단하면 오프라인에서
+#      세션이 벽돌이 되고, 통과시키면 정작 필요할 때 조용히 사라진다. 그래서 로컬
+#      remote-tracking ref 만 본다 — 그게 없으면 "한 번도 push 안 됨"이고, 있으면
+#      ahead 개수를 센다.
+#
+#      실측된 함정 하나: `remote.origin.fetch` 가 좁혀져 있으면 **원격에 있는데도**
+#      로컬 ref 가 없어 오탐이 난다. 그 경우를 구별해 사유에 적는다 — 그것도 고쳐야
+#      할 상태이기 때문이다(push 여부가 로컬에서 안 보이는 것 자체가 위험이다).
+if ! hook_disabled "stop:push" && git -C "$PROJECT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+  push_branch="$(git -C "$PROJECT_DIR" symbolic-ref --short HEAD 2>/dev/null)"
+  # detached HEAD 는 대상이 아니다(브랜치가 없으면 push 할 곳도 없다).
+  if [ -n "$push_branch" ] && git -C "$PROJECT_DIR" remote get-url origin >/dev/null 2>&1; then
+    push_unsent=""
+    if git -C "$PROJECT_DIR" rev-parse --verify -q "refs/remotes/origin/$push_branch" >/dev/null 2>&1; then
+      push_n="$(git -C "$PROJECT_DIR" rev-list --count "refs/remotes/origin/$push_branch..HEAD" 2>/dev/null)"
+      [ -n "$push_n" ] && [ "$push_n" != "0" ] && push_unsent="원격보다 ${push_n}개 앞서 있습니다"
+    else
+      # 원격 추적 ref 가 없다. 진짜 미push 이거나, refspec 이 좁혀져 안 보이는 것이다.
+      if git -C "$PROJECT_DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+        push_unsent="이 브랜치의 원격 추적 ref 가 없습니다 (한 번도 push 되지 않았거나, refspec 이 좁혀져 보이지 않습니다)"
+      fi
+    fi
+    if [ -n "$push_unsent" ]; then
+      gate_budget "push"
+      {
+        echo "[완료 차단] 커밋이 원격에 없습니다 — $push_unsent"
+        echo
+        echo "이 저장소는 이 상태로 **커밋 29개를 잃은 적이 있습니다.** 그때도 코드는"
+        echo "다 짜여 있었고, \"아직 PR 전이니까\"라며 push 를 미뤘습니다."
+        echo
+        echo "해야 할 일:"
+        echo "  git push -u origin $push_branch"
+        echo "  그리고 실제로 올라갔는지 확인하세요:"
+        echo "  git rev-list --left-right --count HEAD...origin/$push_branch   → 0 0"
+        echo
+        echo "  원격에는 있는데 위 명령이 실패한다면 refspec 이 좁혀진 것입니다:"
+        echo "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && git fetch origin"
+        echo "  push 여부가 로컬에서 안 보이는 것 자체가 위험합니다 — 29개를 잃을 때 그랬습니다."
+        echo
+        echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
+      } >&2
+      bump_and_block
+    fi
+  fi
+fi
+
 # (6) 타입체크는 통과했지만 감사자가 아직 안 돌았다.
 gate_budget "audit"
 {

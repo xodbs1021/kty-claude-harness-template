@@ -748,11 +748,34 @@ case_73() { # **음성 행** — 결정 경로 밖의 문서는 여전히 스킵
   check_case '73 결정 경로 밖의 문서는 스킵 (예외가 문서 전체로 새지 않는다)' 0 none ''
 }
 
+case_74() { # 이름에 codex 가 들어도 설계 산출물이면 플래그가 **선다** (ADR-0013).
+            # 설계 검수가 "codex 이름 제외" 안을 위음성 신설로 기각했다 — codex 연동
+            # 자체를 설계하는 정상 주산출물이 무게이트가 되기 때문이다. 리뷰 산출물과의
+            # 재귀는 훅이 아니라 명명 계약(리뷰 산출물은 00_design·01_plan 접두어 금지)이
+            # 막는다. 이 케이스는 그 기각을 계약으로 고정한다 — 제외를 넣으면 빨개진다.
+  local p; p="$(new_project)"
+  mkfile "$p/_workspace/00_design-codex-gate.md"
+  run_hook "$p" "$p/_workspace/00_design-codex-gate.md"
+  check_case '74 이름에 codex 가 든 설계 산출물 → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design-codex-gate.md'
+}
+
+case_75() { # 프로젝트 **경로**에 codex 가 들어도 마찬가지다 — 제외를 경로 전체 매칭으로
+            # 구현하면 codex 라는 이름의 프로젝트가 통째로 무게이트가 된다(같은 기각의
+            # 경로 축). 케이스 74 와 짝이다.
+  local p; p="$(new_dir proj-codex-tools)"
+  mkdir -p "$p/.claude/hooks"
+  cp "$HOOK"   "$p/.claude/hooks/mark-needs-audit.sh"
+  cp "$COMMON" "$p/.claude/hooks/_common.sh"
+  mkfile "$p/_workspace/00_design.md"
+  run_hook "$p" "$p/_workspace/00_design.md"
+  check_case '75 경로에 codex 가 든 프로젝트의 설계 산출물 → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design.md'
+}
+
 # --- 계약 표의 크기 -------------------------------------------------------
 # 러너가 이 두 값으로 "케이스가 조용히 빠지거나 두 번 도는 것"을 잡는다.
 # 건수는 여기 말고 어디에도 숫자로 적지 않는다 — 케이스를 추가할 때마다 낡는다.
 
-EXPECTED_CASES=73
+EXPECTED_CASES=75
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 case_10 case_11
        case_12 case_13 case_14 case_15 case_16 case_17 case_18 case_19 case_20 case_21 case_22
@@ -760,4 +783,4 @@ CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 c
        case_34 case_35 case_36 case_37 case_38 case_39 case_40 case_41 case_42 case_43 case_44
        case_45 case_46 case_47 case_48 case_49 case_50 case_51 case_52 case_53 case_54 case_55
        case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66
-       case_67 case_68 case_69 case_70 case_71 case_72 case_73'
+       case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75'

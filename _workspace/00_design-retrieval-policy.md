@@ -3,10 +3,11 @@
 - 걸리는 선행 결정: ADR-0006(층 경계 — 진입점 너머를 모른다) · ADR-0009(배관 — 슬롯·주입·표명, Alt C "전 에이전트 회수" 기각, Alt D "내용 검증" 기각) · ADR-0010(공백 4개 확정) · ADR-0012 ⑤·⑥절(기계 강제 대상의 판정 기준) · ADR-0012 ②(판독 불가 사유는 모든 차단 게이트에 실린다)
 - 이 설계는 ADR-0009 Alt C·D 의 기각 사유를 **유지한 채** 그 옆을 지나간다(의무 전면 확대도, 내용 기계 검증도 하지 않는다)
 
-# 지식 회수 정책 — 설계서 v2 (2026-08-10, 듀얼 검수 1라운드 반영)
+# 지식 회수 정책 — 설계서 v3 (2026-08-10, 듀얼 검수 2라운드 반영)
 
-> v1 대비: [cc](plan-reviewer) H1~H6·M1~M6·L1~L3, [cx](codex) HIGH 4·MEDIUM 4·LOW 1 전건 반영.
-> 항목별 처리는 `_workspace/14_design_review_integrated.md`.
+> v1→v2: 라운드 1 [cc] H1~H6·M1~M6·L1~L3, [cx] HIGH 4·MEDIUM 4·LOW 1 전건 반영.
+> v2→v3: 라운드 2 [cc] A~H·K~O, [cx] HIGH 5·MEDIUM 2 전건 반영 — 전부 3.4 상태기계
+> 결합면의 계약 위반이라 텍스트로 닫혔다. 항목별 처리는 `_workspace/14_design_review_integrated.md`.
 
 ## 0. 입력
 
@@ -112,9 +113,9 @@ ADR-0012 ⑤·⑥절의 기준을 그대로 쓴다:
 
 검사 항목 3개: ① 회수 블록이 형식대로 있는가 ② 산출물이 "걸리는 선행 결정"과 모순되는가 ③ 걸린다고 적힌 결정이 설계·계획에 실제로 반영됐는가.
 
-이 3항목을 **두 곳에** 얹는다:
-- **plan-reviewer 점검 항목** — 단 plan-reviewer 의 실행 자체는 기계가 강제하지 않는다(오케스트레이터 산문 계약). **"기존 기계 위에 얹는다"고 말할 수 없다** — v1 의 그 주장은 사실 오인이었다.
-- **듀얼 리뷰 규칙의 설계·계획 pass codex 프롬프트 계약** — codex 리뷰 산출물은 `stop:dualreview` 게이트가 기계로 요구한다. 3항목을 codex 리뷰 프롬프트에 명시하면, **기계에 연결된 검증 축이 최소 하나** 생긴다(산출물 존재까지가 기계 보장이고, 프롬프트 준수·내용 판정은 LLM 이다 — 공시).
+이 3항목을 **두 곳에** 얹는다: plan-reviewer 점검 항목 + 듀얼 리뷰 규칙의 설계·계획 pass codex 프롬프트 계약.
+
+**둘 다 산문 계약이다 — 기계 보장이 아니다** ([cc] r2 A 반영, v2 의 "기계에 연결된 검증 축이 최소 하나 생긴다"는 주장 철회). 실물: `stop:dualreview` 게이트는 `[ -s "$DUALREVIEW_FLAG" ]` 만 보고, codex 산출물의 실존·프롬프트 준수·plan-reviewer 의 실행 어느 것도 기계가 확인하지 않는다(플래그는 수동 rm 으로 풀린다 — README ⑪). 기계가 보장하는 것은 "듀얼 리뷰 절차를 마쳤다고 에이전트가 표명(플래그 삭제)했다"까지다. 3항목이 실제로 실행되는지는 리뷰 절차 준수라는 산문 규율에 달렸다 — 그 사실을 ADR 에 그대로 적는다.
 
 ### 4-3. 형식 검증은 Stop 게이트로 (신규 기계 — `stop:retrieval`)
 
@@ -122,36 +123,57 @@ ADR-0012 ⑤·⑥절의 기준을 그대로 쓴다:
 
 ```
 mark-needs-audit(PostToolUse): 00_design*.md·01_plan*.md 저장 시
-  → 단, 이름에 codex 가 들어가면 제외 — 검수 산출물 명명 계약(_workspace/*codex*.md)과의
-    재귀 충돌 방지. 이 제외는 듀얼리뷰·지식 플래그에도 함께 적용한다(기존 잠복 결함 —
-    00_design_codex.md 저장이 듀얼리뷰를 재무장시키는 "검수의 검수" 루프 — 를 같이 닫는다)
   → .needs-retrieval 플래그에 경로 기록 (기록값 계약은 기존과 동일: 안=상대, 밖=절대)
+  → 훅 쪽 이름 제외는 두지 않는다 ([cc] r2 D · [cx] r2 반영 — v2 의 "codex 이름 제외"는
+    관측되지 않은 재귀를 막으려고 실재하는 위음성(codex 연동을 다루는 정상 설계서·경로에
+    codex 가 든 프로젝트의 무게이트)을 신설하는 것이라 철회. 위음성이 유일한 치명 결함이라는
+    집안 기준을 뒤집을 수 없다. 재귀는 명명 계약으로 막는다: SKILL.md 듀얼 리뷰 규칙에
+    "리뷰 산출물 파일명은 00_design·01_plan 접두어를 쓰지 않는다" 한 줄. 현존 리뷰 산출물
+    (04_codex_review·13_codex_design_review 등)은 전부 이미 그 계약을 지키고 있다)
 
-verify-before-stop(Stop): retrieval_gate_active() = 플래그 비어있지 않음 AND !hook_disabled(stop:retrieval)
-  — knowledge_gate_active 와 같은 결합 판정. 발효 여부를 이 한 곳에 모은다 ([cc] H5)
+verify-before-stop(Stop):
+  retrieval_pending() = 플래그 비어있지 않음 AND !hook_disabled(stop:retrieval)
+  — 이름을 *_gate_active 로 짓지 않는다: knowledge_gate_active 는 "플래그+env 스위치"이고
+    개별 훅 비활성은 호출부가 따로 보는데, retrieval 은 env 스위치가 없어 끄는 방법이
+    ECC_DISABLED_HOOKS 하나뿐이다([cc] r2 F). 그래서 비활성이 곧 "할 일 없음"이고,
+    이 함수 하나에 접는다. 플래그 5종 중 이것만 그렇다는 사실을 usage.md 에 적는다.
+
+  work_pending() — "남은 할 일" 판정을 한 곳에 모은 술어 ([cc·cx] r2 B):
+    push_unsent 비어있지 않음 OR audit OR explain OR knowledge_gate_active
+    OR dualreview OR retrieval_pending
+  조기 종료(1)와 3.4 통과 후 재평가가 **같은 술어**를 쓴다 — 두 자리가 따로 열거하면
+    언젠가 어긋나고, push 는 플래그가 아니라 (0)의 계산값이라 열거 누락이 가장 나기 쉽다
+    (누락하면 자동 해제가 push 게이트를 우회한다 — 커밋 29개를 잃은 그 상태의 재개방).
 
   게이트 3.4 (결정 게이트 3.2 뒤 · 듀얼리뷰 3.5 앞):
-  retrieval_gate_active 일 때, 플래그의 각 경로에 대해:
+  retrieval_pending 일 때, 플래그의 각 경로에 대해:
     - 경로 해석: 절대경로는 그대로, 상대경로는 $PROJECT_DIR 기준 ([cc·cx] — 미정이면
       다른 cwd 에서 "소실"로 오인돼 조용히 통과한다)
-    - 파일 없음 → 그 항목 건너뜀 (한계 공시 — 아래)
+    - 빈 줄은 건너뛴다. 파일 없음 → 그 항목 건너뜀 (한계 공시 — 아래)
     - 파일 있음 → 첫 줄이 "사전 결정 회수:" + 공백 아닌 내용인가.
-      빈 파일·읽기 실패·접두어만 있음 → 불량 (fail-closed)
+      첫 줄 판정 전에 선두 BOM·후행 CR 을 걷어낸다 ([cc] r2 M — harness_env_value 가
+      같은 부류에 데인 전례). 빈 파일·읽기 실패·접두어만 있음 → 불량 (fail-closed)
     - 플래그 파일 자체를 읽을 수 없음 → 차단 + 사유 (fail-closed — "검사 대상 0건"으로
-      위장되지 않게)
-  불량 0건 → 플래그 자동 해제. 해제 후 "남은 할 일"을 재평가해 아무것도 없으면 exit 0
-    ([cx] HIGH — 재평가 없이 흘러가면 맨 아래 감사 게이트가 빈 목록으로 허위 차단한다)
-  불량 ≥1건 → gate_budget "retrieval" + emit_decision_note 포함 차단 메시지(불량 파일과
-    사유 나열) ([cc·cx] — 판독 불가 경고 전파는 ADR-0012 ② 계약이다)
-
-  차단 지문: flags_fp 에 "r:<정렬된 불량 경로 목록>" 을 넣는다 ([cx] HIGH — 존재 비트만
-    넣으면 4개 중 1개씩 고치는 실제 진전이 같은 지문으로 세어져 예산이 소진되고, 그때
-    다른 플래그 4종까지 전부 삭제된다. push 가 "몇 개 남았나"를 지문에 넣는 것과 같은 논리)
-  조기 종료 조건 · 예산 소진 정리 목록(rm + changed 나열) 에 retrieval 플래그 포함 —
-    조기 종료는 retrieval_gate_active 로 묻는다(게이트를 끈 환경에서 남은 플래그가
-    읽기 전용 턴을 막으면 안 된다 — knowledge 와 같은 부류)
-  decision_armed 에 retrieval_gate_active 를 추가한다 ([cc] M3 — 설계·계획 산출물이
-    나온 턴은 결정이 나온 턴이다. 기존 4플래그와 같은 성격. 케이스로 고정)
+      위장되지 않게). 0바이트 플래그는 기존 4종과 같은 -s 관용구로 비활성이다 — 기록
+      실패는 mark-needs-audit 가 쓰기 시점에 이미 systemMessage 로 소리를 낸다(공시)
+  불량 0건 → 플래그 자동 해제. 해제 후 work_pending 재평가:
+    - 남은 것 없음 → exit 0. 단 decision_note 가 있으면 systemMessage 로 실어 보낸다
+      ([cc·cx] r2 C — ADR-0012 ② "경고를 삼키지 않는다"는 성공 경로에도 적용된다.
+      예산 소진 경로가 같은 방식으로 이미 싣고 있다)
+    - 남은 것 있음 → 다음 게이트로 계속
+  불량 ≥1건 → 차단 + emit_decision_note + 불량 파일과 사유 나열
+    차단 예산 키: gate_budget "retrieval:<정렬된 불량 목록(개행→공백, 한 줄)>"
+    ([cc·cx] r2 E — v2 처럼 flags_fp 에 넣으면 **모든 게이트가 공유하는 지문**이 오염돼
+    결정 게이트에 갇힌 채 불량 집합만 바뀌어도 그쪽 예산이 리셋된다. 불량 목록은 retrieval
+    게이트 자신의 예산 키에만 결합한다. flags_fp 에는 존재 비트 "r" 만 넣는다 — 79~81행
+    불변식("지문 = 서 있는 플래그의 집합, 내용 아님") 유지. 새 불량 파일이 늘면 retrieval
+    자신의 카운터가 리셋되는 것은 push 상세와 같은 의도된 동작이다: 상태가 바뀌는 것은
+    갇힘이 아니다 — 공시)
+  조기 종료 조건·예산 소진 정리 목록(rm + changed 나열)에 retrieval 플래그 포함.
+  decision_armed 에는 **넣지 않는다** ([cc] r2 H·K — 설계·계획 편집은 항상 듀얼리뷰·지식
+    플래그를 함께 세우므로 정보 이득이 0이고, 소실 항목만 남은 stale 플래그가 3.2 에서
+    해제 기회도 없이 결정 게이트를 오발동시키는 결합만 남긴다. v2 의 M3 반영을 뒤집는다 —
+    사유가 실측 순서(3.2 가 3.4 보다 앞)에 있다. 케이스로 고정)
 ```
 
 - **자동 해제**가 이 게이트의 형태다. 결정 게이트가 "실제로 물으면 풀린다"이듯 이것은 "형식을 지키면 풀린다" — 지울 플래그를 에이전트 손에 주지 않는다.
@@ -172,13 +194,14 @@ verify-before-stop(Stop): retrieval_gate_active() = 플래그 비어있지 않�
 
 | 파일 | 변경 |
 |---|---|
-| `docs/decisions/2026-08-10-knowledge-retrieval-policy-decided.md` | **ADR-0013 신설** — 층 경계 판정 기준·상위 층 CI 전제 3가지를 본문에 문장으로 포함 |
+| `docs/decisions/2026-08-10-knowledge-retrieval-policy-decided.md` | **ADR-0013 신설** — 층 경계 판정 기준·상위 층 CI 전제 3가지를 본문에 문장으로 포함 + 새 Stop 실행 순서를 계약으로 재기재(ADR-0012 ④ 관례 — [cc] r2 O) + "이 게이트가 못 막는 것" 절 별도 |
 | `docs/decisions/2026-08-06-knowledge-retrieval-policy.md` | ADR-0010 **superseded** 마킹 + 포인터 |
-| `template/.claude/skills/harness-orchestrator/SKILL.md` | 주입 표(clarifier +9절, developer +9절 주소) · architect/planner 계약에 프로토콜+회수 블록 · **듀얼 리뷰 규칙의 설계·계획 pass 프롬프트에 4-2 3항목** · plan-reviewer 계약 3항목 · clarifier 출력에 표명 줄 · ADR 작성 규칙에 "작성 전 회수 + 관련 절 인용" · Phase 2 문구 기계 게이트 반영 · claude-mem 분업 규정 |
+| `template/.claude/skills/harness-orchestrator/SKILL.md` | 주입 표(clarifier +9절, developer +9절 주소) · architect/planner 계약에 프로토콜+회수 블록 · **듀얼 리뷰 규칙의 설계·계획 pass 프롬프트에 4-2 3항목 + 리뷰 산출물 명명 계약(00_design·01_plan 접두어 금지)** · plan-reviewer 계약 3항목 · clarifier 출력에 표명 줄 · ADR 작성 규칙에 "작성 전 회수 + 관련 절 인용" · Phase 2 문구 기계 게이트 반영 · claude-mem 분업 규정 |
+| `template/.claude/agents/pr-reviewer.md` | ADR 포함 PR 점검 시 "관련 절의 선행 결정 인용(또는 선행 결정 없음)" 확인 항목 ([cc] r2 G) |
 | `template/.claude/harness/project-profile.template.md` | 9절 확장 — 읽는 이 · 프로토콜 · 회수 블록 형식 · 보장/비보장 · 기계 검증 범위 |
-| `template/.claude/hooks/_common.sh` | `RETRIEVAL_FLAG` · `retrieval_gate_active()` |
-| `template/.claude/hooks/mark-needs-audit.sh` | codex 이름 제외 + retrieval 기록. 헤더 주석 검사 범위 표 · "4종" 주석 갱신 |
-| `template/.claude/hooks/verify-before-stop.sh` | 게이트 3.4 (경로 해석·fail-closed·자동 해제+재평가·emit_decision_note·지문 r:목록·조기 종료·예산 정리·decision_armed) |
+| `template/.claude/hooks/_common.sh` | `RETRIEVAL_FLAG` · `retrieval_pending()` |
+| `template/.claude/hooks/mark-needs-audit.sh` | retrieval 기록(이름 제외 없음). 헤더 주석 검사 범위 표 · "4종" 주석 갱신 |
+| `template/.claude/hooks/verify-before-stop.sh` | 게이트 3.4 (경로 해석·BOM/CR·fail-closed·자동 해제+`work_pending` 재평가·decision_note 방출·emit_decision_note·게이트별 예산 키·조기 종료·예산 정리) |
 | `template/.claude/agents/clarifier.md` | 질문 전 회수 계약 + 표명 줄 |
 | `template/.claude/agents/plan-reviewer.md` | 회수 블록 검증 3항목 |
 | `template/.claude/agents/developer.md` | 9절 주소 참조(의무 아님) 한 줄 |
@@ -186,8 +209,8 @@ verify-before-stop(Stop): retrieval_gate_active() = 플래그 비어있지 않�
 | `tests/mark-needs-audit.cases.sh` | 판정 계약 기계 정본에 codex 제외·retrieval 기록 케이스 추가 |
 | `tests/mark-needs-audit.test.sh` | `FLAG_NAMES` 에 `.needs-retrieval` · designdoc 기대값 갱신 |
 | `.github/workflows/check-rules.yml` | 신설 테스트 스텝 (별도 행 — 묻어 두면 빠뜨린다) |
-| `README.md` | "플래그 4종"→5종 · Stop 순서 · ⑪ 공시 유지 |
-| `docs/usage.md` | 플래그 목록 · Stop 순서 · 탈출구 id · 설계·계획 산출물 게이트 목록 · 트러블슈팅 순서 |
+| `README.md` | "플래그 4종"→5종 · Stop 순서 · ⑪ 공시 유지 · 결정 기록 목록에 ⑭(회수 게이트) 추가 ([cc] r2 G) |
+| `docs/usage.md` | 플래그 목록 · Stop 순서 · 탈출구 id(retrieval 은 끄는 방법이 ECC_DISABLED_HOOKS 뿐임을 명시) · 설계·계획 산출물 게이트 목록 · 트러블슈팅 순서 |
 
 ## 7. 기계적 장치 — 테스트·변이 계획 ([cc] M5·M6, [cx] MEDIUM 반영)
 
@@ -204,18 +227,22 @@ verify-before-stop(Stop): retrieval_gate_active() = 플래그 비어있지 않�
 9. `ECC_DISABLED_HOOKS=stop:retrieval` → 통과 (+ 감사 문구) + **다음 턴 시뮬레이션: 다른 플래그가 다 지워진 상태에서 retrieval 플래그만 남아도 조기 종료 통과** ([cc] H5 갇힘 축)
 10. 플래그 없음 + 파일만 존재 → 발동 안 함 (발동 조건 = 플래그 계약)
 11. **상대경로 항목** — 훅을 다른 cwd 에서 실행해도 $PROJECT_DIR 기준으로 열려 차단/통과가 옳게 갈림 ([cc·cx])
-12. **절대경로 항목**(프로젝트 밖 정본 저장소 픽스처) — 같은 판정
-13. 플래그 파일 읽기 불가 → 차단 + 사유 (fail-closed)
-14. 불량 상태에서 하나씩 고칠 때 차단 지문이 바뀌어 **카운터가 리셋**됨 (예산 소진으로 전 플래그가 지워지지 않음) ([cx])
+12. **절대경로 항목**(프로젝트 밖 정본 저장소 픽스처) — 같은 판정 + **한 플래그에 상대·절대 혼재**
+13. 플래그 파일 읽기 불가 → 차단 + 사유 (fail-closed) / **대상 파일 있음+읽기 불가 → 불량** ([cc] r2 N)
+14. 불량 상태에서 하나씩 고칠 때 retrieval 예산 키가 바뀌어 **카운터가 리셋**됨 (예산 소진으로 전 플래그가 지워지지 않음) ([cx])
 15. 예산 소진 경로에서 retrieval 플래그가 rm 목록과 `changed` 나열에 포함됨
 16. 결정 게이트 판독 불가 사유가 3.4 차단 메시지에 실림 (`emit_decision_note`)
-17. retrieval 플래그만으로 `decision_armed` 가 서는지 (결정 게이트 발동)
-18. 정상 통과 + 다른 플래그 전무 → **exit 0** (허위 감사 차단 없음 — [cx] HIGH 재평가 축)
+17. **retrieval 플래그만으로는 `decision_armed` 가 서지 않는다** — 소실 항목만 남은 stale 플래그 + 결정 표지 발화 픽스처에서 결정 게이트가 오발동하지 않고 3.4 가 해제함 ([cc] r2 H)
+18. 정상 통과 + 다른 플래그 전무 → **exit 0** (허위 감사 차단 없음 — [cx] 재평가 축)
 19. arming 을 플래그 수기 작성이 아니라 **mark-needs-audit 실제 실행**으로 만드는 케이스 — 기록 제거 변이가 가려지지 않게 ([cx])
-20. `00_design_codex.md` 등 codex 이름 → retrieval·듀얼리뷰·지식 모두 **비대상** (mark-needs-audit 케이스)
-21. 표명 문자열 드리프트 — `사전 결정 회수:` 리터럴이 훅·SKILL.md·프로필 템플릿에서 동일
+20. **이름에 codex 가 든 정상 설계서**(`00_design-codex-gate.md`)와 **경로에 codex 가 든 프로젝트** → 플래그 3종이 전부 **선다** (v2 제외 철회의 케이스화 — [cc·cx] r2 D)
+21. 표명 문자열 드리프트 — `사전 결정 회수:` 리터럴이 훅·SKILL.md·프로필 템플릿에서 동일 (대상 파일 목록은 테스트 상수로 고정)
+22. **정상 해제 + push 미완 → push 게이트가 차단** (재평가가 push 를 삼키지 않음 — [cc·cx] r2 B)
+23. **정상 해제 + 결정 판독 불가 + 다른 게이트 없음 → exit 0 이되 decision_note 가 systemMessage 로 실림** ([cc·cx] r2 C)
+24. **다른 게이트(결정)에 갇힌 채 불량 집합만 바뀌어도 그 게이트의 예산은 리셋되지 않음** (flags_fp 불변식 — [cc·cx] r2 E)
+25. 첫 줄 BOM·CRLF → 걷어낸 뒤 정상 판정 ([cc] r2 M)
 
-변이(전건 적색 목표): 첫 줄 검사 제거 / 자동 해제 제거 / 해제 후 재평가 제거(허위 감사 차단 재현 — 18 이 잡음) / 패턴 느슨화(`사전` 만) / 게이트를 듀얼리뷰 뒤로 이동(옮기는 변이) / mark-needs-audit 기록 제거(19 가 잡음) / codex 제외 제거(20) / 조기 종료 조건의 retrieval_gate_active 제거(9 다음 턴 축) / 지문 r:목록 제거(14) / emit_decision_note 호출 제거(16) / decision_armed 추가분 제거(17) / 경로 해석을 cwd 기준으로 되돌림(11) / 예산 정리 목록에서 retrieval 제거(15).
+변이(전건 적색 목표): 첫 줄 검사 제거 / 자동 해제 제거 / 해제 후 재평가 제거(허위 감사 차단 재현 — 18) / 재평가식에서 push 항 제거(22) / exit 0 경로의 decision_note 방출 제거(23) / 패턴 느슨화(`사전` 만) / 게이트를 듀얼리뷰 뒤로 이동(옮기는 변이) / mark-needs-audit 기록 제거(19) / 조기 종료 조건의 retrieval_pending 제거(9 다음 턴 축) / 예산 키의 불량 목록 제거(14) / 불량 목록을 flags_fp 로 전파(24) / emit_decision_note 호출 제거(16) / 경로 해석을 cwd 기준으로 되돌림(11) / 예산 정리 목록에서 retrieval 제거(15) / BOM·CR 스트립 제거(25).
 
 ## 8. 공시된 한계 (ADR Consequences 로 갈 것)
 

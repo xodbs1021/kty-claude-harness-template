@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# install-hook-swap.test.sh — 훅 디렉터리 rename 스왑의 회귀 테스트.
+#
+# 이 축의 실패는 **거짓 성공**으로 나온다. 앞선 검수에서 실제로 그랬다 — mv 가 기존
+# 디렉터리 **안으로** 중첩되어 훅이 hooks/hooks/*.sh 로 깨졌는데 스크립트는 "설치 성공"을
+# 찍었고, 신호로 죽었는데 rc=0 이 나왔다. 그래서 여기서는 rc 만 보지 않는다.
+#
+# **rc 단독 판정은 약하다.** 신호 종료 코드는 128+신호번호라는 관례값이라, 핸들러가 제대로
+# 돌아 exit 143 한 것과 핸들러가 아예 없어 커널 기본 처리로 죽은 것이 같은 143 을 낸다.
+# 그래서 케이스마다 **부수 효과**를 함께 잰다: 훅이 제자리에 있나 · 중첩(hooks/hooks)이
+# 생겼나 · 임시 디렉터리가 남았나 · 진단 문구가 나왔나.
+#
+# 중단 주입은 타이밍이 아니라 **shim** 으로 한다. PATH 앞에 놓은 mv 가 호출 횟수를 세다가
+# 두 번째(스테이징 → 제자리)에서 부모에게 신호를 보낸다 — 그러면 "옛것은 치웠고 새것은
+# 아직 안 들어온" 그 창에서 정확히 멈춘다. shim 은 실제 mv 의 rc 를 **절대 삼키지 않는다**
+# (rc 를 버리는 shim 은 픽스처의 실패를 조용히 성공으로 바꾼다 — 실측된 함정이다).
+#
+# 그리고 **주입이 실제로 걸렸는지를 판정에 넣는다.** 빗나가면 설치가 그냥 완주해 기대값이
+# 우연히 충족되고, 케이스는 아무것도 안 잰 채 통과 도장을 찍는다.
+#
+# 왜 set -e 가 없나: 비영 rc 를 assert 하는 테스트다.
+# 사용법: ./tests/install-hook-swap.test.sh
+
+set -uo pipefail
+
+TEST_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)"
+INSTALL="$REPO_ROOT/install.sh"
+
+[ -f "$INSTALL" ] || { echo "✗ install.sh 를 찾지 못했습니다" >&2; exit 1; }
+
+TMPROOT="$(mktemp -d)" || exit 1
+if [ -z "$TMPROOT" ] || [ ! -d "$TMPROOT" ]; then
+  echo "✗ 임시 디렉토리를 만들지 못했습니다" >&2; exit 1
+fi
+TMPROOT="$(CDPATH='' cd -- "$TMPROOT" && pwd -P)"
+trap 'rm -rf "$TMPROOT"' EXIT
+
+REAL_MV="$(command -v mv)"
+[ -n "$REAL_MV" ] || { echo "✗ mv 를 찾지 못했습니다" >&2; exit 1; }
+
+ran=0; pass=0; fail=0
+RC=999; OUT=''; DID_RUN=0
+
+report() {
+  if [ -z "$2" ]; then pass=$((pass + 1)); printf '  ✓ %s\n' "$1"
+  else fail=$((fail + 1)); printf '  ✗ %s — %s\n' "$1" "$2"; fi
+}
+
+# new_project — 하네스가 이미 한 번 설치된 프로젝트. 구판임을 알아볼 수 있게 표식을
+# 넣는다 — "복원됐나"를 판정하려면 구판이 식별 가능해야 한다.
+new_project() {
+  local p
+  p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || return 1
+  p="$(CDPATH='' cd -- "$p" && pwd -P)"
+  "$INSTALL" "$p" >/dev/null 2>&1 || return 1
+  printf 'OLD\n' > "$p/.claude/hooks/.old-marker"
+  printf '%s\n' "$p"
+}
+
+# make_mv_shim <디렉터리> <몇 번째 호출에서> <신호이름|FAIL>
+make_mv_shim() {
+  local dir="$1" nth="$2" action="$3"
+  mkdir -p "$dir" || return 1
+  cat > "$dir/mv" <<SHIM
+#!/usr/bin/env bash
+n_file="$dir/.count"
+n=\$(cat "\$n_file" 2>/dev/null || echo 0)
+n=\$((n + 1))
+printf '%s\n' "\$n" > "\$n_file"
+if [ "\$n" -eq $nth ]; then
+  printf 'HIT\n' > "$dir/.hit"
+  if [ "$action" = FAIL ]; then
+    exit 1
+  fi
+  kill -$action \$PPID 2>/dev/null
+  sleep 5          # 신호가 처리될 시간. 핸들러가 exit 하므로 여기까지 오지 않는다
+  exit 1
+fi
+exec "$REAL_MV" "\$@"     # **실제 rc 를 그대로 돌려준다** — 삼키면 픽스처가 결함을 가린다
+SHIM
+  chmod +x "$dir/mv"
+}
+
+run_install() {   # $1=프로젝트  [$2=shim 디렉터리]
+  RC=999; OUT=''; DID_RUN=1
+  if [ -n "${2-}" ]; then
+    OUT="$(PATH="$2:$PATH" "$INSTALL" "$1" 2>&1)"
+  else
+    OUT="$("$INSTALL" "$1" 2>&1)"
+  fi
+  RC=$?
+}
+
+# leftovers <프로젝트> — 스테이징·백업 임시 디렉터리가 남았나
+leftovers() {
+  ls -a "$1/.claude" 2>/dev/null | grep -cE '^\.hooks-(stage|old)\.'
+}
+
+# --- 케이스 --------------------------------------------------------------
+
+c01() {
+  local name='정상 설치 — 제자리·잔류물 0·중첩 없음·구판 잔재 없음' p why=''
+  if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  run_install "$p"
+  if [ "$RC" -ne 0 ]; then why="rc=$RC"
+  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='_common.sh 이 제자리에 없다'
+  elif [ -e "$p/.claude/hooks/hooks" ]; then why='중첩(hooks/hooks)이 생겼다'
+  elif [ "$(leftovers "$p")" != '0' ]; then why='임시 디렉터리가 남았다'
+  elif [ -f "$p/.claude/hooks/.old-marker" ]; then why='구판 잔재가 남았다 (교체가 아니라 덮어쓰기다)'
+  fi
+  report "$name" "$why"
+}
+
+# 중단 주입 — 두 rename 사이에서 멈춘다.
+interrupt_case() {   # $1=이름 $2=신호 $3=기대rc
+  local name="$1" sig="$2" want_rc="$3" p shim why=''
+  if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  shim="$TMPROOT/shim.$sig.$$"
+  if ! make_mv_shim "$shim" 2 "$sig"; then report "$name" '픽스처 실패: shim'; return 0; fi
+  run_install "$p" "$shim"
+  if [ ! -f "$shim/.hit" ]; then
+    why='주입이 빗나갔다 (mv 가 2번째로 불리지 않았다 — 설치가 그냥 완주했다)'
+  elif [ "$RC" -ne "$want_rc" ]; then
+    why="rc=$RC (기대 $want_rc)"
+  elif [ ! -f "$p/.claude/hooks/.old-marker" ]; then
+    why='구판으로 되돌리지 못했다 (훅 디렉터리가 사라졌다)'
+  elif [ -e "$p/.claude/hooks/hooks" ]; then
+    why='중첩(hooks/hooks)이 생겼다'
+  elif [ "$(leftovers "$p")" != '0' ]; then
+    why='임시 디렉터리가 남았다'
+  else
+    case "$OUT" in
+      *'되돌렸습니다'*) ;;
+      *) why="복구를 알리지 않았다: $(printf '%s' "$OUT" | tail -c 200)" ;;
+    esac
+  fi
+  report "$name" "$why"
+}
+
+c02() { interrupt_case '교체 도중 INT  — 구판 복원 + rc=130' INT  130; }
+c03() { interrupt_case '교체 도중 TERM — 구판 복원 + rc=143' TERM 143; }
+# QUIT·HUP 이 따로 중요한 이유: trap 이 없으면 bash 가 QUIT 를 **무시하고 rc=0** 을 낸다 —
+# 중단됐는데 "설치 성공"으로 보고되는 최악의 조합이다(실측).
+c04() { interrupt_case '교체 도중 QUIT — 구판 복원 + rc=131' QUIT 131; }
+c05() { interrupt_case '교체 도중 HUP  — 구판 복원 + rc=129' HUP  129; }
+
+c06() {
+  local name='rename2 실패 — 성공으로 오진단하지 않고 구판 복원' p shim why=''
+  if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  shim="$TMPROOT/shim.fail.$$"
+  if ! make_mv_shim "$shim" 2 FAIL; then report "$name" '픽스처 실패: shim'; return 0; fi
+  run_install "$p" "$shim"
+  if [ ! -f "$shim/.hit" ]; then why='주입이 빗나갔다'
+  elif [ "$RC" -eq 0 ]; then why='실패했는데 rc=0 (성공으로 오진단)'
+  elif [ ! -f "$p/.claude/hooks/.old-marker" ]; then why='구판으로 되돌리지 못했다'
+  elif [ "$(leftovers "$p")" != '0' ]; then why='임시 디렉터리가 남았다'
+  else
+    case "$OUT" in
+      *'교체하지 못했습니다'*) ;;
+      *) why="실패를 알리지 않았다: $(printf '%s' "$OUT" | tail -c 200)" ;;
+    esac
+  fi
+  report "$name" "$why"
+}
+
+c07() {
+  local name='훅 디렉터리가 심링크면 링크를 보존하고 알린다' p why=''
+  if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  "$REAL_MV" "$p/.claude/hooks" "$p/real-hooks" || { report "$name" '픽스처 실패: mv'; return 0; }
+  ln -s "$p/real-hooks" "$p/.claude/hooks" || { report "$name" '픽스처 실패: ln'; return 0; }
+  run_install "$p"
+  if [ "$RC" -ne 0 ]; then why="rc=$RC"
+  elif [ ! -L "$p/.claude/hooks" ]; then why='심링크를 일반 디렉터리로 갈아치웠다 (사용자 배치 파괴)'
+  elif [ ! -f "$p/real-hooks/_common.sh" ]; then why='링크 대상에 훅이 복사되지 않았다'
+  else
+    case "$OUT" in
+      *'심볼릭 링크'*) ;;
+      *) why='원자성을 못 지킨다는 사실을 알리지 않았다 (조용히 물러섰다)' ;;
+    esac
+  fi
+  report "$name" "$why"
+}
+
+# 핸들러 진입 직후의 `set +e` 를 지키는 유일한 케이스.
+#
+# 왜 따로 필요한가: 다른 중단 케이스는 진단 echo 가 **성공**하므로 set +e 가 있든 없든
+# exit 에 도달한다. 그래서 그 줄을 지워도 전건 초록이다 — 실제로 앞선 세션에서 그 한 줄을
+# 지워도 스위트 19/19 가 그대로였다. 버그는 **stderr 가 닫힌 상태에서만** 재현되는데
+# 테스트 하네스가 출력을 2>&1 로 합칠 뿐 닫지 않았기 때문이다.
+#
+# 여기서는 stderr 를 **닫고**(2>&-) 돌린다. echo 가 실패하고, set -e 가 살아 있으면
+# 핸들러가 exit 143 에 도달하지 못하고 rc=1 로 끝난다 — 신호로 죽은 건지 실패한 건지
+# 구별이 사라지는 그 상태다.
+#
+# 한계(공시): stderr 가 닫혔으므로 진단 문구는 잴 수 없다. 종료 코드와 파일 상태만 본다.
+c08() {
+  local name='stderr 가 닫힌 채 TERM — 진단은 못 내도 종료 코드 계약은 지킨다' p shim why=''
+  if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  shim="$TMPROOT/shim.noerr.$$"
+  if ! make_mv_shim "$shim" 2 TERM; then report "$name" '픽스처 실패: shim'; return 0; fi
+  DID_RUN=1
+  PATH="$shim:$PATH" "$INSTALL" "$p" >/dev/null 2>&-
+  RC=$?
+  if [ ! -f "$shim/.hit" ]; then why='주입이 빗나갔다'
+  elif [ "$RC" -ne 143 ]; then why="rc=$RC (기대 143 — set +e 가 없으면 1 이 된다)"
+  elif [ ! -f "$p/.claude/hooks/.old-marker" ]; then why='구판으로 되돌리지 못했다'
+  elif [ "$(leftovers "$p")" != '0' ]; then why='임시 디렉터리가 남았다'
+  fi
+  report "$name" "$why"
+}
+
+# --- 러너 ----------------------------------------------------------------
+
+CASES='c01 c02 c03 c04 c05 c06 c07 c08'
+EXPECTED_CASES=8
+
+case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
+case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"
+if [ "$case_total" -ne "$EXPECTED_CASES" ] || [ "$case_uniq" -ne "$EXPECTED_CASES" ]; then
+  echo "✗ CASES 목록 ${case_total}건(유일 ${case_uniq}건) ≠ 기대 ${EXPECTED_CASES}건" >&2
+  exit 1
+fi
+
+echo "훅 교체 원자성 — rename 스왑 + 중단 복구"
+for c in $CASES; do
+  ran=$((ran + 1)); DID_RUN=0
+  "$c"
+done
+
+if [ "$ran" -ne "$EXPECTED_CASES" ]; then echo "✗ 실행 ${ran}건 ≠ ${EXPECTED_CASES}건" >&2; exit 1; fi
+if [ $((pass + fail)) -ne "$ran" ]; then echo "✗ 판정 $((pass + fail))건 ≠ 실행 ${ran}건" >&2; exit 1; fi
+
+echo "— ${pass}/${ran} 통과"
+[ "$fail" -eq 0 ] || exit 1

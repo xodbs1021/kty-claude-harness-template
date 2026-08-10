@@ -30,6 +30,10 @@ jobs:
         run: ./tests/harness-env-read.test.sh
       - name: 층 경계 검사기 회귀 테스트
         run: ./tests/check-layer-boundary.test.sh
+      # 훅 교체 도중 중단되면 구판으로 되돌아가는가. 이 축의 실패는 "설치 성공"이라는
+      # 거짓 보고로 나오므로 rc 만이 아니라 파일 상태·잔류물·문구까지 잰다.
+      - name: 훅 교체 원자성 회귀 테스트
+        run: ./tests/install-hook-swap.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh
       # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를

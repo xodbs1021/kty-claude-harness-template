@@ -586,6 +586,39 @@ d51() {
   report "$name" "$why"
 }
 
+# **다섯 게이트 전부에 사유를 싣는다**는 계약을 게이트마다 따로 붙든다. 하나로 뭉치면
+# 한 호출을 지워도 다른 케이스가 대신 빨개져 그 자리를 격리해 재지 못한다.
+note_in_gate() {   # $1=이름 $2=지식게이트값 $3=세울 플래그 $4=그 게이트의 고유 문구
+  local name="$1" kg="$2" flag="$3" token="$4" why=''
+  local p; p="$(new_project "$kg")" || { report "$name" '픽스처 실패'; return 0; }
+  setup_flags "$p" "$flag"
+  run_stop "$p" "$p/does-not-exist.jsonl"
+  if   [ "$RC" -ne 2 ];               then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" "$token";    then why="그 게이트가 막은 게 아니다: $(printf '%s' "$ERR" | head -1 | head -c 80)"
+  elif ! contains "$ERR" "$TOK_NOTE"; then why='이 게이트 메시지에 판독 불가 사유가 없다'
+  fi
+  report "$name" "$why"
+}
+d63() { note_in_gate '설명 게이트 메시지에도 사유가 실린다' ''   explain   'change-explainer 미실행'; }
+d64() { note_in_gate '지식 게이트 메시지에도 사유가 실린다' 'on' knowledge '지식 저장소 반영 미확인'; }
+d65() {
+  # push 게이트는 원격 없는 커밋이 있어야 발화한다. 그런데 결정 스캔이 돌려면 플래그가
+  # 하나는 서 있어야 하므로(발동 계약), 앞 게이트를 안 건드리는 audit 플래그를 쓴다 —
+  # 게이트 순서상 push 가 audit 보다 앞이라 push 가 막는다.
+  local name='push 게이트 메시지에도 사유가 실린다' why=''
+  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+  setup_flags "$p" audit
+  ( cd "$p" && git init -q . && git config user.email t@t && git config user.name t \
+      && git remote add origin "$p/origin.git" && git commit -q --allow-empty -m x ) >/dev/null 2>&1 \
+    || { report "$name" '픽스처 실패: git 저장소'; return 0; }
+  run_stop "$p" "$p/does-not-exist.jsonl"
+  if   [ "$RC" -ne 2 ];                    then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" '원격에 없습니다'; then why="push 게이트가 막은 게 아니다: $(printf '%s' "$ERR" | head -1 | head -c 80)"
+  elif ! contains "$ERR" "$TOK_NOTE";      then why='push 게이트 메시지에 판독 불가 사유가 없다'
+  fi
+  report "$name" "$why"
+}
+
 # [cx] **push 미완만으로 조기 종료가 풀린 턴**은 아무것도 안 바꾼 읽기 전용 턴이다.
 # 거기서 결정 게이트가 돌면 "플래그가 서 있고"라는 발동 계약보다 넓어진다.
 d52() {
@@ -671,7 +704,7 @@ d36 d37 d38
 d39 d40 d41
 d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52
 d53 d54 d55 d56 d57 d58 d59
-d60 d61 d62'
+d60 d61 d62 d63 d64 d65'
 
 echo "결정 게이트 회귀 테스트"
 expected=0

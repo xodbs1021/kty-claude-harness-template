@@ -77,12 +77,11 @@ bump_and_block() {
 # (3) 타입체크 — 결정론적 바닥. 명령은 프로필에서 파생된 harness.env 에서 읽는다.
 #     HARNESS_TYPECHECK_CMD 가 비어 있으면(타입 없는 언어/미설정) 생략한다.
 #     이렇게 하면 이 훅이 특정 스택(pnpm/tsc)에 묶이지 않는다 — 도메인-무관 재사용.
+#     **이 파일을 실행하지 않는다.** source 하면 사용자 소유 셸 파일이 훅의 제어 흐름을
+#     가져간다 — `exit 0` 한 줄이면 이 훅이 조용히 끝나 **게이트 4종이 통째로 사라지고**
+#     흔적도 안 남는다. 원문 판독으로 그 부류를 없앤다(harness_env_value 주석 참조).
 typecheck_note=""
-if [ -f "$STATE_DIR/harness/harness.env" ]; then
-  # shellcheck disable=SC1091
-  . "$STATE_DIR/harness/harness.env" 2>/dev/null
-fi
-TYPECHECK_CMD="${HARNESS_TYPECHECK_CMD:-}"
+TYPECHECK_CMD="$(harness_env_value HARNESS_TYPECHECK_CMD)"
 
 if [ -z "$TYPECHECK_CMD" ]; then
   typecheck_note="타입체크 생략 (harness.env 에 HARNESS_TYPECHECK_CMD 미설정)"

@@ -270,11 +270,15 @@ if [ "$decision_armed" -eq 1 ] && ! hook_disabled "stop:decision"; then
   fi
 fi
 
-# (3.4) **회수 표명 게이트** (ADR-0013) — 설계·계획 산출물의 첫 줄이 `사전 결정 회수:`
-#      표명 형식을 지키는지 본다. 표명 첫 줄은 ADR-0009 가 만든 계약인데 그 검증이
-#      산문("확인한다 — 없으면 되돌린다")으로만 있었다 — 산문 승격 부류다.
+# (3.4) **머리 표명 게이트** (ADR-0013·ADR-0015) — 설계·계획 산출물의 머리 두 줄이
+#      표명 형식을 지키는지 본다:
+#        1줄 `사전 결정 회수:` (ADR-0013 — ADR-0009 계약의 산문 승격)
+#        2줄 `레퍼런스 조사: 조사함(<대상·출처>)|불요(<사유>)|실패(<시도 — 사유>)`
+#            (ADR-0015 — "조사가 필요한 지시인가"의 판정은 기계가 못 하므로, 판정의
+#             **무표명 통과**를 막는다. 불요에도 사유를 강제하는 것이 핵심이다)
 #
-#      **형식만 본다.** 진짜 읽었는지는 기계가 못 본다(내용 검증은 층 위반 — ADR-0013 ④).
+#      **형식만 본다.** 진짜 읽었는지·조사했는지는 기계가 못 본다(내용 검증은 검수 몫 —
+#      ADR-0013 ④·ADR-0015).
 #      **자동 해제** — 형식을 지키면 이 게이트가 스스로 플래그를 지운다. 지울 플래그를
 #      에이전트 손에 주지 않는 것이 이 게이트의 형태다(결정 게이트의 "실제로 물으면
 #      풀린다"와 같은 구조).
@@ -286,14 +290,18 @@ if retrieval_pending; then
     # fail-closed 로 차단한다. 무엇이 대상이었는지조차 모르는 상태다.
     gate_budget "retrieval:unreadable-flag"
     {
-      echo "[완료 차단] 회수 표명 검사 불가 — 플래그 파일을 읽을 수 없습니다: $RETRIEVAL_FLAG"
+      echo "[완료 차단] 머리 표명 검사 불가 — 플래그 파일을 읽을 수 없습니다: $RETRIEVAL_FLAG"
       echo "권한·손상을 확인한 뒤 다시 종료하세요."
       emit_decision_note
       echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
     } >&2
     bump_and_block
   fi
-  retrieval_bad_paths=""   # 불량 항목의 경로(정렬 전, 줄 단위) — 예산 키용
+  # 예산 키 항목은 "경로#검사번호"다(#1 첫 줄 / #2 둘째 줄). 검사 번호까지 넣는 이유:
+  # 경로만 넣으면 두 줄 다 불량인 파일의 첫 줄만 고친 **진전**이 키를 못 바꿔, 4회째
+  # 예산 소진이 플래그 5종을 전삭제한다(설계 검수 [cx] r2). 사유 문자열은 넣지 않는다 —
+  # 같은 검사가 다른 사유로 바뀌는 것은 진전이 아니다.
+  retrieval_bad_paths=""   # 불량 항목 "경로#검사번호" (정렬 전, 줄 단위) — 예산 키용
   retrieval_bad_msgs=""    # "경로 — 사유" (차단 메시지용)
   # `|| [ -n "$entry" ]` 가 필수다: 마지막 줄이 개행 없이 끝나면 read 가 값을 담고도
   # rc=1 을 내 본문이 안 돌고, 그 항목이 **조용히 스킵**된다 — record_flag 쓰기가
@@ -311,40 +319,145 @@ if retrieval_pending; then
     # 이 스킵이 삭제 우회를 연다는 것은 ADR-0013 이 공시한다 — 실존 검증은 감사자 몫.
     [ -e "$rfile" ] || continue
     if [ ! -r "$rfile" ]; then
-      retrieval_bad_paths="${retrieval_bad_paths}${entry}
+      retrieval_bad_paths="${retrieval_bad_paths}${entry}#1
 "
       retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 파일을 읽을 수 없음
 "
       continue
     fi
     rline=""
-    IFS= read -r rline < "$rfile" || true
+    rline2=""
+    ref_missing=0
+    # 머리 2줄을 한 블록 리다이렉트로 읽는다 — 파일을 두 번 열지 않는다. 중괄호 블록은
+    # 서브셸이 아니라 대입이 블록 밖에 남고, 리다이렉트는 블록 안에만 적용되므로 바깥
+    # while 의 stdin($RETRIEVAL_FLAG)과 충돌하지 않는다.
+    {
+      IFS= read -r rline || true
+      # 둘째 줄 "누락" 판정은 read 의 rc 를 실제로 소비해야 한다. 무개행 마지막 줄에서
+      # read 는 값을 담고도 rc=1 을 내므로, rc 만 보면 개행 없는 정상 표명이 누락으로
+      # 오판되고 값만 보면 판정이 뭉개진다. 한 줄 관용구(`read || [ -n ]`)는 단발 read
+      # 에서 rc 를 아무도 소비하지 않는 no-op 이다(설계 검수 [cc] r2 HIGH — while 루프
+      # 조건이던 원본과 자리가 다르다). 그래서 분기로 소비한다.
+      if IFS= read -r rline2; then
+        :
+      elif [ -n "$rline2" ]; then
+        :                   # 개행 없는 마지막 줄 — 값이 있으므로 누락이 아니다
+      else
+        ref_missing=1       # rc!=0 이고 값도 없다 = 둘째 줄이 없다(1줄 파일)
+      fi
+    } < "$rfile"
+    # ── 첫 줄: 회수 표명 (ADR-0013) ──
     # 첫 줄 판정 전에 선두 BOM·후행 CR 을 걷어낸다 — harness_env_value 가 같은 부류
     # (눈에 안 보이는 바이트가 판정을 뒤집는 것)에 데인 전례가 있다.
     rline="${rline#$'\xEF\xBB\xBF'}"
     rline="${rline%$'\r'}"
     case "$rline" in
       "사전 결정 회수:"*)
-        if [ -z "$(printf '%s' "${rline#사전 결정 회수:}" | tr -d '[:space:]')" ]; then
-          retrieval_bad_paths="${retrieval_bad_paths}${entry}
+        if [ -z "$(printf '%s' "${rline#사전 결정 회수:}" | LC_ALL=C tr -d '[:space:]')" ]; then
+          retrieval_bad_paths="${retrieval_bad_paths}${entry}#1
 "
           retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 표명 접두어 뒤에 내용이 없음
 "
         fi
         ;;
       "")
-        retrieval_bad_paths="${retrieval_bad_paths}${entry}
+        retrieval_bad_paths="${retrieval_bad_paths}${entry}#1
 "
         retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 파일이 비었거나 첫 줄이 빈 줄
 "
         ;;
       *)
-        retrieval_bad_paths="${retrieval_bad_paths}${entry}
+        retrieval_bad_paths="${retrieval_bad_paths}${entry}#1
 "
         retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 첫 줄이 '사전 결정 회수:' 로 시작하지 않음
 "
         ;;
     esac
+    # ── 둘째 줄: 레퍼런스 표명 (ADR-0015) — 닫힌 문법 ──
+    #   레퍼런스 조사:<SP*><변형><SP*>(<내용>)<SP*>
+    #   <변형> = 조사함|불요|실패 (정확 일치 — 꼬리 문자가 붙으면 불량)
+    #   <SP>   = ASCII 스페이스·탭 뿐 (비ASCII 공백은 SP 가 아니다)
+    #   <내용> = LC_ALL=C tr -d '[:space:]' 후 비어있지 않음 (내부 괄호 허용 —
+    #            마지막 `)` 가 닫는 괄호. 첫 `)` 로 자르면 `조사함(a(b) c)` 가 잘린다)
+    if [ "$ref_missing" -eq 1 ]; then
+      retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+      retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 둘째 줄 없음(레퍼런스 표명 누락)
+"
+    else
+      rline2="${rline2%$'\r'}"
+      case "$rline2" in
+        "레퍼런스 조사:"*)
+          ref_body="${rline2#레퍼런스 조사:}"
+          # 앞뒤 SP(스페이스·탭)만 트림한다 — 트림 후 마지막 문자가 `)` 여야 하므로
+          # 닫는 괄호 뒤 잡음은 아래 case 에서 불량으로 떨어진다.
+          while :; do
+            case "$ref_body" in
+              ' '*)  ref_body="${ref_body# }" ;;
+              '	'*)  ref_body="${ref_body#	}" ;;
+              *' ')  ref_body="${ref_body% }" ;;
+              *'	')  ref_body="${ref_body%	}" ;;
+              *) break ;;
+            esac
+          done
+          ref_head="${ref_body%%\(*}"
+          while :; do
+            case "$ref_head" in
+              *' ')  ref_head="${ref_head% }" ;;
+              *'	')  ref_head="${ref_head%	}" ;;
+              *) break ;;
+            esac
+          done
+          if [ "$ref_head" = "$ref_body" ]; then
+            # 여는 괄호가 없다 — `불요` 단독(사유 없음)·접두어만 남은 줄이 여기 온다.
+            retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+            retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 레퍼런스 표명이 조사함(<내용>)/불요(<사유>)/실패(<사유>) 형식이 아님
+"
+          else
+            case "$ref_head" in
+              조사함|불요|실패)
+                case "$ref_body" in
+                  *\))
+                    ref_inner="${ref_body#*\(}"
+                    ref_inner="${ref_inner%\)}"
+                    # 내용 검사는 세 변형 **공통의 단일 경로**다 — 변형별로 복제하면
+                    # 한 변형만 검사가 빠지는 부류가 생긴다(`실패()` — 설계 검수 [cx] r2).
+                    if [ -z "$(printf '%s' "$ref_inner" | LC_ALL=C tr -d '[:space:]')" ]; then
+                      retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+                      retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 레퍼런스 표명의 괄호 안이 비었음(불요·실패에도 사유는 필수)
+"
+                    fi
+                    ;;
+                  *)
+                    # 트림 후에도 `)` 로 안 끝난다 — 닫는 괄호 뒤 잡음·미닫힘.
+                    retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+                    retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 레퍼런스 표명이 조사함(<내용>)/불요(<사유>)/실패(<사유>) 형식이 아님
+"
+                    ;;
+                esac
+                ;;
+              *)
+                # 변형 꼬리(`조사함부족`)·유의어(`불필요`)·비ASCII 공백이 낀 머리.
+                retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+                retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 레퍼런스 표명이 조사함(<내용>)/불요(<사유>)/실패(<사유>) 형식이 아님
+"
+                ;;
+            esac
+          fi
+          ;;
+        *)
+          # 빈 둘째 줄(개행만)도 여기로 온다 — 접두어 사유 하나로 접는다.
+          retrieval_bad_paths="${retrieval_bad_paths}${entry}#2
+"
+          retrieval_bad_msgs="${retrieval_bad_msgs}${entry} — 둘째 줄이 '레퍼런스 조사:' 로 시작하지 않음
+"
+          ;;
+      esac
+    fi
   done < "$RETRIEVAL_FLAG"
 
   if [ -z "$retrieval_bad_paths" ]; then
@@ -378,19 +491,23 @@ if retrieval_pending; then
     [ -n "$retrieval_bad_sorted" ] || retrieval_bad_sorted="${retrieval_bad_paths//$'\n'/ }"
     gate_budget "retrieval:${retrieval_bad_sorted}"
     {
-      echo "[완료 차단] 설계·계획 산출물에 회수 표명이 없습니다 — 선행 결정을 회수하지 않고 만든 산출물로는 끝낼 수 없습니다."
+      echo "[완료 차단] 설계·계획 산출물의 머리 표명이 계약과 다릅니다 — 회수(1줄)·레퍼런스 조사(2줄) 표명 없이 만든 산출물로는 끝낼 수 없습니다."
       echo
       echo "형식이 어긋난 파일:"
       printf '%s' "$retrieval_bad_msgs" | sed 's/^/  - /'
       echo
       echo "해야 할 일:"
       echo "  1. 프로필 9절의 지식 진입점을 읽고, 이번 작업과 관련된 항목만 따라가 읽는다."
-      echo "  2. 산출물 **첫 줄**에 표명을 적는다:"
-      echo "     사전 결정 회수: <읽은 경로>     또는     사전 결정 회수: 없음(<사유>)"
-      echo "     이어서 회수 블록: - 걸리는 선행 결정: <제목 — 한 줄> (없으면 \"걸리는 선행 결정 없음\")"
-      echo "  3. 형식을 지키면 이 게이트는 스스로 풀립니다 — 지울 플래그가 없습니다."
+      echo "  2. 레퍼런스 조사가 필요한 작업이었는지 판단한다 — 필요했으면 조사하고(인접"
+      echo "     도메인 포함), 불요·실패라도 사유를 적는다. 조용한 스킵은 없다."
+      echo "  3. 산출물 **머리 3줄**을 이 형식으로 맞춘다:"
+      echo "     1줄: 사전 결정 회수: <읽은 경로>      또는  사전 결정 회수: 없음(<사유>)"
+      echo "     2줄: 레퍼런스 조사: 조사함(<대상·출처>) | 불요(<사유>) | 실패(<시도 — 사유>)"
+      echo "          — 이 세 단어와 반각 괄호만. 괄호 안이 비면 불량입니다."
+      echo "     3줄~: - 걸리는 선행 결정: <제목 — 한 줄> (없으면 \"걸리는 선행 결정 없음\")"
+      echo "  4. 형식을 지키면 이 게이트는 스스로 풀립니다 — 지울 플래그가 없습니다."
       echo
-      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지는 검수(plan-reviewer·codex)가 봅니다."
+      echo "이 게이트는 형식만 봅니다. 진짜 읽었는지·조사했는지는 검수(plan-reviewer·codex)가 봅니다."
       emit_decision_note
       echo
       echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"

@@ -64,6 +64,7 @@ fi
 if [ ! -f "$DST/harness/harness.env" ]; then
   cp "$SRC/harness/harness.env.template" "$DST/harness/harness.env"
   echo "   슬롯 생성 ✓  harness/harness.env          ← HARNESS_TYPECHECK_CMD 채우세요"
+  echo "                                                 (HARNESS_KNOWLEDGE_GATE 는 기본 켜짐)"
 else
   echo "   슬롯 보존    harness/harness.env          (기존 유지)"
 fi

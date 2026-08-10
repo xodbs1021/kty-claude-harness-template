@@ -706,13 +706,22 @@ d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52
 d53 d54 d55 d56 d57 d58 d59
 d60 d61 d62 d63 d64 d65'
 
+# **건수의 정본은 이 상수다.** 목록에서 파생시키면 케이스를 하나 지워도 그 값이 함께
+# 줄어 초록이 난다 — 케이스가 조용히 빠지는 부류를 아무것도 안 막는다. 형제 스위트
+# 6종이 전부 이 패턴이고(README 가 "건수의 정본은 EXPECTED_CASES" 라고 못박았다),
+# 이 파일만 예외였다([cc] PR 점검 지적).
+EXPECTED_CASES=72
+
 echo "결정 게이트 회귀 테스트"
-expected=0
-for c in $CASES; do expected=$((expected + 1)); done
-dupes="$(printf '%s\n' $CASES | sort | uniq -d)"
-if [ -n "$dupes" ]; then
-  echo "✗ 케이스 목록에 중복이 있습니다: $dupes" >&2; exit 1
+case_total=0
+for c in $CASES; do case_total=$((case_total + 1)); done
+case_uniq="$(printf '%s\n' $CASES | sort -u | wc -l | tr -d ' ')"
+if [ "$case_total" -ne "$EXPECTED_CASES" ] || [ "$case_uniq" -ne "$EXPECTED_CASES" ]; then
+  echo "✗ CASES 목록 ${case_total}건(유일 ${case_uniq}건) ≠ 기대 ${EXPECTED_CASES}건" >&2
+  echo "  케이스를 늘리거나 줄였으면 EXPECTED_CASES 도 함께 고치세요." >&2
+  exit 1
 fi
+expected="$EXPECTED_CASES"
 for c in $CASES; do
   if ! type "$c" >/dev/null 2>&1; then echo "✗ 케이스 함수가 없습니다: $c" >&2; exit 1; fi
   "$c"

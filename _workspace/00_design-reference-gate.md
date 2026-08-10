@@ -400,7 +400,8 @@ collector(`_workspace/research/01_collected.md`)·evaluator(`02_evaluated.md`)�
 ### ⑦-2 변이 — `_workspace/mutate-retrieval-gate.sh` 확장
 
 기존 18종 유지 + **m10·m15 앵커 재조준**(③-A — 새 메시지·새 헤더 주석의 고유 문자열로) +
-신규 17종(m19~m35):
+신규 17종(m19~m35): *(구현 검수 후기 — 최종 19종(m19~m37): 탭 트림 자리별 변이 m36·m37 이
+[cx] 지적으로 추가됐다. 목록·근거는 `36_impl_review_integrated.md`)*
 
 - m19 둘째 줄 검사 통째 제거 → r30·r31 적색 기대
 - m20 변형 검사를 "접두어+비어있지 않음"으로 느슨화 → r32 적색 기대

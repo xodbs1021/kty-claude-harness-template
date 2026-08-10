@@ -94,17 +94,29 @@ run_mutation 'CR 제거를 지운다' "$COMMON" \
   '  sub(/\r$/, "", line)' \
   '  # (변이) CR 제거 삭제'
 
-run_mutation '값 앞 공백 절단을 지운다' "$COMMON" \
-  '  v = ltrim(v)' \
-  '  # (변이) 값 앞 공백 절단 삭제'
+run_mutation '등호 뒤 선행 공백 거부를 지운다' "$COMMON" \
+  '  if (substr(v, 1, 1) == " " || substr(v, 1, 1) == "\\t") { BAD = 1; return "" }' \
+  '  # (변이) 선행 공백 거부 삭제'
 
 run_mutation '인용 없는 값의 후행 공백 절단을 지운다' "$COMMON" \
   '  return rtrim(out)' \
   '  return out'
 
-run_mutation '히어독 탐지 호출을 지운다' "$COMMON" \
-  '  scan_heredoc(line)' \
-  '  # (변이) scan_heredoc 호출 삭제'
+run_mutation '줄 스캔(히어독+인용 추적) 호출을 지운다' "$COMMON" \
+  '  scan_line(line)' \
+  '  # (변이) scan_line 호출 삭제'
+
+run_mutation '줄을 넘는 인용 추적을 지운다 (선언 판정 가드)' "$COMMON" \
+  '  if (OPENQ == "") {' \
+  '  if (1) {'
+
+run_mutation '안 닫힌 인용 거부를 지운다' "$COMMON" \
+  '  if (OPENQ != "") exit 1   # 인용이 EOF 까지 안 닫혔다 = 파일을 못 믿는다' \
+  '  # (변이) 안 닫힌 인용 거부 삭제'
+
+run_mutation '닫는 따옴표 뒤 공백 요구를 지운다' "$COMMON" \
+  '      if (substr(tail, 1, 1) != " " && substr(tail, 1, 1) != "\\t") { BAD = 1; return "" }' \
+  '      :'
 
 run_mutation '안 닫힌 히어독 거부를 지운다' "$COMMON" \
   '  if (INHD) exit 1' \

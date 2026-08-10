@@ -265,7 +265,7 @@ p14() { pcase '후행 주석 — 겹따옴표'                  0 'printf ok' "$
 p15() { pcase '후행 주석 — 홑따옴표'                  0 'printf ok' "$KEY='printf ok' # note"$'\n'; }
 p16() { pcase '후행 주석 — 인용 없음'                 0 'mypy'      "$KEY=mypy # note"$'\n'; }
 p17() { pcase '값 안의 # 은 주석이 아니다'            0 'a#b'       "$KEY=a#b"$'\n'; }
-p18() { pcase '값 자리가 통째로 주석'                 0 ''          "$KEY= # note"$'\n'; }
+p18() { pcase '등호 뒤 공백은 문법 밖 (셸과 갈리는 자리)' 1 ''      "$KEY= # note"$'\n'; }
 p19() { pcase '후행 공백 (눈에 안 보인다)'            0 'printf ok' "$KEY=\"printf ok\"   "$'\n'; }
 p20() { pcase '후행 탭'                               0 'printf ok' "$KEY=\"printf ok\""$'\t\n'; }
 p21() { pcase 'CRLF 줄끝'                             0 'printf ok' "$KEY=\"printf ok\""$'\r\n'; }
@@ -293,7 +293,7 @@ p42() { pcase 'harness.env 파일이 없다'               1 ''          '__NOFI
 p43() { pcase '빈 파일'                               1 ''          ''; }
 # 값의 앞·뒤 공백은 **서로 다른 자리**에서 털린다. 각각 따로 붙든다 —
 # 한쪽만 재면 다른 쪽을 지워도 초록이다(변이 측정에서 실제로 그랬다).
-p45() { pcase '등호 뒤 선행 공백 + 겹따옴표'          0 'printf ok' "$KEY=  \"printf ok\""$'\n'; }
+p45() { pcase '등호 뒤 선행 공백은 문법 밖'           1 ''          "$KEY=  \"printf ok\""$'\n'; }
 p46() { pcase '인용 없는 값의 후행 공백'              0 'mypy'      "$KEY=mypy   "$'\n'; }
 p47() { pcase '인용 없는 값의 후행 탭'                0 'mypy'      "$KEY=mypy"$'\t\n'; }
 
@@ -387,6 +387,27 @@ g08() { gcase '주석 처리된 선언으로는 못 끈다'      on  "# $GKEY=\"
 g09() { gcase 'harness.env 가 없으면 켜짐'         on  '__NOFILE__'; }
 g10() { gcase 'CRLF 로 비워도 꺼진다'              off "$GKEY=\"\""$'\r\n'; }
 
+
+# --- 듀얼 검수(2026-08-10)가 찾은 경로 ---------------------------------
+# 넷 다 **게이트를 끄는 방향**으로 틀리던 자리다. 이 방향의 오류가 이 설계에서 가장 나쁘다.
+
+p48() { pcase '다른 키의 여러 줄 값 안에 있는 키는 선언이 아니다' 1 '' \
+        "NOTES='example:"$'\n'"$KEY="$'\n'"end'"$'\n'; }
+p49() { pcase '히어독 <<\EOF (백슬래시 인용) 본문도 건너뛴다' 0 'printf ok' \
+        'cat <<\EOF'$'\n'"$KEY=\"evil\""$'\n''EOF'$'\n'"$KEY=\"printf ok\""$'\n'; }
+p50() { pcase '닫는 따옴표 뒤 공백 없는 # 는 주석이 아니다'    1 '' \
+        "$KEY=\"\"#on"$'\n'; }
+p51() { pcase '인용 없는 값이 # 로 시작하면 값 그대로다'        0 '#on' \
+        "$KEY=#on"$'\n'; }
+p52() { pcase '인용이 EOF 까지 안 닫히면 파일을 못 믿는다'      1 '' \
+        "$KEY=\"printf ok\""$'\n'"NOTES='열고 안 닫음"$'\n'; }
+
+g11() { gcase '여러 줄 값 안의 키로는 못 끈다'  on \
+        "NOTES='example:"$'\n'"$GKEY="$'\n'"end'"$'\n'; }
+g12() { gcase '히어독 <<\EOF 본문으로는 못 끈다' on \
+        'cat <<\EOF'$'\n'"$GKEY=\"\""$'\n''EOF'$'\n'; }
+g13() { gcase '""#on 으로는 못 끈다'            on  "$GKEY=\"\"#on"$'\n'; }
+
 # --- 러너 ----------------------------------------------------------------
 
 CASES='
@@ -394,12 +415,13 @@ p01 p02 p03 p04 p05 p06 p07 p08 p09 p10
 p11 p12 p13 p14 p15 p16 p17 p18 p19 p20
 p21 p22 p23 p24 p25 p26 p27 p28 p29 p30
 p31 p32 p33 p34 p35 p36 p37 p38 p39 p40
-p41 p42 p43 p44 p45 p46 p47
+p41 p42 p43 p44 p45 p46 p47 p48 p49 p50 p51 p52
 i01 i02 i03 i04 i05 i06 i07 i08 i09 i10
 i11 i12 i13
 g01 g02 g03 g04 g05 g06 g07 g08 g09 g10
+g11 g12 g13
 '
-EXPECTED_CASES=70
+EXPECTED_CASES=78
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이 상쇄돼
 # 그대로 초록이 된다 — 목록을 직접 봐야 그 조합이 잡힌다.

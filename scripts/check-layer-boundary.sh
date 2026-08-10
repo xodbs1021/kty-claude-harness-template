@@ -32,16 +32,29 @@ set -euo pipefail
 # 찍어 ROOT 가 두 줄이 된다(절대 경로 호출로는 재현 안 됨). 형제 검사기와 같은 처리.
 ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# 스캔 범위는 배포물뿐이다. install.sh/sync.sh 가 복사하는 것은 template/.claude/ 이고,
-# 범위를 넓히면 문서·ADR·테스트의 **정당한 인용**이 죄다 위양성이 된다 — 이 저장소의
-# ADR 은 무엇이 새어 있었는지 기록해야 하므로 그 표현을 반드시 담는다.
+# 스캔 범위는 **배포물 전부**다. 범위를 넓히면 문서·ADR·테스트의 정당한 인용이 죄다
+# 위양성이 되므로 배포되지 않는 것은 넣지 않는다 — 이 저장소의 ADR 은 무엇이 새어
+# 있었는지 기록해야 하므로 그 표현을 반드시 담는다.
+#
+# **배포 경로가 둘이라는 것이 함정이었다.** install.sh 는 `template/.claude/` 를 프로젝트로
+# 복사하고, 그와 별도로 `global-agents/*.md` 를 `~/.claude/agents/` 로 배포한다. 범위를
+# template/ 하나로 잡았더니 global-agents/ 에 실제 누출이 있는데도 CI 가 초록이었다
+# (codex 검수에서 적발). 배포되는 것은 전부 본다.
+DEFAULT_ROOTS="$ROOT/template
+$ROOT/global-agents"
 # 회귀 테스트가 픽스처 트리를 겨누려고 이 값을 덮는다. 그 외에는 덮지 마라.
-SCAN_ROOT="${HARNESS_LAYER_SCAN_ROOT:-$ROOT/template}"
+SCAN_ROOTS="${HARNESS_LAYER_SCAN_ROOT:-$DEFAULT_ROOTS}"
 
-if [ ! -d "$SCAN_ROOT" ]; then
-  echo "✗ 스캔 범위가 디렉토리가 아닙니다: $SCAN_ROOT" >&2
-  exit 1
-fi
+# 범위 중 **하나라도** 없으면 거부한다. 하나가 조용히 빠지면 그만큼 감시가 사라진다.
+while IFS= read -r r; do
+  [ -n "$r" ] || continue
+  if [ ! -d "$r" ]; then
+    echo "✗ 스캔 범위가 디렉토리가 아닙니다: $r" >&2
+    exit 1
+  fi
+done <<EOF
+$SCAN_ROOTS
+EOF
 
 WORK="$(mktemp -d)"
 if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
@@ -74,18 +87,24 @@ PATTERNS
 # find -print0 을 **파일로 받는다.** 명령 치환으로 받으면 셸이 NUL 을 버려 루프가 한 번도
 # 안 돌고, 검사기는 "위반 0건"으로 초록불을 낸다.
 FILES="$WORK/files"
-find "$SCAN_ROOT" -print0 > "$FILES"
+: > "$FILES"
+while IFS= read -r r; do
+  [ -n "$r" ] || continue
+  find "$r" -print0 >> "$FILES"
+done <<EOF
+$SCAN_ROOTS
+EOF
 
 bad_pre=0
 while IFS= read -r -d '' p; do
   if [ -L "$p" ]; then
-    echo "✗ 심링크가 스캔 범위 안에 있습니다: ${p#"$SCAN_ROOT"/}" >&2
+    echo "✗ 심링크가 스캔 범위 안에 있습니다: ${p#"$ROOT"/}" >&2
     bad_pre=1
     continue
   fi
   [ -f "$p" ] || continue
   if ! LC_ALL=C tr -d '\000' < "$p" | cmp -s - "$p"; then
-    echo "✗ NUL 바이트를 가진 파일이 있어 내용을 믿을 수 없습니다: ${p#"$SCAN_ROOT"/}" >&2
+    echo "✗ NUL 바이트를 가진 파일이 있어 내용을 믿을 수 없습니다: ${p#"$ROOT"/}" >&2
     bad_pre=1
   fi
 done < "$FILES"
@@ -107,7 +126,7 @@ scanned=0
 while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
   scanned=$((scanned + 1))
-  rel="${f#"$SCAN_ROOT"/}"
+  rel="${f#"$ROOT"/}"
   while IFS="$(printf '\t')" read -r pat why; do
     [ -n "$pat" ] || continue
     # grep rc: 0=매치 1=무매치 **2 이상=오류**. `|| true` 로 뭉뚱그리면 읽기 실패까지
@@ -130,7 +149,8 @@ done < "$FILES"
 # 스캔 대상이 0개면 "0건 위반"을 찍고 통과한다 — 공허한 초록이다.
 # 배포물이 하나도 없을 리 없으므로 그건 범위 설정이 틀린 것이다.
 if [ "$scanned" -eq 0 ]; then
-  echo "✗ 스캔한 파일이 0개입니다: $SCAN_ROOT (범위 설정을 확인하세요)" >&2
+  echo "✗ 스캔한 파일이 0개입니다 (범위 설정을 확인하세요):" >&2
+  printf '%s\n' "$SCAN_ROOTS" | sed 's/^/    /' >&2
   exit 1
 fi
 

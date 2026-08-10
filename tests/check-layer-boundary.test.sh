@@ -55,9 +55,16 @@ new_tree() {
   printf '%s\n' "$d"
 }
 
-run_checker() {   # $1 = 스캔 범위
+run_checker() {   # $1 = 스캔 범위 (덮어쓰기)
   OUT=''; RC=999; DID_RUN=1
   OUT="$(HARNESS_LAYER_SCAN_ROOT="$1" "$CHECKER" 2>&1)"
+  RC=$?
+}
+
+# 덮어쓰기 **없이** 돌린다 — 검사기가 스스로 정한 기본 범위를 그대로 쓴다.
+run_checker_default() {
+  OUT=''; RC=999; DID_RUN=1
+  OUT="$(env -u HARNESS_LAYER_SCAN_ROOT "$CHECKER" 2>&1)"
   RC=$?
 }
 
@@ -175,10 +182,37 @@ c14() {
   report '스캔 범위가 없으면 거부한다' "$why"
 }
 
+# **기본 스캔 범위**를 겨누는 유일한 케이스.
+#
+# 다른 케이스는 전부 HARNESS_LAYER_SCAN_ROOT 로 픽스처 트리를 겨눈다 — 그래서 기본 범위가
+# 빠져도 전건 초록이다. 실제로 그랬다: 배포 경로가 둘(template/ 와 global-agents/)인데
+# 범위를 template/ 하나로 잡아, global-agents/ 에 실제 누출이 있는데도 CI 가 초록이었다
+# (codex 검수 적발). 범위 누락은 **검사기가 아무것도 안 보면서 초록을 내는** 부류라
+# 다른 어떤 케이스로도 안 잡힌다.
+c15() {
+  local why='' full_n tpl_n
+  DID_RUN=1
+  # 기본 범위(덮지 않음)로 돌린 파일 수
+  run_checker_default
+  if [ "$RC" -ne 0 ]; then
+    report '기본 스캔 범위가 배포 경로를 전부 덮는다' "기본 범위에서 rc=$RC / $OUT"; return 0
+  fi
+  full_n="$(printf '%s' "$OUT" | sed -n 's/.*배포물 \([0-9][0-9]*\)개.*/\1/p')"
+  # template/ 만 덮었을 때의 파일 수
+  run_checker "$REPO_ROOT/template"
+  tpl_n="$(printf '%s' "$OUT" | sed -n 's/.*배포물 \([0-9][0-9]*\)개.*/\1/p')"
+  if [ -z "$full_n" ] || [ -z "$tpl_n" ]; then
+    why="파일 수를 읽지 못했다 (full=[$full_n] tpl=[$tpl_n])"
+  elif [ "$full_n" -le "$tpl_n" ]; then
+    why="기본 범위가 template/ 하나뿐이다 (${full_n}개 ≤ ${tpl_n}개) — 다른 배포 경로가 감시 밖이다"
+  fi
+  report '기본 스캔 범위가 배포 경로를 전부 덮는다' "$why"
+}
+
 # --- 러너 ----------------------------------------------------------------
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14'
-EXPECTED_CASES=14
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15'
+EXPECTED_CASES=15
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

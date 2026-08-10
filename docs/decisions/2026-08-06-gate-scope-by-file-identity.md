@@ -29,7 +29,7 @@ Date: 2026-08-06
 | `PROJECT_DIR` 안 | 기존대로. 최상위 `_workspace/`·`.claude/` 와 순수 문서 제외 |
 | 밖 + **하네스 정본 저장소**(루트에 `template/.claude/`) | 저장소 전체를 **프로젝트와 같은 규칙으로** 검사 |
 | 밖 + 그 외 | `.claude/` 에 앵커된 하네스 경로만. **git 저장소가 아니어도 발화** |
-| `_workspace/00_design*.md`·`01_plan*.md` | 위치·git 여부 무관하게 듀얼리뷰 플래그만 |
+| `_workspace/00_design*.md`·`01_plan*.md` | 위치·git 여부 무관하게 듀얼리뷰 플래그만 (2026-08-10 [ADR-0006](2026-08-05-knowledge-store-layer-boundary.md) 이행에서 **지식 플래그가 추가**됐다 — 설계가 나온 턴을 반영 없이 끝내면 근거가 그 자리에서 사라진다) |
 
 부수 결정 셋:
 

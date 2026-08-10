@@ -54,7 +54,12 @@ new_project() {
   p="$(mktemp -d "$TMPROOT/proj.XXXXXX")" || return 1
   p="$(CDPATH='' cd -- "$p" && pwd -P)"
   "$INSTALL" "$p" >/dev/null 2>&1 || return 1
+  # 구판 식별 표식 — "복원됐나"를 판정하려면 구판이 식별 가능해야 한다.
   printf 'OLD\n' > "$p/.claude/hooks/.old-marker"
+  # **사용자 파일** — 템플릿에 없는 것. 디렉터리를 통째로 바꾸는 설계에서 이게 사라지면
+  # 데이터 파괴다. 구 구현(파일 단위 cp)에는 없던 회귀이므로 케이스로 붙든다.
+  printf 'user\n' > "$p/.claude/hooks/custom.sh"
+  mkdir -p "$p/.claude/hooks/lib" && printf 'lib\n' > "$p/.claude/hooks/lib/helper.sh"
   printf '%s\n' "$p"
 }
 
@@ -100,14 +105,20 @@ leftovers() {
 # --- 케이스 --------------------------------------------------------------
 
 c01() {
-  local name='정상 설치 — 제자리·잔류물 0·중첩 없음·구판 잔재 없음' p why=''
+  local name='정상 설치 — 템플릿 훅은 갱신, 사용자 파일은 보존' p why=''
   if ! p="$(new_project)"; then report "$name" '픽스처 실패'; return 0; fi
+  # 템플릿 소유 파일을 오염시켜 둔다. 재설치가 이걸 덮어써야 "갱신"이다.
+  printf 'STALE\n' > "$p/.claude/hooks/_common.sh"
   run_install "$p"
   if [ "$RC" -ne 0 ]; then why="rc=$RC"
-  elif [ ! -f "$p/.claude/hooks/_common.sh" ]; then why='_common.sh 이 제자리에 없다'
+  elif grep -q '^STALE$' "$p/.claude/hooks/_common.sh" 2>/dev/null; then
+    why='템플릿 훅이 갱신되지 않았다'
+  elif [ ! -f "$p/.claude/hooks/custom.sh" ]; then
+    why='**사용자 파일 custom.sh 가 삭제됐다** (디렉터리 교체가 데이터를 파괴한다)'
+  elif [ ! -f "$p/.claude/hooks/lib/helper.sh" ]; then
+    why='**사용자 하위 디렉터리 lib/ 가 삭제됐다**'
   elif [ -e "$p/.claude/hooks/hooks" ]; then why='중첩(hooks/hooks)이 생겼다'
   elif [ "$(leftovers "$p")" != '0' ]; then why='임시 디렉터리가 남았다'
-  elif [ -f "$p/.claude/hooks/.old-marker" ]; then why='구판 잔재가 남았다 (교체가 아니라 덮어쓰기다)'
   fi
   report "$name" "$why"
 }

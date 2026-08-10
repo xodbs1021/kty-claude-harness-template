@@ -73,19 +73,40 @@ if [ -L "$DST/hooks" ]; then
 else
   hooks_stage="$(mktemp -d "$DST/.hooks-stage.XXXXXX")"
   hooks_backup="$(mktemp -d "$DST/.hooks-old.XXXXXX")"
-  hooks_swapped=0     # 0=아직 안 옮김  1=옛것을 치웠고 새것은 아직 안 들어옴
-  cp "$SRC/hooks/"*.sh "$hooks_stage/"
+  # **디렉터리를 통째로 바꾸므로 기존 내용물을 먼저 스테이징으로 옮겨 심는다.**
+  # 이게 없으면 템플릿에 없는 사용자 파일(custom.sh·보조 파일·하위 디렉터리)이
+  # 재설치마다 영구 삭제된다 — 파일 단위 cp 였던 구 구현에는 없던 회귀다.
+  # 슬롯이 아니어도 사용자가 그 디렉터리에 둔 것을 하네스가 지울 권한은 없다.
+  if [ -d "$DST/hooks" ]; then
+    if ! cp -R "$DST/hooks/." "$hooks_stage/"; then
+      rm -rf "$hooks_stage" "$hooks_backup"
+      echo "✗ 기존 훅 디렉터리를 스테이징으로 복사하지 못했습니다 — 사용자 파일을 잃지 않으려고 중단합니다." >&2
+      exit 1
+    fi
+  fi
+  cp "$SRC/hooks/"*.sh "$hooks_stage/"     # 템플릿 훅만 덮어쓴다
   chmod +x "$hooks_stage/"*.sh
 
   on_swap_signal() {   # $1=신호 이름  $2=종료 코드
     set +e             # 보고는 최선 노력, **종료 코드가 계약**이다
-    if [ "$hooks_swapped" -eq 1 ] && [ -d "$hooks_backup/hooks" ] && [ ! -e "$DST/hooks" ]; then
-      mv "$hooks_backup/hooks" "$DST/hooks"
-      echo "[$1] 훅 교체 도중 중단 — 구판으로 되돌렸습니다." >&2
+    # 플래그가 아니라 **파일시스템 실제 상태**로 판정한다. 첫 mv 가 끝났는데 플래그를
+    # 세우기 전에 신호가 오는 창이 있고(bash 는 외부 명령 종료 뒤 대기 중인 trap 을
+    # 먼저 실행한다), 플래그를 믿으면 그 창에서 복원하지 않고 백업까지 지운다.
+    if [ -d "$hooks_backup/hooks" ] && [ ! -e "$DST/hooks" ]; then
+      if mv "$hooks_backup/hooks" "$DST/hooks"; then
+        echo "[$1] 훅 교체 도중 중단 — 구판으로 되돌렸습니다." >&2
+        rm -rf "$hooks_stage" "$hooks_backup"
+      else
+        # 복구가 실패했다. **백업을 지우지 않는다** — 그것이 유일한 사본이다.
+        echo "[$1] 훅 교체 도중 중단됐고 **복구도 실패했습니다**." >&2
+        echo "     구판이 여기 남아 있습니다: $hooks_backup/hooks" >&2
+        echo "     손으로 옮기세요:  mv '$hooks_backup/hooks' '$DST/hooks'" >&2
+        rm -rf "$hooks_stage"
+      fi
     else
       echo "[$1] 중단되었습니다 (훅 교체는 시작 전이거나 이미 끝났습니다)." >&2
+      rm -rf "$hooks_stage" "$hooks_backup"
     fi
-    rm -rf "$hooks_stage" "$hooks_backup"
     exit "$2"
   }
   # QUIT·HUP 도 잡는다: bash 는 trap 이 없으면 QUIT 를 **무시하고 rc=0 을 낸다** —
@@ -97,18 +118,26 @@ else
 
   if [ -d "$DST/hooks" ]; then
     mv "$DST/hooks" "$hooks_backup/hooks"   # 중첩은 사고가 아니라 계약이다
-    hooks_swapped=1
   fi
   if ! mv "$hooks_stage" "$DST/hooks"; then
     # rename2 실패. **성공으로 오진단하지 않는다** — 되돌리고 실패로 끝낸다.
-    if [ "$hooks_swapped" -eq 1 ] && [ -d "$hooks_backup/hooks" ]; then
-      mv "$hooks_backup/hooks" "$DST/hooks" && echo "   구판 훅으로 되돌렸습니다." >&2
+    # 복구 mv 의 rc 를 확인한다. 실패했는데 "되돌렸습니다"를 찍고 백업을 지우면
+    # 유일한 사본이 사라진다.
+    if [ -d "$hooks_backup/hooks" ] && [ ! -e "$DST/hooks" ]; then
+      if mv "$hooks_backup/hooks" "$DST/hooks"; then
+        echo "   구판 훅으로 되돌렸습니다." >&2
+        rm -rf "$hooks_backup"
+      else
+        echo "   **복구도 실패했습니다.** 구판이 여기 남아 있습니다: $hooks_backup/hooks" >&2
+        echo "   손으로 옮기세요:  mv '$hooks_backup/hooks' '$DST/hooks'" >&2
+      fi
+    else
+      rm -rf "$hooks_backup"
     fi
-    rm -rf "$hooks_stage" "$hooks_backup"
+    rm -rf "$hooks_stage"
     echo "✗ 훅 디렉터리를 교체하지 못했습니다: $DST/hooks" >&2
     exit 1
   fi
-  hooks_swapped=0
   trap - INT TERM QUIT HUP     # 여기부터는 되돌릴 것이 없다
   rm -rf "$hooks_backup"
 fi
@@ -134,6 +163,26 @@ if [ ! -f "$DST/harness/project-profile.md" ]; then
 else
   echo "   슬롯 보존    harness/project-profile.md   (기존 유지)"
 fi
+# 개명 전 플래그 이행 — **배포되지 않는 이 스크립트가 맡는다.**
+# 기존 설치본에 미처리 지식 플래그가 옛 이름으로 남아 있을 수 있는데, 새 훅은 새 이름만
+# 보므로 그대로 두면 밀린 반영 의무가 **조용히 사라진다**(하네스를 갱신했을 뿐인데).
+# 훅 쪽에서 옛 이름을 알게 하면 배포되는 글루가 구현체 이름을 다시 품어 층 경계 검사가
+# 막는다 — 그래서 이행은 여기에 있다. 새 이름이 이미 있으면 **덮지 않고 이어붙인다.**
+legacy_flag="$DST/.needs-$(printf 'vault')"
+if [ -f "$legacy_flag" ]; then
+  if [ -s "$legacy_flag" ]; then
+    if cat "$legacy_flag" >> "$DST/.needs-knowledge" 2>/dev/null; then
+      rm -f "$legacy_flag"
+      echo "   플래그 이행 ✓  미처리 지식 반영 항목을 새 이름으로 옮겼습니다"
+    else
+      echo "   ⚠ 미처리 지식 반영 플래그를 새 이름으로 옮기지 못했습니다: $legacy_flag" >&2
+      echo "     손으로 옮기지 않으면 그 항목의 반영 의무가 사라집니다." >&2
+    fi
+  else
+    rm -f "$legacy_flag"
+  fi
+fi
+
 if [ ! -f "$DST/harness/harness.env" ]; then
   cp "$SRC/harness/harness.env.template" "$DST/harness/harness.env"
   echo "   슬롯 생성 ✓  harness/harness.env          ← HARNESS_TYPECHECK_CMD 채우세요"

@@ -106,12 +106,18 @@ echo ""
 # 실제로 읽히는지 확인하고, 안 읽히면 조용히 넘어가지 않고 알린다.
 if [ "$add_gate_key" -eq 1 ]; then
   envf="$DST/harness/harness.env"
+  # 검증은 **완성된 줄 전체**를 요구한다. `^HARNESS_KNOWLEDGE_GATE=` 로만 보면
+  # append 가 등호 직후에서 잘려 `HARNESS_KNOWLEDGE_GATE=` 만 남은 경우까지 통과시키는데,
+  # 그 잘린 줄은 파서에게 **완벽히 유효한 "리터럴 빈 값"** 이라 게이트를 끈다.
+  # 즉 "실패 방향은 안전하다"가 이 한 지점에서만 성립하지 않아서, 여기서 막는다.
   if { printf '\n# 지식 반영 게이트 (하네스가 나중에 추가한 슬롯). 끄려면 값을 비운다 —\n# "off" 라고 적으면 비어 있지 않으므로 켜진 것으로 읽힌다. 이 줄이 없어도 켜짐이다.\nHARNESS_KNOWLEDGE_GATE="on"\n' >> "$envf"; } 2>/dev/null \
-     && grep -qE '^HARNESS_KNOWLEDGE_GATE=' "$envf" 2>/dev/null; then
+     && grep -qxF 'HARNESS_KNOWLEDGE_GATE="on"' "$envf" 2>/dev/null; then
     echo "   슬롯 키 추가 ✓  harness/harness.env  HARNESS_KNOWLEDGE_GATE=\"on\""
   else
-    echo "   ⚠ harness/harness.env 에 HARNESS_KNOWLEDGE_GATE 를 추가하지 못했습니다(권한·디스크)." >&2
-    echo "     동작은 그대로입니다(키가 없으면 켜짐). 손으로 넣으려면 위 한 줄을 추가하세요." >&2
+    echo "   ⚠ harness/harness.env 에 HARNESS_KNOWLEDGE_GATE 를 온전히 추가하지 못했습니다." >&2
+    echo "     **파일 끝에 잘린 줄이 남았을 수 있습니다.** 그 상태로 두면 지식 게이트가" >&2
+    echo "     꺼진 것으로 읽힐 수 있으니 파일 끝을 직접 확인하고, 다음 한 줄로 고치세요:" >&2
+    echo '       HARNESS_KNOWLEDGE_GATE="on"' >&2
   fi
 fi
 

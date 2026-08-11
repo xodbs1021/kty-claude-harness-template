@@ -532,7 +532,9 @@ fi
 if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
   dualreview_artifact=""
   for _dr in "$PROJECT_DIR/_workspace"/*codex*.md; do
-    [ -e "$_dr" ] || continue                       # 글롭 무매치 리터럴은 -e 에서 걸러진다
+    # 글롭 무매치 리터럴·디렉터리·빈 파일 전부 거른다 — [cx]: -e 만 보면
+    # foo-codex.md **디렉터리**나 0바이트 touch 로도 게이트가 풀린다.
+    [ -f "$_dr" ] && [ -s "$_dr" ] || continue
     if [ "$_dr" -nt "$DUALREVIEW_FLAG" ]; then
       dualreview_artifact="$_dr"
       break

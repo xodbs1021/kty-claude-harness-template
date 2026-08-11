@@ -221,33 +221,52 @@ if [ -f "$SRC/hooks/guard-codex-mcp.sh" ]; then
     cp "$GLOBAL_SETTINGS" "$GLOBAL_SETTINGS.bak-$STAMP"
   fi
   python3 - "$GLOBAL_SETTINGS" "$HOME/.claude/hooks/guard-codex-mcp.sh" <<'PYEOF'
-import json, os, sys
+import json, os, sys, tempfile
 dst_path, script_path = sys.argv[1], sys.argv[2]
 cmd = f'/bin/bash "{script_path}"'
-cur = {}
-if os.path.exists(dst_path):
-    with open(dst_path) as f:
-        cur = json.load(f)
-lst = cur.setdefault("hooks", {}).setdefault("PreToolUse", [])
-entry = next((e for e in lst if e.get("matcher") == "mcp__codex__codex"), None)
-if entry is None:
-    lst.append({"matcher": "mcp__codex__codex",
-                "hooks": [{"type": "command", "command": cmd, "timeout": 15}]})
-    print("   전역 codex 가드 ✓  ~/.claude/settings.json 배선 추가")
-else:
-    hooks = entry.setdefault("hooks", [])
-    ours = next((h for h in hooks if "guard-codex-mcp.sh" in h.get("command", "")), None)
-    if ours is None:
-        hooks.append({"type": "command", "command": cmd, "timeout": 15})
-        print("   전역 codex 가드 ✓  기존 matcher 에 훅 추가")
-    elif ours.get("command") != cmd:
-        ours["command"] = cmd
-        print("   전역 codex 가드 ✓  경로를 현 기기로 갱신")
+# 소유권 판별은 부분 문자열이 아니라 **정확한 명령 꼴**로 — "guard-codex-mcp.sh" 를 품은
+# 사용자 wrapper(env·인자 추가본)를 우리 것으로 오인해 교체하면 사용자 훅 파괴다([cx]).
+def is_ours(h):
+    c = h.get("command", "") if isinstance(h, dict) else ""
+    return c.startswith('/bin/bash "') and c.endswith('/.claude/hooks/guard-codex-mcp.sh"')
+try:
+    cur = {}
+    if os.path.exists(dst_path):
+        with open(dst_path) as f:
+            cur = json.load(f)
+    # 타입을 **파일 변경 전에** 전부 검증한다 — 도중 예외는 부분 설치를 남긴다([cx]).
+    if not isinstance(cur, dict): raise TypeError("settings 루트가 객체가 아님")
+    hooks_map = cur.setdefault("hooks", {})
+    if not isinstance(hooks_map, dict): raise TypeError("hooks 가 객체가 아님")
+    lst = hooks_map.setdefault("PreToolUse", [])
+    if not isinstance(lst, list): raise TypeError("hooks.PreToolUse 가 배열이 아님")
+    # 같은 matcher 가 여러 항목이어도 전부 조사한다([cx] — 첫 항목만 보면 중복 배선).
+    entries = [e for e in lst if isinstance(e, dict) and e.get("matcher") == "mcp__codex__codex"]
+    ours = [h for e in entries for h in e.get("hooks", []) if is_ours(h)]
+    if not entries:
+        lst.append({"matcher": "mcp__codex__codex",
+                    "hooks": [{"type": "command", "command": cmd, "timeout": 15}]})
+        msg = "   전역 codex 가드 ✓  ~/.claude/settings.json 배선 추가"
+    elif not ours:
+        entries[0].setdefault("hooks", []).append(
+            {"type": "command", "command": cmd, "timeout": 15})
+        msg = "   전역 codex 가드 ✓  기존 matcher 에 훅 추가"
+    elif any(h.get("command") != cmd for h in ours):
+        for h in ours: h["command"] = cmd
+        msg = "   전역 codex 가드 ✓  경로를 현 기기로 갱신"
     else:
-        print("   전역 codex 가드    이미 배선됨 (멱등)")
-with open(dst_path, "w") as f:
-    json.dump(cur, f, ensure_ascii=False, indent=2)
-    f.write("\n")
+        msg = "   전역 codex 가드    이미 배선됨 (멱등)"
+    # 원자 교체 — live 파일 truncate 중 중단되면 전역 설정 전체가 깨진다([cx]).
+    d = os.path.dirname(dst_path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".settings.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, dst_path)
+    print(msg)
+except Exception as e:
+    print(f"   ⚠ 전역 settings 병합 실패({e}) — 파일을 변경하지 않았습니다. 수동 배선 필요.",
+          file=sys.stderr)
 PYEOF
 fi
 
@@ -255,29 +274,48 @@ fi
 # 가드 두 개(Bash·MCP)는 "model/effort 생략이면 config.toml 기본값이라 통과"로 판정한다.
 # 이 파일이 없는 새 기기에서는 생략 호출이 codex 자체 기본 모델로 빠져나간다 — 전제 붕괴.
 # 없으면 스캐폴드, 있는데 모델이 다르면 경고만(사용자 파일은 덮지 않는다 — 슬롯 원칙).
+# 경고 출력 실패(stderr 닫힘 등)가 OR-리스트 끝에서 set -e 로 설치를 죽이지 않게([cx]).
+warn() { printf '%s\n' "$1" >&2 || :; }
 CODEX_CFG="$HOME/.codex/config.toml"
 if [ ! -f "$CODEX_CFG" ]; then
   mkdir -p "$HOME/.codex"
   printf 'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "xhigh"\n' > "$CODEX_CFG"
   echo "   codex 기본값 ✓  ~/.codex/config.toml 스캐폴드 (gpt-5.6-sol / xhigh)"
-elif ! grep -q '^model *= *"gpt-5\.6-sol"' "$CODEX_CFG"; then
-  echo "   ⚠ ~/.codex/config.toml 의 model 이 gpt-5.6-sol 이 아닙니다 — 가드의" >&2
-  echo "     '생략 = 안전' 전제가 깨집니다. 직접 확인하세요(사용자 파일이라 안 덮음)." >&2
 else
-  echo "   codex 기본값    ~/.codex/config.toml 확인됨 (기존 유지)"
+  # grep 은 TOML 을 모른다 — [profiles.*] 하위 model 오인·따옴표 변형 오탐([cx]).
+  # tomllib 로 최상위 model + effort 둘 다 본다(effort 미검사도 [cx] 지적).
+  codex_cfg_state="$(python3 - "$CODEX_CFG" <<'PYEOF'
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as f:
+        cfg = tomllib.load(f)
+except Exception:
+    print("parse-error"); sys.exit(0)
+model_ok = cfg.get("model") == "gpt-5.6-sol"
+effort_ok = cfg.get("model_reasoning_effort") in ("high", "xhigh")
+print("ok" if model_ok and effort_ok else
+      "model" if not model_ok else "effort")
+PYEOF
+)" || codex_cfg_state="parse-error"
+  case "$codex_cfg_state" in
+    ok)     echo "   codex 기본값    ~/.codex/config.toml 확인됨 (기존 유지)" ;;
+    model)  warn "   ⚠ ~/.codex/config.toml 최상위 model 이 gpt-5.6-sol 이 아님 — 가드의 '생략 = 안전' 전제가 깨집니다(사용자 파일이라 안 덮음)." ;;
+    effort) warn "   ⚠ ~/.codex/config.toml 의 model_reasoning_effort 가 high/xhigh 가 아님(또는 없음) — 생략 호출이 규정보다 약하게 돕니다(사용자 파일이라 안 덮음)." ;;
+    *)      warn "   ⚠ ~/.codex/config.toml 파싱 실패 — 내용을 직접 확인하세요(사용자 파일이라 안 덮음)." ;;
+  esac
 fi
 
 # ── 1e) 전역 의존 존재 점검 (경고만 — 설치는 사용자 몫) ─────────────
 # SKILL.md 에 폴백은 있지만, 없다는 사실은 설치 시점에 아는 것이 가장 싸다.
 [ -d "$HOME/.claude/rules/ecc" ] \
-  || echo "   ⚠ ECC 룰(~/.claude/rules/ecc/) 없음 — 에이전트들이 참조하는 코딩 규칙이 비어 돕니다." >&2
+  || warn "   ⚠ ECC 룰(~/.claude/rules/ecc/) 없음 — 에이전트들이 참조하는 코딩 규칙이 비어 돕니다."
 ls "$HOME/.claude/plugins/cache/"*/superpowers/* >/dev/null 2>&1 \
-  || echo "   ⚠ superpowers 플러그인 미설치 — TDD·디버깅 방법론 스킬 폴백으로 동작합니다." >&2
+  || warn "   ⚠ superpowers 플러그인 미설치 — TDD·디버깅 방법론 스킬 폴백으로 동작합니다."
 if [ -f "$HOME/.claude/CLAUDE.md" ]; then
   grep -qiE 'vault|볼트|second.?brain|지식' "$HOME/.claude/CLAUDE.md" \
-    || echo "   ⚠ 전역 CLAUDE.md 에 지식 저장소 규약이 안 보입니다 — knowledge 게이트가 목적지를 모릅니다(harness.env 로 끌 수 있음)." >&2
+    || warn "   ⚠ 전역 CLAUDE.md 에 지식 저장소 규약이 안 보입니다 — knowledge 게이트가 목적지를 모릅니다(harness.env 로 끌 수 있음)."
 else
-  echo "   ⚠ 전역 CLAUDE.md 없음 — knowledge 게이트가 목적지를 모릅니다(harness.env 로 끌 수 있음)." >&2
+  warn "   ⚠ 전역 CLAUDE.md 없음 — knowledge 게이트가 목적지를 모릅니다(harness.env 로 끌 수 있음)."
 fi
 
 # ── 2) 슬롯 스캐폴드 (없을 때만 — 도메인은 사용자가 채운다) ──────────

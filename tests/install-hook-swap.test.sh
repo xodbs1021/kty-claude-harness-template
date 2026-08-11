@@ -36,6 +36,11 @@ fi
 TMPROOT="$(CDPATH='' cd -- "$TMPROOT" && pwd -P)"
 trap 'rm -rf "$TMPROOT"' EXIT
 
+# HOME 격리 — install.sh 1b~1d 가 전역(~/.claude, ~/.codex)을 만지므로, 테스트가
+# 실사용 홈을 복사·재포맷·스캐폴드하지 않게 가짜 HOME 아래로 가둔다([cx] 2026-08-11).
+HOME="$TMPROOT/home"; export HOME
+mkdir -p "$HOME" || { echo "✗ 가짜 HOME 을 만들지 못했습니다" >&2; exit 1; }
+
 REAL_MV="$(command -v mv)"
 [ -n "$REAL_MV" ] || { echo "✗ mv 를 찾지 못했습니다" >&2; exit 1; }
 

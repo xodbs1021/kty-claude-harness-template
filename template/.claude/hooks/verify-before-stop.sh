@@ -166,13 +166,16 @@ bump_and_block() {
 #     가져간다 — `exit 0` 한 줄이면 이 훅이 조용히 끝나 **게이트 4종이 통째로 사라지고**
 #     흔적도 안 남는다. 원문 판독으로 그 부류를 없앤다(harness_env_value 주석 참조).
 typecheck_note=""
-#     rc 를 함께 받는다. "리터럴로 비웠다"(rc=0 + 빈 값 = 의도한 생략)와 "값을 믿을 수
-#     없다"(rc=1 = 미설정·선언 2개 이상·지원 문법 밖·읽기 실패)는 둘 다 생략으로 가지만
-#     사용자에게 **다른 정보**다. 후자는 고칠 수 있는 실수라 그렇게 적어야 한다.
+#     rc 를 함께 받는다. "리터럴로 비웠다"(rc=0 + 빈 값 = 의도한 생략) · "부재"(rc=3 =
+#     키를 안 씀) · "값을 믿을 수 없다"(rc=1 = 선언 2개 이상·지원 문법 밖·읽기 실패)는
+#     셋 다 생략으로 가지만 사용자에게 **다른 정보**다 — 마지막 것만 고칠 수 있는 실수라
+#     그렇게 적어야 한다(구분의 정본은 _common.sh 반환 계약 — ADR-0016).
 TYPECHECK_CMD="$(harness_env_value HARNESS_TYPECHECK_CMD)"; typecheck_rc=$?
 
-if [ "$typecheck_rc" -ne 0 ]; then
-  typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 를 읽지 못함 — 미설정이거나, 선언이 2개 이상이거나, 지원 문법 밖입니다)"
+if [ "$typecheck_rc" -eq 3 ]; then
+  typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 미설정)"
+elif [ "$typecheck_rc" -ne 0 ]; then
+  typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 값을 믿을 수 없음 — 선언이 2개 이상이거나, 지원 문법 밖이거나, 읽기 실패입니다. 고칠 수 있는 실수입니다)"
 elif [ -z "$TYPECHECK_CMD" ]; then
   typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 가 빈 값으로 설정됨)"
 else

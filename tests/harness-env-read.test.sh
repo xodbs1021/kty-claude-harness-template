@@ -8,7 +8,7 @@
 # **타입체크 게이트가 흔적 없이 사라진다.** 넷 중 둘(후행 공백·CR)은 눈에 보이지도 않는다.
 #
 # 무엇을 붙드나 — 두 층이다:
-#   [파서]   harness_env_value 의 반환 계약. rc(0=판독됨 / 1=믿을 수 없음)와 **값의 바이트**.
+#   [파서]   harness_env_value 의 반환 계약. rc(0=판독됨 / 1=믿을 수 없음 / 3=부재)와 **값의 바이트**.
 #            rc 를 값과 함께 재는 이유: "리터럴로 비웠다"와 "미설정"은 스위치형 슬롯에서
 #            **반대 방향**이라 빈 문자열 하나로 뭉뚱그리면 그 구별이 사라진다.
 #   [통합]   verify-before-stop.sh 를 **실제로 돌려** ① 적대적 harness.env(exit 0/1·return·
@@ -59,7 +59,7 @@ KEY='HARNESS_TYPECHECK_CMD'
 TOK_TC_FAIL='타입체크 실패'
 TOK_AUDIT='completion-auditor 미실행'
 TOK_READ_FAIL='읽지 못했습니다'   # _common.sh 가 stderr 로 내는 읽기 실패 경고
-TOK_UNREADABLE='읽지 못함'        # Stop 훅이 사용자에게 내는 생략 사유
+TOK_UNREADABLE='값을 믿을 수 없음'  # Stop 훅이 사용자에게 내는 생략 사유(rc=1 부류)
 TOK_EMPTY_SET='빈 값으로 설정됨'
 TOK_KNOWLEDGE='지식 저장소 반영 미확인'
 GKEY='HARNESS_KNOWLEDGE_GATE'
@@ -254,13 +254,13 @@ p03() { pcase '정상 — 인용 없는 한 단어'              0 'mypy'      "
 p04() { pcase '인용 없는 여러 단어'                   0 'pnpm tsc --noEmit' "$KEY=pnpm tsc --noEmit"$'\n'; }
 p05() { pcase 'export + 공백'                         0 'printf ok' "export $KEY=\"printf ok\""$'\n'; }
 p06() { pcase 'export + 탭'                           0 'printf ok' "export"$'\t'"$KEY=\"printf ok\""$'\n'; }
-p07() { pcase '선언 0개 — 키가 없다'                  1 ''          '# 아무 키도 없다'$'\n'; }
+p07() { pcase '선언 0개 — 키가 없다'                  3 ''          '# 아무 키도 없다'$'\n'; }
 p08() { pcase '선언 2개 — 어느 게 이기는지 모른다'    1 ''          "$KEY=\"a\""$'\n'"$KEY=\"b\""$'\n'; }
 p09() { pcase '들여쓴 위장(공백)은 선언이 아니다'     0 'printf ok' "  $KEY=\"evil\""$'\n'"$KEY=\"printf ok\""$'\n'; }
-p10() { pcase '들여쓴 위장(탭)만 있으면 미설정'       1 ''          $'\t'"$KEY=\"evil\""$'\n'; }
+p10() { pcase '들여쓴 위장(탭)만 있으면 미설정'       3 ''          $'\t'"$KEY=\"evil\""$'\n'; }
 p11() { pcase '접두사가 같은 다른 키는 안 센다'       0 'printf ok' "${KEY}_EXTRA=\"x\""$'\n'"$KEY=\"printf ok\""$'\n'; }
-p12() { pcase '접두사 키만 있으면 미설정'             1 ''          "${KEY}_EXTRA=\"x\""$'\n'; }
-p13() { pcase '주석 처리된 선언은 안 센다'            1 ''          "# $KEY=\"x\""$'\n'; }
+p12() { pcase '접두사 키만 있으면 미설정'             3 ''          "${KEY}_EXTRA=\"x\""$'\n'; }
+p13() { pcase '주석 처리된 선언은 안 센다'            3 ''          "# $KEY=\"x\""$'\n'; }
 p14() { pcase '후행 주석 — 겹따옴표'                  0 'printf ok' "$KEY=\"printf ok\" # note"$'\n'; }
 p15() { pcase '후행 주석 — 홑따옴표'                  0 'printf ok' "$KEY='printf ok' # note"$'\n'; }
 p16() { pcase '후행 주석 — 인용 없음'                 0 'mypy'      "$KEY=mypy # note"$'\n'; }
@@ -273,7 +273,7 @@ p22() { pcase 'CRLF + 후행 주석'                      0 'printf ok' "$KEY=\"
 p23() { pcase '파일 앞 BOM + 첫 줄이 선언'            0 'printf ok' $'\357\273\277'"$KEY=\"printf ok\""$'\n'; }
 p24() { pcase '파일 앞 BOM + 둘째 줄이 선언'          0 'printf ok' $'\357\273\277''# 주석'$'\n'"$KEY=\"printf ok\""$'\n'; }
 p25() { pcase '히어독 본문의 키는 선언이 아니다'      0 'printf ok' 'cat <<EOF'$'\n'"$KEY=\"evil\""$'\n''EOF'$'\n'"$KEY=\"printf ok\""$'\n'; }
-p26() { pcase '히어독 본문에만 있으면 미설정'         1 ''          'cat <<EOF'$'\n'"$KEY=\"\""$'\n''EOF'$'\n'; }
+p26() { pcase '히어독 본문에만 있으면 미설정'         3 ''          'cat <<EOF'$'\n'"$KEY=\"\""$'\n''EOF'$'\n'; }
 p27() { pcase '히어독 <<- 는 탭 들여쓴 종결어'        0 'printf ok' 'cat <<-EOF'$'\n'"$KEY=\"evil\""$'\n\t''EOF'$'\n'"$KEY=\"printf ok\""$'\n'; }
 p28() { pcase "히어독 <<'EOF' 인용 종결어"            0 'printf ok' "cat <<'EOF'"$'\n'"$KEY=\"evil\""$'\n''EOF'$'\n'"$KEY=\"printf ok\""$'\n'; }
 p29() { pcase '히어독이 EOF 까지 안 닫히면 미설정'    1 ''          "$KEY=\"printf ok\""$'\n''cat <<EOF'$'\n''본문'$'\n'; }
@@ -289,8 +289,8 @@ p38() { pcase '리터럴 빈 값 — 등호 뒤가 없다'         0 ''         
 p39() { pcase '값에 등호가 들어 있다'                 0 'a=b'       "$KEY=a=b"$'\n'; }
 p40() { pcase '따옴표 안의 공백은 보존한다'           0 '  '        "$KEY=\"  \""$'\n'; }
 p41() { pcase '$VAR 는 판독 시점에 확장되지 않는다'   0 'printf $HOME' "$KEY='printf \$HOME'"$'\n'; }
-p42() { pcase 'harness.env 파일이 없다'               1 ''          '__NOFILE__'; }
-p43() { pcase '빈 파일'                               1 ''          ''; }
+p42() { pcase 'harness.env 파일이 없다'               3 ''          '__NOFILE__'; }
+p43() { pcase '빈 파일'                               3 ''          ''; }
 # 값의 앞·뒤 공백은 **서로 다른 자리**에서 털린다. 각각 따로 붙든다 —
 # 한쪽만 재면 다른 쪽을 지워도 초록이다(변이 측정에서 실제로 그랬다).
 p45() { pcase '등호 뒤 선행 공백은 문법 밖'           1 ''          "$KEY=  \"printf ok\""$'\n'; }
@@ -391,7 +391,7 @@ g10() { gcase 'CRLF 로 비워도 꺼진다'              off "$GKEY=\"\""$'\r\n
 # --- 듀얼 검수(2026-08-10)가 찾은 경로 ---------------------------------
 # 넷 다 **게이트를 끄는 방향**으로 틀리던 자리다. 이 방향의 오류가 이 설계에서 가장 나쁘다.
 
-p48() { pcase '다른 키의 여러 줄 값 안에 있는 키는 선언이 아니다' 1 '' \
+p48() { pcase '다른 키의 여러 줄 값 안에 있는 키는 선언이 아니다' 3 '' \
         "NOTES='example:"$'\n'"$KEY="$'\n'"end'"$'\n'; }
 p49() { pcase '히어독 <<\EOF (백슬래시 인용) 본문도 건너뛴다' 0 'printf ok' \
         'cat <<\EOF'$'\n'"$KEY=\"evil\""$'\n''EOF'$'\n'"$KEY=\"printf ok\""$'\n'; }

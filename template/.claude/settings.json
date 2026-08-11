@@ -30,6 +30,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/mark-needs-audit.sh\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-harness-env.sh\"",
+            "timeout": 15
           }
         ]
       }

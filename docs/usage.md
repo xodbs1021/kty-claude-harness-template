@@ -63,12 +63,13 @@ cd ~/.claude/harness-template
 | guard-master-commit | Bash 실행 전 | master/main 직접 `git commit` 차단 |
 | guard-hook-disable | Bash 실행 전 | 에이전트가 `HARNESS_HOOKS`·`ECC_DISABLED_HOOKS`·`ECC_GATEGUARD` 를 끄려 할 때 한 번 세운다. **과속방지턱이지 방벽이 아니다** — 아래 참조. 탈출구가 **없다** |
 | guard-codex-invocation | Bash 실행 전 | `codex exec` 호출의 모델(`gpt-5.6-sol`)·effort(`high`) 미달 차단 — 임의 하향 금지 (2026-08-01 사용자 지시) |
+| check-harness-env | 파일 편집 후 | `harness.env` 편집 직후 알려진 키를 실제 판독기로 읽어, 문법 실수로 **값을 믿을 수 없게 된 키**를 그 자리에서 알린다(안 그러면 해당 검사가 조용히 생략된 채 턴 종료 때에야 드러난다 — ADR-0016). 안 쓰는 키(부재)는 침묵 — 판독기의 rc=1/rc=3 구분이 위양성을 막는다 |
 | mark-needs-audit | 파일 편집 후 | 게이트 플래그 5종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview`·`.needs-retrieval` (코드는 앞 4종 · 설계·계획 산출물은 듀얼리뷰+지식+**머리 표명** · 결정 문서는 지식만). 검사 범위는 아래 "완료 게이트 검사 범위" 참조 |
 | verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → **혼자 정하지 않았나** → **머리 표명**(설계·계획 산출물 1줄 회수·2줄 레퍼런스 조사 — 형식을 지키면 스스로 풀린다) → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → **push 미완** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
 
 **지식 저장소 게이트가 아는 것은 계약 하나뿐이다** — "지식 저장소가 설정돼 있으면, 결정·설계가 나온 턴은 반영 없이 끝낼 수 없다." **어디에 어떤 구조로 반영하는지는 하네스가 모른다.** 그건 사용자 층 설정(전역 `CLAUDE.md` 등)이 답하고, 하네스에는 켜짐/꺼짐 1비트만 있다. 그래서 지식 저장소를 바꿔도 하네스는 고치지 않고, 아예 안 쓰는 프로젝트에서도 그대로 돈다.
 
-**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:decision`(결정 게이트만) / `stop:retrieval`(머리 표명 게이트만 — 회수·레퍼런스 두 표명 검사가 **함께** 꺼진다(개별 끄기 없음). **비활성이 "남은 할 일" 판정(`work_pending`)에 접혀 있어, 게이트를 꺼도 남은 플래그가 조기 종료를 막지 않는 유일한 플래그다.** 다른 플래그는 훅 비활성 여부를 각 게이트 호출부에서만 본다) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
+**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `post:edit:harness-env`(편집 검증 훅) / `stop:verify`(완료 게이트 전체) / `stop:decision`(결정 게이트만) / `stop:retrieval`(머리 표명 게이트만 — 회수·레퍼런스 두 표명 검사가 **함께** 꺼진다(개별 끄기 없음). **비활성이 "남은 할 일" 판정(`work_pending`)에 접혀 있어, 게이트를 꺼도 남은 플래그가 조기 종료를 막지 않는 유일한 플래그다.** 다른 플래그는 훅 비활성 여부를 각 게이트 호출부에서만 본다) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
 
 **머리 표명 게이트가 있는 이유 (ADR-0013·ADR-0015):** 설계·계획 산출물(`_workspace/00_design*.md`·`01_plan*.md`)이 저장된 턴은 **머리 두 줄**이 표명 형식을 지키기 전엔 끝나지 않는다. 첫 줄(`사전 결정 회수:`)은 ADR-0009 부터 계약이었는데 검증이 산문("확인한다")뿐이었다 — 산문 절차는 잊힌다(실사고 2회, ADR-0013). 둘째 줄(`레퍼런스 조사: 조사함(<대상·출처>)|불요(<사유>)|실패(<시도 — 사유>)`)은 "조사가 필요한 지시인가"의 판정을 기계가 못 하므로 판정의 **무표명 통과**를 막는 자리다 — 불요·실패에도 괄호 안 사유가 비면 불량이라 조용한 스킵이 없다(ADR-0015. 계기: 인접 도메인 선례 조사가 통째로 생략된 실사고 — "라이브 스트리밍이 아니니 Netflix 는 안 봤다"). **지울 플래그가 없다** — 형식을 지키면 게이트가 스스로 푼다. 형식만 본다: 진짜 읽었는지·조사했는지·표명 내용이 사실인지는 plan-reviewer·codex 검수(산문 계약)의 몫이고, 파일을 지워 우회하는 것도 기계로는 안 막힌다(실존 검증은 감사자 몫). 게이트 ID 는 `stop:retrieval` 그대로다 — **이름이 계약보다 좁다**(회수만 가리키는 이름이 두 표명을 검사한다). 저장소 밖 사용처(셸 설정·CI)에 박힌 ID 라 바꾸지 않았고, 이 괴리는 여기 공시한다. 이 ID 하나로 **두 표명 검사가 함께 꺼진다** — 개별 끄기는 없다.
 **`guard-hook-disable` 은 과속방지턱이지 보안 경계가 아니다.** 판정이 정규식 하나라 셸을 해석하지 못한다 — `read`+`export`, 따옴표로 쪼갠 `env 'X''=off'`, 변수 조립, `eval`, 생성한 스크립트 실행은 전부 통과한다(실측). 그럼에도 값을 하는 이유는 막으려는 것이 적대적 공격자가 아니라 **막힌 에이전트의 직진 충동**이고, 그건 `HARNESS_HOOKS=off ...` 라는 직진형으로 나오기 때문이다. 제대로 막으려면 셸 파서가 필요한데, 반쯤 만든 셸 파서는 안 만든 것보다 나쁘다(막힌다고 믿게 하면서 안 막는다 — 이 저장소가 `harness.env` 판독기에서 겪은 늪).
@@ -114,7 +115,7 @@ cd ~/.claude/harness-template
 ## 6. 트러블슈팅
 
 - **Stop 훅이 계속 차단** → 차단 메시지의 게이트 순서대로 처리하라: 결정 게이트(`AskUserQuestion` 으로 실제로 묻는다 — 지울 플래그가 없다) → 머리 표명(산출물 1줄에 `사전 결정 회수:`, 2줄에 `레퍼런스 조사: 조사함(…)|불요(…)|실패(…)` — 지키면 스스로 풀린다) → codex 듀얼리뷰(`.needs-dualreview`) → change-explainer(`.needs-explain`) → 지식 저장소 반영(`.needs-knowledge`) → push(`git push`, 지울 플래그 없음) → completion-auditor(`.needs-audit`). 각 작업을 실제로 마친 뒤에만 해당 플래그를 지운다. 게이트를 하나 지울 때마다 차단 예산이 리셋되므로 순서대로 처리하면 소진되지 않는다. 급하면 탈출구 환경변수. 같은 지점에서 진전 없이 3회면 자동 통과(그 턴의 완료 주장은 신뢰 금지).
-- **타입체크가 이상하게 실패** → `harness.env`의 명령을 셸에서 직접 실행해 확인. 도구 부재(rc=127)·타임아웃은 차단 안 하고 생략 처리된다.
+- **타입체크가 이상하게 실패** → `harness.env`의 명령을 셸에서 직접 실행해 확인. 도구 부재(rc=127)·타임아웃은 차단 안 하고 생략 처리된다. 문법 실수(등호 뒤 공백·중복 선언 등)는 이제 **편집한 그 자리에서** check-harness-env 훅이 경고한다 — 경고가 떴는데 무시하면 그 키의 검사가 조용히 생략된다.
 - **superpowers 스킬 호출 실패** → 플러그인 설치/이름 확인: `test-driven-development`·`writing-plans`·`brainstorming`·`requesting-code-review`·`verification-before-completion`·`systematic-debugging`.
 - **에이전트가 도메인을 무시** → 프로필 §가 비어 있지 않은지 확인. 오케스트레이터는 빈 §를 "검증 생략"으로 정직 보고한다.
 

@@ -28,6 +28,10 @@ jobs:
       # 여기가 조용히 틀리면 값에 쓰레기가 섞여 rc=127 이 되고 타입체크 게이트가 사라진다.
       - name: harness.env 원문 판독 회귀 테스트
         run: ./tests/harness-env-read.test.sh
+      # harness.env 편집 검증 훅(ADR-0016). 문법 실수의 조용한 검사 생략을 편집 즉시
+      # 알리는 훅 — 부재(rc=3)/못 믿음(rc=1) 구분이 위양성 방어의 절반이다.
+      - name: harness.env 편집 검증 훅 회귀 테스트
+        run: ./tests/check-harness-env.test.sh
       - name: 층 경계 검사기 회귀 테스트
         run: ./tests/check-layer-boundary.test.sh
       # 훅 교체 도중 중단되면 구판으로 되돌아가는가. 이 축의 실패는 "설치 성공"이라는

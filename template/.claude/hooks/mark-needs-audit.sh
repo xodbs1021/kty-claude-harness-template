@@ -204,6 +204,9 @@ classify() {
 record_flag() {
   mkdir -p "$STATE_DIR" 2>/dev/null
   if grep -qxF -- "$2" "$1" 2>/dev/null; then
+    # [cx] 같은 경로 재편집도 플래그 mtime 을 갱신해야 한다 — 안 하면 이전 리뷰
+    # 산출물이 플래그보다 "새로워서" 미리뷰 편집이 자동 해제된다(stale review 우회).
+    touch "$1" 2>/dev/null
     return 0
   fi
   { printf '%s\n' "$2" >> "$1"; } 2>/dev/null || return 1

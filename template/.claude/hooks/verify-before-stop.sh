@@ -209,7 +209,7 @@ else
       printf '%s\n' "$tc_out" | head -n 15
       echo
       echo "고친 뒤 다시 종료하세요.  (차단 $((count + 1))/${MAX_BLOCKS})"
-      echo "탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+      echo "탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
     } >&2
     bump_and_block
   fi
@@ -267,7 +267,7 @@ if [ "$decision_armed" -eq 1 ] && ! hook_disabled "stop:decision"; then
       echo "  - 백틱이나 따옴표로 감싸면 스캔에서 빠집니다 — 인용은 결정이 아니니까요."
       echo "  - 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받으세요."
       echo
-      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
     } >&2
     bump_and_block
   fi
@@ -296,7 +296,7 @@ if retrieval_pending; then
       echo "[완료 차단] 머리 표명 검사 불가 — 플래그 파일을 읽을 수 없습니다: $RETRIEVAL_FLAG"
       echo "권한·손상을 확인한 뒤 다시 종료하세요."
       emit_decision_note
-      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
     } >&2
     bump_and_block
   fi
@@ -513,7 +513,7 @@ if retrieval_pending; then
       echo "이 게이트는 형식만 봅니다. 진짜 읽었는지·조사했는지는 검수(plan-reviewer·codex)가 봅니다."
       emit_decision_note
       echo
-      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:retrieval"
     } >&2
     bump_and_block
   fi
@@ -522,25 +522,63 @@ fi
 # (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
 #      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
 #      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
+#
+#      **자동 해제** (2026-08-11 감사 지적 (b) — 플래그 존재만 보면 산출물 없이 rm 으로
+#      통과된다): 플래그보다 mtime 이 새로운 _workspace/*codex*.md 가 있으면 이 턴에 리뷰
+#      산출물이 저장된 것으로 보고 게이트가 스스로 플래그를 지운다 — 지울 플래그를
+#      에이전트 손에 주지 않는 것이 게이트의 형태다(회수 게이트 3.4 와 같은 구조).
+#      내용은 파싱하지 않는다 — 형식·존재만 본다. 빈 껍데기 파일로 통과하는 우회는
+#      남는다(기록된 한계) — 내용 검증은 감사자(completion-auditor) 몫이다(ADR-0013 ④).
 if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
-  gate_budget "dualreview"
-  {
-    echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
-    echo
-    echo "이 턴의 듀얼 리뷰 대상:"
-    sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
-    echo
-    echo "해야 할 일:"
-    echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
-    echo "  2. 결과를 _workspace/ 에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
-    echo "  3. 그 뒤에만:  rm -f .claude/.needs-dualreview"
-    echo "     codex 미설치·호출 실패면 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을 명시한 뒤에 지운다."
-    echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
-    echo
-    emit_decision_note
-    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
-  } >&2
-  bump_and_block
+  dualreview_artifact=""
+  for _dr in "$PROJECT_DIR/_workspace"/*codex*.md; do
+    [ -e "$_dr" ] || continue                       # 글롭 무매치 리터럴은 -e 에서 걸러진다
+    if [ "$_dr" -nt "$DUALREVIEW_FLAG" ]; then
+      dualreview_artifact="$_dr"
+      break
+    fi
+  done
+  if [ -n "$dualreview_artifact" ]; then
+    rm -f "$DUALREVIEW_FLAG" 2>/dev/null
+  fi
+  # [cx] rm 실패(플래그 잔존) 시 해제 경로로 내려가면 맨 아래 감사 게이트가 엉뚱한
+  # 메시지("completion-auditor 미실행")로 차단한다 — 삭제가 실제로 됐을 때만 해제
+  # 경로를 타고, 잔존하면 아래 else 의 dualreview 차단이 정확한 메시지를 낸다.
+  if [ -n "$dualreview_artifact" ] && [ ! -e "$DUALREVIEW_FLAG" ]; then
+    # 지문을 다시 계산한다 — 진입 시 스냅숏에는 방금 지운 "d" 비트가 남아 있어, 이 턴의
+    # 하위 게이트가 stale 지문으로 예산을 매기고 다음 턴에 거짓 리셋이 난다(3.4 와 동일).
+    compute_flags_fp
+    if ! work_pending; then
+      # 이 턴의 할 일이 이것뿐이었다 — 여기서 끝내지 않으면 맨 아래 감사 게이트가
+      # 빈 목록으로 허위 차단한다. 술어·경고 처리 모두 3.4 자동 해제 경로와 같다.
+      rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+      if [ -n "${decision_note:-}" ]; then
+        # 경고를 삼키지 않는 것이 결정 게이트 fail-open 의 유일한 조건이다(ADR-0012 ②).
+        printf '{"systemMessage":"참고: %s — 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."}\n' "$decision_note"
+      fi
+      exit 0
+    fi
+  else
+    gate_budget "dualreview"
+    {
+      echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
+      echo
+      echo "이 턴의 듀얼 리뷰 대상:"
+      sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+      echo
+      echo "해야 할 일:"
+      echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
+      echo "  2. 결과를 _workspace/ 에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
+      echo "  3. 산출물을 저장하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+      echo "     codex 미설치·호출 실패로 생략하는 경우에만 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을"
+      echo "     명시하고:  rm -f .claude/.needs-dualreview"
+      echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+      echo
+      emit_decision_note
+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
+    } >&2
+    bump_and_block
+  fi
 fi
 
 # (4) change-explainer 게이트 (Phase 5) — 감사자보다 먼저 강제한다.
@@ -561,7 +599,7 @@ if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
     echo "     설명 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
     echo
     emit_decision_note
-    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"
   } >&2
   bump_and_block
 fi
@@ -595,7 +633,7 @@ if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
     echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
     echo
     emit_decision_note
-    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
   } >&2
   bump_and_block
 fi
@@ -621,7 +659,7 @@ if [ -n "$push_unsent" ]; then
     echo "  push 여부가 로컬에서 안 보이는 것 자체가 위험합니다 — 29개를 잃을 때 그랬습니다."
     echo
     emit_decision_note
-    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
+    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
   } >&2
   bump_and_block
 fi
@@ -644,6 +682,6 @@ gate_budget "audit"
   echo "  2. 검증을 통과했을 때만:  rm -f .claude/.needs-audit"
   echo "     감사 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
   echo
-  echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+  echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
 } >&2
 bump_and_block

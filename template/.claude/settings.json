@@ -20,6 +20,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "mcp__codex__codex",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-codex-mcp.sh\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PostToolUse": [

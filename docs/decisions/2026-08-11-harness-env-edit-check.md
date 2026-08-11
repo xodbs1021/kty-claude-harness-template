@@ -80,10 +80,11 @@ rc=3 : 부재 — 파일 없음·최상위 선언 0개. 안 쓰는 키의 정상
 
 ## 기계적 장치
 
-`tests/check-harness-env.test.sh` **12케이스**(EXPECTED_CASES 상수 — 위음성·위양성 양축) +
+`tests/check-harness-env.test.sh` **14케이스**(EXPECTED_CASES 상수 — 위음성·위양성 양축.
+구현 검수 반영으로 설계 시점의 12 에서 늘었다: c13 경로 물리화·c14 배선 실존) +
 `tests/harness-env-read.test.sh` **81케이스**(rc=3 계약 반영: 부재 클래스 8건 1→3 갱신,
 rc=3 생략 사유 케이스 i14 신설) + CI 스텝 + 변이 하네스 `_workspace/mutate-env-check-hook.sh`
-**7종 전건 적색** + 기존 `mutate-harness-env.sh` **21종 전건 적색**(rc 분화로 죽은 앵커 2건
+**9종 전건 적색**(e08 물리화 제거·e09 배선 제거 — 검수 반영으로 7 에서 늘었다) + 기존 `mutate-harness-env.sh` **21종 전건 적색**(rc 분화로 죽은 앵커 2건
 재조준 + **main 에서도 죽어 있던 조기 종료 앵커 1건 복구** — work_pending 개편 때 깨진 채
 방치돼 빈 변이였다).
 

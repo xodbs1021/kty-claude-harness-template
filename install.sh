@@ -206,6 +206,80 @@ if [ -d "$GLOBAL_SRC" ] && ls "$GLOBAL_SRC"/*.md >/dev/null 2>&1; then
   echo "   전역 에이전트 ✓  $(ls "$GLOBAL_SRC"/*.md | wc -l | tr -d ' ')종 → ~/.claude/agents/"
 fi
 
+# ── 1c) 전역 codex MCP 가드 (~/.claude/ — 프로젝트 밖 호출까지 커버, ADR-0017) ──
+# 프로젝트 훅은 그 디렉토리 안에서만 발화한다. 전역 배선이 없으면 다른 폴더에서의
+# mcp__codex__codex 호출이 모델·effort 계약을 통째로 우회한다(2026-08-11 감사 실증).
+# 경로는 설치 시점의 $HOME 을 **리터럴 절대경로**로 굳힌다 — 훅 실행 환경에서 $HOME 이
+# 비면 rc=127 fail-open 되는 결함의 재발 방지([cx] 2026-08-11). 기기를 옮기면
+# install.sh 재실행이 새 기기 경로로 다시 굳힌다(멱등 + stale 경로 교정).
+if [ -f "$SRC/hooks/guard-codex-mcp.sh" ]; then
+  mkdir -p "$HOME/.claude/hooks"
+  cp "$SRC/hooks/guard-codex-mcp.sh" "$HOME/.claude/hooks/guard-codex-mcp.sh"
+  chmod +x "$HOME/.claude/hooks/guard-codex-mcp.sh"
+  GLOBAL_SETTINGS="$HOME/.claude/settings.json"
+  if [ -f "$GLOBAL_SETTINGS" ]; then
+    cp "$GLOBAL_SETTINGS" "$GLOBAL_SETTINGS.bak-$STAMP"
+  fi
+  python3 - "$GLOBAL_SETTINGS" "$HOME/.claude/hooks/guard-codex-mcp.sh" <<'PYEOF'
+import json, os, sys
+dst_path, script_path = sys.argv[1], sys.argv[2]
+cmd = f'/bin/bash "{script_path}"'
+cur = {}
+if os.path.exists(dst_path):
+    with open(dst_path) as f:
+        cur = json.load(f)
+lst = cur.setdefault("hooks", {}).setdefault("PreToolUse", [])
+entry = next((e for e in lst if e.get("matcher") == "mcp__codex__codex"), None)
+if entry is None:
+    lst.append({"matcher": "mcp__codex__codex",
+                "hooks": [{"type": "command", "command": cmd, "timeout": 15}]})
+    print("   전역 codex 가드 ✓  ~/.claude/settings.json 배선 추가")
+else:
+    hooks = entry.setdefault("hooks", [])
+    ours = next((h for h in hooks if "guard-codex-mcp.sh" in h.get("command", "")), None)
+    if ours is None:
+        hooks.append({"type": "command", "command": cmd, "timeout": 15})
+        print("   전역 codex 가드 ✓  기존 matcher 에 훅 추가")
+    elif ours.get("command") != cmd:
+        ours["command"] = cmd
+        print("   전역 codex 가드 ✓  경로를 현 기기로 갱신")
+    else:
+        print("   전역 codex 가드    이미 배선됨 (멱등)")
+with open(dst_path, "w") as f:
+    json.dump(cur, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PYEOF
+fi
+
+# ── 1d) codex CLI 기본값 (~/.codex/config.toml — 가드의 "생략 = 안전" 전제) ──
+# 가드 두 개(Bash·MCP)는 "model/effort 생략이면 config.toml 기본값이라 통과"로 판정한다.
+# 이 파일이 없는 새 기기에서는 생략 호출이 codex 자체 기본 모델로 빠져나간다 — 전제 붕괴.
+# 없으면 스캐폴드, 있는데 모델이 다르면 경고만(사용자 파일은 덮지 않는다 — 슬롯 원칙).
+CODEX_CFG="$HOME/.codex/config.toml"
+if [ ! -f "$CODEX_CFG" ]; then
+  mkdir -p "$HOME/.codex"
+  printf 'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "xhigh"\n' > "$CODEX_CFG"
+  echo "   codex 기본값 ✓  ~/.codex/config.toml 스캐폴드 (gpt-5.6-sol / xhigh)"
+elif ! grep -q '^model *= *"gpt-5\.6-sol"' "$CODEX_CFG"; then
+  echo "   ⚠ ~/.codex/config.toml 의 model 이 gpt-5.6-sol 이 아닙니다 — 가드의" >&2
+  echo "     '생략 = 안전' 전제가 깨집니다. 직접 확인하세요(사용자 파일이라 안 덮음)." >&2
+else
+  echo "   codex 기본값    ~/.codex/config.toml 확인됨 (기존 유지)"
+fi
+
+# ── 1e) 전역 의존 존재 점검 (경고만 — 설치는 사용자 몫) ─────────────
+# SKILL.md 에 폴백은 있지만, 없다는 사실은 설치 시점에 아는 것이 가장 싸다.
+[ -d "$HOME/.claude/rules/ecc" ] \
+  || echo "   ⚠ ECC 룰(~/.claude/rules/ecc/) 없음 — 에이전트들이 참조하는 코딩 규칙이 비어 돕니다." >&2
+ls "$HOME/.claude/plugins/cache/"*/superpowers/* >/dev/null 2>&1 \
+  || echo "   ⚠ superpowers 플러그인 미설치 — TDD·디버깅 방법론 스킬 폴백으로 동작합니다." >&2
+if [ -f "$HOME/.claude/CLAUDE.md" ]; then
+  grep -qiE 'vault|볼트|second.?brain|지식' "$HOME/.claude/CLAUDE.md" \
+    || echo "   ⚠ 전역 CLAUDE.md 에 지식 저장소 규약이 안 보입니다 — knowledge 게이트가 목적지를 모릅니다(harness.env 로 끌 수 있음)." >&2
+else
+  echo "   ⚠ 전역 CLAUDE.md 없음 — knowledge 게이트가 목적지를 모릅니다(harness.env 로 끌 수 있음)." >&2
+fi
+
 # ── 2) 슬롯 스캐폴드 (없을 때만 — 도메인은 사용자가 채운다) ──────────
 if [ ! -f "$DST/harness/project-profile.md" ]; then
   sed "s/{{PROJECT_NAME}}/$NAME/g" "$SRC/harness/project-profile.template.md" \
@@ -274,7 +348,7 @@ if [ -f "$PROJECT/CLAUDE.md" ] && grep -q "harness-orchestrator" "$PROJECT/CLAUD
 else
   { [ -f "$PROJECT/CLAUDE.md" ] && [ -s "$PROJECT/CLAUDE.md" ] && echo ""; \
     sed -e "s/{{PROJECT_NAME}}/$NAME/g" -e "s/{{YYYY-MM-DD}}/$TODAY/g" \
-        -e "s/{{한 줄 목표}}/($NAME 프로필 §1 참조)/g" \
+        -e "s/{{한 줄 목표}}/($NAME 프로필 1절 참조)/g" \
         "$TPL_ROOT/template/CLAUDE.md.snippet"; } >> "$PROJECT/CLAUDE.md"
   echo "   CLAUDE.md ✓  하네스 포인터 append"
 fi

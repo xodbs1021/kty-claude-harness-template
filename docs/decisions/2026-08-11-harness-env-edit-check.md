@@ -44,7 +44,9 @@ rc=3 : 부재 — 파일 없음·최상위 선언 0개. 안 쓰는 키의 정상
 
 `.claude/harness/harness.env` 편집 직후, 알려진 키(`HARNESS_TYPECHECK_CMD`·
 `HARNESS_KNOWLEDGE_GATE`)를 **실제 판독기로** 읽어 rc=1 인 키만 systemMessage 로 경고한다
-— "이 키는 미설정으로 취급되고 해당 검사가 조용히 생략됩니다". rc=0·rc=3 은 침묵.
+— 결과 안내는 키 종류별로 정직하게: 검사 명령 키는 검사가 조용히 생략되고, 게이트 스위치
+키는 안전측(켜짐)으로 동작한다(검수 [cx] 지적 반영 — "생략된다"로 뭉치면 스위치 키에서
+실물과 반대인 안내가 된다). rc=0·rc=3 은 침묵.
 차단하지 않는다(PostToolUse — 항상 exit 0). 탈출구 `post:edit:harness-env`.
 
 - 경로 앵커는 `.claude/harness/harness.env` 까지 요구 — 동명 무관 파일 오탐 방지

@@ -139,8 +139,8 @@ run_mutation '안 닫힌 히어독 거부를 지운다' "$COMMON" \
   '  # (변이) 안 닫힌 히어독 거부 삭제'
 
 run_mutation '선언 2개 거부를 푼다' "$COMMON" \
-  '  if (N != 1) exit 1' \
-  '  if (N < 1) exit 1'
+  '  if (N > 1) exit 1' \
+  '  # (변이) 선언 2개 거부 삭제'
 
 run_mutation '문법 밖(BAD) 거부를 지운다' "$COMMON" \
   '  if (BAD) exit 1' \
@@ -182,17 +182,19 @@ run_mutation '지식 게이트를 항상 켜짐으로 못박는다' "$COMMON" \
   '  [ -n "$v" ]                                                   # 리터럴로 비었을 때만 꺼짐' \
   '  return 0'
 
+# (재조준 2026-08-11: 조기 종료가 work_pending() 으로 개편된 뒤 앵커가 죽은 채 방치돼
+# 있었다 — main 에서도 빈 변이였다. 술어 본문의 지식 항을 뒤집는 것으로 같은 것을 잰다.)
 run_mutation '조기 종료가 게이트 꺼짐을 무시하게 만든다' "$STOP" \
-  'if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then' \
-  'if [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && [ ! -s "$KNOWLEDGE_FLAG" ] && [ ! -s "$DUALREVIEW_FLAG" ]; then'
+  '  knowledge_gate_active && return 0' \
+  '  [ -s "$KNOWLEDGE_FLAG" ] && return 0'
 
 run_mutation 'Stop 훅의 rc 구별을 지운다' "$STOP" \
-  'if [ "$typecheck_rc" -ne 0 ]; then
-  typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 를 읽지 못함 — 미설정이거나, 선언이 2개 이상이거나, 지원 문법 밖입니다)"
-elif [ -z "$TYPECHECK_CMD" ]; then
-  typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 가 빈 값으로 설정됨)"' \
-  'if [ -z "$TYPECHECK_CMD" ]; then
-  typecheck_note="타입체크 생략 (미설정)"'
+  'if [ "$typecheck_rc" -eq 3 ]; then
+  typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 미설정)"
+elif [ "$typecheck_rc" -ne 0 ]; then
+  typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 값을 믿을 수 없음 — 선언이 2개 이상이거나, 지원 문법 밖이거나, 읽기 실패입니다. 고칠 수 있는 실수입니다)"
+elif [ -z "$TYPECHECK_CMD" ]; then' \
+  'if [ -z "$TYPECHECK_CMD" ]; then'
 
 # 가장 강한 변이: 파서를 **회귀가 살아 있던 구판**(원문 grep + 양끝 따옴표만 벗기기)으로
 # 되돌린다. "고치기 전이라면 통과했을 입력"임을 실증하는 자리다.

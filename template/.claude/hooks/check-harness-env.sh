@@ -40,16 +40,27 @@ case "$file_path" in
   *$'\n'*) exit 0 ;;
 esac
 
-# 이 훅의 대상은 하네스가 규정한 자리의 harness.env 뿐이다. 다른 이름·다른 자리는
-# 하네스 설정이 아니다(동명 파일 오탐 방지 — .claude/harness/ 앵커까지 요구).
-case "$file_path" in
-  */.claude/harness/harness.env|.claude/harness/harness.env) ;;
-  *) exit 0 ;;
-esac
-
 case "$file_path" in
   /*) envfile="$file_path" ;;
   *)  envfile="$PROJECT_DIR/$file_path" ;;
+esac
+
+# 디렉토리 성분을 물리화한 **뒤에** 앵커를 판정한다 — `.`/`..`/심링크 경유 표기
+# (.claude/harness/./harness.env)가 문자열 앵커를 피해가면 잘못된 값이 무경고로
+# 통과한다(위음성 — 구현 검수 [cx]). mark-needs-audit 의 physical_path 와 같은 이유,
+# 축약형이다. 물리화 실패(디렉토리 없음)면 원본으로 판정을 잇는다 — 정규화 실패가
+# 게이트를 지우면 조용한 위음성이 된다.
+env_dir="$(CDPATH='' cd -P -- "$(dirname -- "$envfile")" 2>/dev/null && pwd -P)"
+if [ -n "$env_dir" ]; then
+  [ "$env_dir" = '/' ] && env_dir=''
+  envfile="$env_dir/$(basename -- "$envfile")"
+fi
+
+# 이 훅의 대상은 하네스가 규정한 자리의 harness.env 뿐이다. 다른 이름·다른 자리는
+# 하네스 설정이 아니다(동명 파일 오탐 방지 — .claude/harness/ 앵커까지 요구).
+case "$envfile" in
+  */.claude/harness/harness.env) ;;
+  *) exit 0 ;;
 esac
 
 bad_keys=""
@@ -65,5 +76,8 @@ done
 
 # 키 이름은 [A-Z_] 뿐이라 JSON 이스케이프가 필요 없다. 경로는 넣지 않는다 —
 # 넣는 순간 이스케이프 기계장치가 딸려온다(mark-needs-audit 의 메시지 계약과 동일).
-printf '{"systemMessage":"harness.env 판독 경고: %s— 이 키는 값을 믿을 수 없어 미설정으로 취급되고, 해당 검사가 조용히 생략됩니다. 원인은 중복 선언·지원 문법 밖·닫히지 않은 따옴표·읽기 실패 중 하나입니다. 파일 첫머리의 문법 규칙을 확인하세요."}\n' "$bad_keys"
+# 결과 안내는 키 종류별로 정직하게 — 검사 명령 키는 검사가 생략되지만, 게이트 스위치
+# 키는 안전측(켜짐)으로 동작한다(fail-closed). "생략된다"로 뭉치면 스위치 키에서
+# 실물과 반대인 안내가 된다(구현 검수 [cx]).
+printf '{"systemMessage":"harness.env 판독 경고: %s— 이 키의 값을 믿을 수 없습니다(중복 선언·지원 문법 밖·닫히지 않은 따옴표·읽기 실패 중 하나). 판독기는 이런 값을 미설정으로 취급합니다 — 검사 명령 키(HARNESS_TYPECHECK_CMD)는 검사가 조용히 생략되고, 게이트 스위치 키(HARNESS_KNOWLEDGE_GATE)는 안전측인 켜짐으로 동작합니다. 파일 첫머리의 문법 규칙을 확인하세요."}\n' "$bad_keys"
 exit 0

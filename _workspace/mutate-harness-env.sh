@@ -38,7 +38,13 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
   exit 1
 fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+cleanup() {
+  # 중단(SIGINT/SIGTERM 포함) 시 변이·구판이 실제 소스에 남지 않게 — 복원은 멱등이다.
+  # 락만 지우고 변이를 남기는 창이 실측 지적됐다(ADR-0016 구현 검수 [cx] HIGH).
+  git restore --source=HEAD --worktree -- "$COMMON" "$STOP" 2>/dev/null
+  rmdir "$LOCK" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
 
 restore_and_verify() {   # $1 = 파일
   git restore --source=HEAD --worktree -- "$1" || { echo "✗ restore 실패: $1" >&2; exit 1; }

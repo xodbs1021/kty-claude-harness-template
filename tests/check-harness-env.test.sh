@@ -199,10 +199,28 @@ c12() { # 파일이 없으면(삭제·실패한 쓰기) 부재다 — 경고하�
   silent_case 'c12 파일 없음(부재) → 침묵' '__NOFILE__'
 }
 
+c13() { # `.` 경유 표기도 같은 파일이다 — 물리화 전에 문자열 앵커로 판정하면 잘못된 값이
+        # 무경고 통과한다(구현 검수 [cx] HIGH 의 케이스화. e08 이 여기서 빨개진다).
+  local name='c13 점 경유 경로(harness/./harness.env) → 경고' why='' p
+  p="$(new_project 'HARNESS_TYPECHECK_CMD= "x"'$'\n')" || { report "$name" '픽스처 실패'; return 0; }
+  run_hook "$p" "$p/.claude/harness/./harness.env"
+  if ! contains "$OUT" "$TOK_WARN"; then why="경고가 없다 (점 경유 표기가 앵커를 피했다): [$(printf '%s' "$OUT" | head -c 80)]"
+  fi
+  report "$name" "$why"
+}
+
+c14() { # 훅 파일만으로는 안 돈다 — settings.json 배선이 실물에 있어야 한다(정적 대조,
+        # r21 리터럴 드리프트 검사와 같은 부류. e09 가 여기서 빨개진다).
+  local name='c14 settings.json 배선 실존' why=''
+  grep -qF 'check-harness-env.sh' "$REPO_ROOT/template/.claude/settings.json" \
+    || why='settings.json 에 check-harness-env 배선이 없다'
+  report "$name" "$why"
+}
+
 # --- 실행 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=12
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12'
+EXPECTED_CASES=14
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14'
 
 echo "check-harness-env.test.sh — harness.env 편집 검증 훅(post:edit:harness-env) 회귀"
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"

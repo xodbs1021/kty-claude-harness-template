@@ -10,9 +10,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 HOOK="template/.claude/hooks/check-harness-env.sh"
 COMMON="template/.claude/hooks/_common.sh"
+SETTINGS="template/.claude/settings.json"
 TEST="./tests/check-harness-env.test.sh"
 
-for f in "$HOOK" "$COMMON"; do
+for f in "$HOOK" "$COMMON" "$SETTINGS"; do
   if ! git diff --quiet -- "$f" || ! git diff --cached --quiet -- "$f"; then
     echo "✗ 대상에 미커밋 변경이 있습니다: $f — 먼저 커밋하고 재세요 (복원이 작업물을 지웁니다)" >&2
     exit 1
@@ -25,7 +26,13 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
   exit 1
 fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+cleanup() {
+  # 중단(SIGINT/SIGTERM 포함) 시 변이가 실제 소스에 남지 않게 — 복원은 멱등이다
+  # (HEAD 와 같으면 no-op). 락만 지우고 변이를 남기는 창이 실측 지적됐다([cx] HIGH).
+  git restore --source=HEAD --worktree -- "$HOOK" "$COMMON" "$SETTINGS" 2>/dev/null
+  rmdir "$LOCK" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
 
 if ! "$TEST" >/dev/null 2>&1; then
   echo "✗ 기준선 실패 — 변이 없이도 테스트가 빨갛습니다. 먼저 초록으로 만들고 재세요" >&2
@@ -95,13 +102,23 @@ mutate 'e04 systemMessage 방출 제거' "$HOOK" \
 
 # 5. 경로 앵커 느슨화 — 무관 동명 파일에도 발화(위양성)
 mutate 'e05 경로 앵커 느슨화' "$HOOK" \
-  '  */.claude/harness/harness.env|.claude/harness/harness.env) ;;' \
+  '  */.claude/harness/harness.env) ;;' \
   '  *harness.env) ;;'
 
 # 6. 상대경로를 cwd 기준으로 — 다른 cwd 에서 그 파일을 못 찾아 부재로 오인(침묵)
 mutate 'e06 상대경로를 cwd 기준으로' "$HOOK" \
   '  *)  envfile="$PROJECT_DIR/$file_path" ;;' \
   '  *)  envfile="$file_path" ;;'
+
+# 7-b. 경로 물리화 제거 — `.`/`..` 경유 표기가 앵커를 피해 무경고 통과(위음성)
+mutate 'e08 경로 물리화 제거' "$HOOK" \
+  'env_dir="$(CDPATH='"'"''"'"' cd -P -- "$(dirname -- "$envfile")" 2>/dev/null && pwd -P)"' \
+  'env_dir=""'
+
+# 7-c. settings.json 배선 제거 — 훅 파일이 있어도 실제 편집에서 안 돈다
+mutate 'e09 settings 배선 제거' "$SETTINGS" \
+  '            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-harness-env.sh\"",' \
+  '            "command": "true",'
 
 # 7. 훅 비활성 접기 제거 — 탈출구 소멸
 mutate 'e07 hook_disabled 접기 제거' "$HOOK" \

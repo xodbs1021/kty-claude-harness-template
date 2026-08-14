@@ -844,13 +844,23 @@ case_p85() { # [2차 HIGH] **모든** stderr 경로가 정화를 지나야 한�
   ok 'p85 registry 실패 경로도 정화된다'
 }
 
-case_p86() { # **정적 계약** [2차 HIGH] — Artifact 를 stat 한 뒤 open 하기까지 경로가 바뀌면
-             # 방금 확인한 것과 다른 것을 연다(심링크 교체). 그 다른 것이 FIFO 면 읽기가
-             # 끝나지 않는다. open 뒤 fstat 으로 **열린 그 객체**를 다시 봐야 창이 닫힌다.
-             # 그 창을 러너 안에서 재현하려면 stat 과 open 사이에 끼어들어야 하는데 —
-             # 그 시점을 잡을 방법이 없어 "재검사가 그 자리에 있다"까지만 붙든다.
-  run_static 'artifact open 후 재검사' '
-    n="$(grep -c "os.fstat(fh.fileno())" "$COMMON" 2>/dev/null | tr -d " ")"
-    if [ "$n" != "1" ]; then printf "publish_digest 의 open 뒤 fstat 재검사가 %s개다 (기대 1)" "$n"; fi'
-  ok 'p86 Artifact open 뒤 fstat 재검사가 있다 (정적)'
+case_p86() { # **정적 계약** [3차] — Artifact 는 경로를 두 번 보지 않고 **한 번 열어 그 fd 만**
+             # 본다. 경로로 stat 한 뒤 다시 경로로 열면 그 사이에 대상이 FIFO 로 바뀔 수 있고,
+             # 그러면 **여는 순간 멈춰서** "열고 나서 확인한다"는 계획에 도달조차 못 한다.
+             # 그래서 순서가 계약이다: O_NONBLOCK 선개방 → fd 를 fstat → 통과한 fd 만 감싸 읽기.
+             #
+             # 정적으로 재는 이유(공시): 이 창을 동적으로 재현하려면 open 시스템 콜이 도는
+             # 그 순간에 경로를 갈아치워야 하는데, 러너가 그 시점을 잡을 방법이 없다. 그래서
+             # **"올바른 순서의 호출이 그 자리에 있다"까지만** 붙든다 — 세 호출이 남아 있는 채
+             # 인자가 틀리는 변형은 이 케이스가 못 잡는다(그 축은 p73·p74 가 동적으로 잡는다).
+  run_static 'artifact 선개방 순서' '
+    a="$(grep -nF "os.open(cur, os.O_RDONLY | os.O_NONBLOCK)" "$COMMON" | head -1 | cut -d: -f1)"
+    b="$(grep -nF "fst = os.fstat(fd)" "$COMMON" | head -1 | cut -d: -f1)"
+    c="$(grep -nF "os.fdopen(fd, \"rb\")" "$COMMON" | head -1 | cut -d: -f1)"
+    if [ -z "$a" ]; then printf "O_NONBLOCK 선개방이 없다 (경로로 여는 동안 멈출 수 있다)"
+    elif [ -z "$b" ]; then printf "열린 fd 에 대한 fstat 이 없다"
+    elif [ -z "$c" ]; then printf "검사한 fd 를 감싸 읽는 fdopen 이 없다 (경로로 다시 열면 대상이 갈린다)"
+    elif [ "$a" -ge "$b" ] || [ "$b" -ge "$c" ]; then printf "순서가 어긋난다: open=%s fstat=%s fdopen=%s" "$a" "$b" "$c"
+    fi'
+  ok 'p86 Artifact 는 선개방→fstat→fdopen 순서다 (정적)'
 }

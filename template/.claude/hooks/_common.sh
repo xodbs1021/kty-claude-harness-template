@@ -753,29 +753,35 @@ if field != "-":
         cur = cur[part]
     if not isinstance(cur, str) or cur == "":
         die("artifact path is not a non-empty string")
-    # **일반 파일만 연다.** FIFO 나 문자 장치를 열면 읽기가 끝나지 않아 훅이 그대로 멈추고,
-    # 멈춘 훅은 차단도 통과도 아니다(검수 실측). 크기도 미리 보고, 읽는 동안에도 다시 센다 —
-    # stat 이후에 커지는 파일이 있기 때문이다.
+    # **경로를 두 번 보지 않는다 — 한 번 열고 그 fd 만 본다.**
+    #
+    # 경로로 stat 한 뒤 다시 경로로 open 하면 그 사이에 대상이 바뀔 수 있고(심링크 교체),
+    # 바뀐 것이 FIFO 면 **open 자체가 돌아오지 않는다** — 여는 순간 멈추므로 "열고 나서
+    # 확인한다"는 계획은 도달조차 못 한다(검수 3차 실측). 그래서 순서가 계약이다:
+    #   (1) O_NONBLOCK 으로 **먼저 연다** (FIFO 여도 즉시 돌아온다)
+    #   (2) 그 **fd** 를 fstat 해서 일반 파일인지·상한 안인지 본다 — 아니면 즉시 닫고 실패
+    #   (3) 통과한 fd 만 스트림으로 감싸 읽는다
+    # 검사한 객체와 읽는 객체가 같음이 fd 하나로 보장된다. 일반 파일에서 O_NONBLOCK 은
+    # 읽기 동작을 바꾸지 않는다. 읽는 동안에도 누적 바이트를 다시 세는 것은 그대로다.
     try:
-        st = os.stat(cur)
+        fd = os.open(cur, os.O_RDONLY | os.O_NONBLOCK)
     except Exception as exc:
-        die("artifact stat failed: %s" % exc)
-    if not stat.S_ISREG(st.st_mode):
+        die("artifact open failed: %s" % exc)
+    try:
+        fst = os.fstat(fd)
+    except Exception as exc:
+        os.close(fd)
+        die("artifact fstat failed: %s" % exc)
+    if not stat.S_ISREG(fst.st_mode):
+        os.close(fd)
         die("artifact is not a regular file")
-    if st.st_size > art_cap:
+    if fst.st_size > art_cap:
+        os.close(fd)
         die("artifact exceeds the size cap")
     try:
         h = hashlib.sha256()
         seen = 0
-        with open(cur, "rb") as fh:
-            # **연 뒤에 다시 본다.** stat 과 open 사이에 경로가 바뀌면(심링크 교체 등) 방금
-            # 확인한 것과 다른 것을 여는데, 그 다른 것이 FIFO 면 아래 read 가 끝나지 않는다
-            # (검수 2차 실측: 정지 재현). fstat 은 **열린 그 객체**를 보므로 그 창이 없다.
-            fst = os.fstat(fh.fileno())
-            if not stat.S_ISREG(fst.st_mode):
-                die("artifact is not a regular file (checked after open)")
-            if fst.st_size > art_cap:
-                die("artifact exceeds the size cap (checked after open)")
+        with os.fdopen(fd, "rb") as fh:
             while True:
                 chunk = fh.read(1 << 20)
                 if not chunk:

@@ -66,14 +66,19 @@ sanitize() {
   #     (오른쪽→왼쪽 재정의)·폭 없는 문자가 남아, 렌더러에 따라 줄이 갈리거나 글자 순서가
   #     뒤집혀 문구 위조가 되살아난다(검수 2차 지적). 한글은 남겨야 하므로 문자 **범주**로
   #     거른다 — 비ASCII 일괄 제거는 우리 메시지를 먹는다.
-  s="$(printf '%s' "$t" | python3 -c '
+  if s="$(printf '%s' "$t" | python3 -c '
 import sys, unicodedata
 DROP = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
 sys.stdout.write("".join(c for c in sys.stdin.read()
                          if unicodedata.category(c) not in DROP))
-' 2>/dev/null)" || s=''
-  # python3 이 없거나 죽으면 (1)까지로 물러선다 — 진단을 통째로 잃는 것보다 낫다.
-  [ -n "$s" ] || s="$t"
+' 2>/dev/null)"; then
+    :   # rc=0 이면 결과를 그대로 쓴다 — **빈 문자열도 정당한 결과다**(입력이 전부 서식문자
+        # 였다는 뜻이다). 비었다고 물러서면 그 입력만 정화를 건너뛰어, 없애려던 문자가
+        # 그대로 나간다(3차 관찰. 지금은 도달 불가지만 분기 하나로 닫힌다).
+  else
+    # python3 이 없거나 비정상 종료했을 때만 (1)까지로 물러선다 — 진단을 통째로 잃는 것보다 낫다.
+    s="$t"
+  fi
   printf '%s' "${s:0:400}"
 }
 

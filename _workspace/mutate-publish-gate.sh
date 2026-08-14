@@ -313,13 +313,13 @@ fi
 [ "$USED_N" -gt 0 ] && replay=1' \
   '[ "$( used_scan "$digest"; [ "$USED_RC" -eq 1 ] && deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." "경로: $RECEIPTS_USED"; printf '"'"'%s'"'"' "$USED_N" )" -gt 0 ] && replay=1'
 
-mutate 'm46 artifact open 뒤 fstat 재검사 제거' "$COMMON" \
-  '            fst = os.fstat(fh.fileno())' \
-  '            fst = st'
+mutate 'm46 artifact 선개방을 경로 개방으로 되돌리기' "$COMMON" \
+  '        fd = os.open(cur, os.O_RDONLY | os.O_NONBLOCK)' \
+  '        fd = os.open(cur, os.O_RDONLY)'
 
-mutate 'm47 정화에서 유니코드 서식문자 단계 제거' "$HOOK" \
-  '  [ -n "$s" ] || s="$t"' \
-  '  s="$t"'
+mutate 'm47 정화에서 유니코드 서식문자 범주를 좁히기' "$HOOK" \
+  'DROP = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")' \
+  'DROP = ("Cc",)'
 
 echo ""
 echo "— 변이 $total 종: 적색 $red · 살아남음 $green"

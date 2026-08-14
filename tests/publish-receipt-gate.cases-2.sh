@@ -781,6 +781,10 @@ case_p82() { # [C2 후반 + 2차 CRITICAL] used/ 를 **읽지 못하는** 것과
   chmod 700 "$p/_workspace/.receipts/used"
   want_rc 2
   want_err "$TOK_STATE"
+  # **차단 줄이 정확히 하나여야 한다.** 판정이 명령 치환 서브셸에서 돌면 그 안의 차단이
+  # stderr 에는 찍히지만 부모는 살아서 다음 단으로 가고, 뒤의 단이 다시 막는다 —
+  # 겉보기 문구는 같은데 **앞 단이 사라진 상태**다(2차 CRITICAL 의 서명이 이 두 줄이었다).
+  want_one_block_line
   want_file "$p/_workspace/.receipts/active/$d.n1"
   want_count "$p/_workspace/.receipts/used" 1
   ok 'p82 used 디렉터리 판독 불가 → deny (0건으로 접지 않는다)'

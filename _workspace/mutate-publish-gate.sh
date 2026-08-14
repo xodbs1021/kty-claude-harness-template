@@ -167,7 +167,7 @@ mutate 'm13 면제 프리픽스를 부분 일치로' "$HOOK" \
   "    *'[비판정]'*)"
 
 mutate 'm14 replay 검사 삭제' "$HOOK" \
-  '[ "$(used_count "$digest")" -gt 0 ] && replay=1' \
+  '[ "$USED_N" -gt 0 ] && replay=1' \
   ':'
 
 mutate 'm15 active 2개를 하나로 골라 통과' "$HOOK" \
@@ -268,7 +268,7 @@ mutate 'm36 Artifact 크기 상한 무력화' "$COMMON" \
   'art_cap = 1 << 60'
 
 mutate 'm37 payload 상한 검사 제거(훅 층)' "$HOOK" \
-  'if [ "${#payload}" -gt "$PUBLISH_MAX_PAYLOAD_BYTES" ]; then' \
+  'if [ "${payload_bytes:-0}" -gt "$PUBLISH_MAX_PAYLOAD_BYTES" ]; then' \
   'if false; then'
 
 mutate 'm38 승인 rm 실패 무시(대칭 파괴)' "$HOOK" \

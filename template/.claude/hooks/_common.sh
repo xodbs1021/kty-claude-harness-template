@@ -768,6 +768,14 @@ if field != "-":
         h = hashlib.sha256()
         seen = 0
         with open(cur, "rb") as fh:
+            # **연 뒤에 다시 본다.** stat 과 open 사이에 경로가 바뀌면(심링크 교체 등) 방금
+            # 확인한 것과 다른 것을 여는데, 그 다른 것이 FIFO 면 아래 read 가 끝나지 않는다
+            # (검수 2차 실측: 정지 재현). fstat 은 **열린 그 객체**를 보므로 그 창이 없다.
+            fst = os.fstat(fh.fileno())
+            if not stat.S_ISREG(fst.st_mode):
+                die("artifact is not a regular file (checked after open)")
+            if fst.st_size > art_cap:
+                die("artifact exceeds the size cap (checked after open)")
             while True:
                 chunk = fh.read(1 << 20)
                 if not chunk:

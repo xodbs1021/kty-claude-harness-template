@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# PreToolUse(mcp__.*): 외부 발행 도구 호출에 **리뷰 영수증**을 요구한다. (ADR-0018)
+# PreToolUse(matcher: mcp__.*|.*Artifact.*): 외부 발행 도구 호출에 **리뷰 영수증**을
+# 요구한다. (ADR-0018)
 #
 # ── 이것은 위조 방지 장치가 아니다 ──────────────────────────────────────
 # 영수증·승인·면제 흔적을 만드는 손과 감시받는 손이 **같은 에이전트**다. 작정하고 자기
@@ -27,9 +28,12 @@
 #   15 영수증 claim (ln→rm) + used 사본 재대조
 #   16 통과 기록
 #
-# 광역 매처(mcp__.*)로 배선된다. 그래서 **registry 한 파일의 오류가 MCP 도구 전체를
-# 멈춘다** — 폭발 반경을 알고 고른 값이다(모르는 상태의 통과 = 게이트 소멸). 잔존 위험
-# 전체 목록은 ADR-0018 에 있다.
+# 광역 매처 `mcp__.*|.*Artifact.*` 로 배선된다. 그래서 **registry 한 파일의 오류가 매처에
+# 걸리는 도구 전체를 멈춘다** — 폭발 반경을 알고 고른 값이다(모르는 상태의 통과 = 게이트
+# 소멸). 매처는 **과대 매칭**이기도 하다: 이름에 Artifact 가 들어가면 읽기 전용 도구
+# (ReadArtifactMetadata 류)에도 이 훅이 돈다. 그 비용은 호출당 훅 1회이고 판정은 3단에서
+# "미등재 → 통과"로 끝난다 — 좁히려면 실제 도구 이름을 알아야 하는데, 그건 registry 를
+# 채울 때 알게 된다. 잔존 위험 전체 목록은 ADR-0018 에 있다.
 #
 # 탈출구는 표준이다: HARNESS_HOOKS=off · ECC_DISABLED_HOOKS=publish:receipt (기본 켜짐).
 #
@@ -55,8 +59,21 @@ NEED_TIER=''   # 요구 등급(알게 된 시점부터)
 # 개행으로 가짜 하네스 줄을 만들어 사용자를 속일 수 있다(검수 실측). 진단을 포기하지 않고
 # 위조만 없애는 지점이 여기다 — 값을 안 보여주면 막힌 사람이 원인을 못 찾는다.
 sanitize() {
-  local s
-  s="$(printf '%s' "$1" | LC_ALL=C tr -d '[:cntrl:]')"
+  local t s
+  # (1) 제어문자(개행·ESC 포함)를 뗀다.
+  t="$(printf '%s' "$1" | LC_ALL=C tr -d '[:cntrl:]')"
+  # (2) 유니코드 **서식문자**도 뗀다. ASCII 제어문자만 걷어내면 U+2028(줄 구분자)·U+202E
+  #     (오른쪽→왼쪽 재정의)·폭 없는 문자가 남아, 렌더러에 따라 줄이 갈리거나 글자 순서가
+  #     뒤집혀 문구 위조가 되살아난다(검수 2차 지적). 한글은 남겨야 하므로 문자 **범주**로
+  #     거른다 — 비ASCII 일괄 제거는 우리 메시지를 먹는다.
+  s="$(printf '%s' "$t" | python3 -c '
+import sys, unicodedata
+DROP = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
+sys.stdout.write("".join(c for c in sys.stdin.read()
+                         if unicodedata.category(c) not in DROP))
+' 2>/dev/null)" || s=''
+  # python3 이 없거나 죽으면 (1)까지로 물러선다 — 진단을 통째로 잃는 것보다 낫다.
+  [ -n "$s" ] || s="$t"
   printf '%s' "${s:0:400}"
 }
 
@@ -94,14 +111,22 @@ dir_state() {
   return 0
 }
 
-# used_count <digest> — used/ 에서 그 digest 의 소비 기록 수. 못 읽으면 막는다.
-used_count() {
-  local st
-  dir_state "$RECEIPTS_USED"; st=$?
-  [ "$st" -eq 1 ] && deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." \
-                          "경로: $RECEIPTS_USED (권한을 확인하세요)"
-  [ "$st" -eq 3 ] && { printf '0'; return 0; }
-  count_prefixed "$RECEIPTS_USED" "$1"
+# used_scan <digest> — used/ 의 상태를 **전역 두 개**에 담는다. USED_RC(0 정상·1 못 읽음·
+# 3 없음)와 USED_N(그 digest 의 소비 기록 수).
+#
+# **값을 stdout 으로 돌려주지 않는 이유가 이 함수의 전부다.** 예전엔 개수를 출력하고
+# 호출부가 `[ "$(used_count …)" -gt 0 ]` 로 받았는데, 그러면 함수 안의 차단이 **명령 치환
+# 서브셸**에서 돌아 exit 2 가 서브셸만 죽였다. 부모 셸은 빈 문자열을 받아 `[ "" -gt 0 ]`
+# 에서 문법 오류를 내고 그대로 다음 줄로 갔다 — **차단 메시지가 두 번 찍히는데 종료 코드는
+# 0**, 즉 재발행이 재승인 없이 통과했다(검수 2차 실측: used/ 를 chmod 300 한 번으로 재현).
+# 판정과 차단은 본셸에서만 한다. 8단의 RECEIPTS_ACTIVE 검사가 처음부터 이 형태였다.
+USED_RC=0
+USED_N=0
+used_scan() {
+  USED_N=0
+  dir_state "$RECEIPTS_USED"; USED_RC=$?
+  [ "$USED_RC" -eq 0 ] || return 0
+  USED_N="$(count_prefixed "$RECEIPTS_USED" "$1")"
 }
 
 # field_value <점 경로> — stdin payload 의 tool_input 안에서 문자열 값 하나. 없으면 rc=1.
@@ -126,8 +151,14 @@ sys.stdout.write(cur)
 # 입력을 상한까지만 읽는다. 상한이 없으면 거대 입력 하나로 훅을 세울 수 있고,
 # 멈춘 훅은 차단도 통과도 아니다. 넘치면 조용히 자르지 않고 **막는다**(자르면 다른
 # payload 가 되어 "영수증 없음"이라는 엉뚱한 사유로 끝난다).
-payload="$(head -c "$((PUBLISH_MAX_PAYLOAD_BYTES + 1))")"
-if [ "${#payload}" -gt "$PUBLISH_MAX_PAYLOAD_BYTES" ]; then
+# 센티널 X 를 붙여 받고 도로 뗀다. 명령 치환은 **후행 개행을 전부 지우므로**, 그냥 받으면
+# 정확히 상한+개행 1바이트인 입력이 상한 이하로 보여 통과한다(검수 2차 실측).
+payload="$(head -c "$((PUBLISH_MAX_PAYLOAD_BYTES + 1))"; printf 'X')"
+payload="${payload%X}"
+# 세는 단위는 **바이트**다. ${#var} 는 문자 수라 한글 payload 에서 상한이 3배로 늘어난다 —
+# fail-closed 방향이긴 해도 "상한 N 바이트"라는 사유와 어긋나 진단이 사람을 속인다.
+payload_bytes="$(printf '%s' "$payload" | LC_ALL=C wc -c | tr -d ' ')"
+if [ "${payload_bytes:-0}" -gt "$PUBLISH_MAX_PAYLOAD_BYTES" ]; then
   deny "호출 입력이 너무 큽니다 — 상한을 넘는 입력은 판정하지 않습니다." \
        "상한: $PUBLISH_MAX_PAYLOAD_BYTES 바이트"
 fi
@@ -157,9 +188,11 @@ if [ "$reg_rc" -eq 3 ]; then
 fi
 if [ "$reg_rc" -ne 0 ]; then
   # digest 도 등급도 아직 없는 시점이라 공통 꼬리 대신 전용 문구를 쓴다.
+  # **정화는 여기서도 지난다.** 목록 경로와 사유는 파일·환경에서 온 문자열이라, 한 경로라도
+  # 정화를 빠뜨리면 정화 자체가 무의미해진다(검수 2차 지적 — stderr 를 한 문으로 다룬다).
   printf '[Hook 차단] 발행 대상 목록을 읽지 못했습니다 — 어떤 도구가 게이트 대상인지 모르는 상태의 통과는 게이트 소멸이라 막습니다.\n' >&2
-  printf '  목록: %s\n' "$PUBLISH_REGISTRY" >&2
-  printf '  사유: %s\n' "$row" >&2
+  printf '  목록: %s\n' "$(sanitize "$PUBLISH_REGISTRY")" >&2
+  printf '  사유: %s\n' "$(sanitize "$row")" >&2
   printf '  급하면 표준 탈출구: ECC_DISABLED_HOOKS=%s (또는 HARNESS_HOOKS=off) — docs/usage.md 5절 표기\n' "$HOOK_ID" >&2
   exit 2
 fi
@@ -198,7 +231,12 @@ fi
 
 # ── 7) replay 판정 (여기서는 **판정만** 한다 — 승인 요구의 확정은 12) 이후) ──
 replay=0
-[ "$(used_count "$digest")" -gt 0 ] && replay=1
+used_scan "$digest"
+if [ "$USED_RC" -eq 1 ]; then
+  deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." \
+       "경로: $RECEIPTS_USED (권한을 확인하세요)"
+fi
+[ "$USED_N" -gt 0 ] && replay=1
 
 # ── 8) active 탐색 ──────────────────────────────────────────────────────
 receipt=''
@@ -343,7 +381,12 @@ fi
 # 승인을 고른 사이에 다른 프로세스가 같은 digest 를 소비했을 수 있다. 그러면 이 호출은
 # 재발행이 되는데, 이미 고른 승인은 "최초 발행"에 대한 것이라 그대로 쓸 수 없다.
 # 재진입하지 않고 deny 한다 — 승인 절차를 안내하는 쪽이 상태 기계를 단순하게 유지한다.
-if [ "$replay" -eq 0 ] && [ "$(used_count "$digest")" -gt 0 ]; then
+used_scan "$digest"
+if [ "$USED_RC" -eq 1 ]; then
+  deny "영수증 상태를 읽지 못했습니다 — 소비 직전 재확인에 실패해 막습니다." \
+       "경로: $RECEIPTS_USED (권한을 확인하세요)"
+fi
+if [ "$replay" -eq 0 ] && [ "$USED_N" -gt 0 ]; then
   deny "판정 도중 같은 digest 가 다른 경로로 소비됐습니다 — 이 호출은 재발행이 되어 막습니다." \
        "재발행에는 새 kty 승인이 필요합니다."
 fi
@@ -421,6 +464,6 @@ fi
 if ! record_flag "$AUDIT_FLAG" "used/$base"; then
   # 이미 소비됐으므로 막지 않는다(막으면 발행은 못 하고 영수증만 사라진다).
   # 대신 조용히 넘어가지 않는다 — 선기록(intent)은 남아 있으므로 감사자가 대조할 수 있다.
-  printf '[하네스] 발행 영수증 소비 기록을 남기지 못했습니다: used/%s (감사 선기록으로 대조하세요)\n' "$base" >&2
+  printf '[하네스] 발행 영수증 소비 기록을 남기지 못했습니다: used/%s (감사 선기록으로 대조하세요)\n' "$(sanitize "$base")" >&2
 fi
 exit 0

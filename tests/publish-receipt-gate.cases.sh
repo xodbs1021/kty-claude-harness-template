@@ -4,7 +4,7 @@
 # 실행 파일이 아니라 publish-receipt-gate.test.sh 가 source 하는 조각이다. 러너·픽스처·
 # assert 헬퍼는 전부 거기 있고 여기에는 계약 표만 둔다.
 #
-# **케이스 개수·ID 범위: p01~p83 (EXPECTED_CASES=83, 파일 끝에서 러너가 강제).**
+# **케이스 개수·ID 범위: p01~p86 (EXPECTED_CASES=86, 파일 끝에서 러너가 강제).**
 # 계획 rev5 는 55를 참고값으로 적었고, 승인 조건(정정판 v2)이 요구한 추가분
 # (영수증 스키마 위반 2건 · min_tier1+tier2 무승인 · WAL 직전 재검사 · tier 타입 3종 ·
 # 영수증 내용↔파일명 일치 2종 · 다중 승인 결정성 · claim 후 재파싱 · 발급기/승인기 왕복)
@@ -31,7 +31,7 @@
 #
 # ── 변이 ↔ 적색 케이스 대응표 (변이 하네스: _workspace/mutate-publish-gate.sh) ──
 # 각 변이는 아래 케이스 중 **하나 이상**을 빨갛게 만든다. 못 만드는 방어는 테스트가
-# 아니라 문장으로만 존재하는 것이다(측정 결과: 43종 전건 적색, 2026-08-15).
+# 아니라 문장으로만 존재하는 것이다(측정 결과: 46종 전건 적색, 2026-08-15).
 # **주의**: 하네스가 재는 것은 "러너 전체가 빨개졌는가"다 — 아래 케이스 ID 는 설계상의
 # 대응이고, 기계가 ID 단위로 확인하지는 않는다.
 #   m01 탈출구 검사 삭제                       → p03 p04
@@ -74,10 +74,13 @@
 #   m38 승인 rm 실패 무시                      → p77
 #   m39 발급 락 제거                           → p78
 #   m40 영수증 심링크 거부 제거                → p79
-#   m41 used 판독 실패를 0건으로 접기          → p82
+#   m41 판독 불가를 "없음"으로 접기(dir_state) → p82
 #   m42 nonce 경계 하이픈 허용                 → p80
 #   m43 영수증 문자집합 검사 제거              → p81
 #   m44 승인 파일명↔nonce 대조 제거            → p83
+#   m45 used 판정을 서브셸로 되돌리기          → p82   (2차 CRITICAL — 서브셸 차단은 차단이 아니다)
+#   m46 artifact open 뒤 fstat 재검사 제거     → p86
+#   m47 정화에서 유니코드 서식문자 단계 제거   → p84
 #
 # 셸 이식성: macOS 기본 bash 는 3.2 다. ${var,,}·mapfile·연관배열 금지.
 
@@ -611,7 +614,7 @@ case_p35() { # waivable=yes 인데 본문 필드를 모르면 면제 판정 자�
 # 크기의 정본(EXPECTED_CASES·CASES)은 이 파일 하나뿐이고, 러너가 둘 다 읽는다.
 
 # --- 계약 표의 크기 -------------------------------------------------------
-EXPECTED_CASES=83
+EXPECTED_CASES=86
 
 CASES='case_p01 case_p02 case_p03 case_p04 case_p05 case_p06 case_p07 case_p08 case_p09 case_p10
        case_p11 case_p12 case_p13 case_p14 case_p15 case_p16 case_p17 case_p18 case_p19 case_p20
@@ -621,4 +624,4 @@ CASES='case_p01 case_p02 case_p03 case_p04 case_p05 case_p06 case_p07 case_p08 c
        case_p51 case_p52 case_p53 case_p54 case_p55 case_p56 case_p57 case_p58 case_p59 case_p60
        case_p61 case_p62 case_p63 case_p64 case_p65 case_p66 case_p67 case_p68 case_p69
        case_p70 case_p71 case_p72 case_p73 case_p74 case_p75 case_p76 case_p77 case_p78
-       case_p79 case_p80 case_p81 case_p82 case_p83'
+       case_p79 case_p80 case_p81 case_p82 case_p83 case_p84 case_p85 case_p86'

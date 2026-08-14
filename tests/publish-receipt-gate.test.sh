@@ -78,7 +78,11 @@ TOK_ESCAPE='publish:receipt'
 TOK_WEDGED_APPROVAL='승인 소비가 중단된 흔적'
 TOK_SYMLINK='심볼릭 링크'
 TOK_TOOBIG='너무 큽니다'
-TOK_STATE='영수증 상태를 읽지'
+# **문구를 좁게 잡는다.** used/ 판정 실패는 두 곳에서 막을 수 있는데(7단 replay 판정과
+# 13단 소비 직전 재확인), 둘을 같은 조각으로 재면 앞 단이 죽어도 뒤 단이 대신 막아
+# "앞 단이 사라진 것"을 못 본다 — 2차 검수의 CRITICAL 이 정확히 그 형태였다.
+TOK_STATE='재발행 여부를 판정할 수 없어'
+TOK_REGISTRY_PATH='목록:'
 # 아래 둘은 판독기(_common.sh)의 사유 문구다. 같은 "영수증 형식" 차단 안에서 **어느 검사가
 # 걸었는지**를 가르기 위해 조각을 따로 둔다 — 안 가르면 문자집합 검사를 지워도 도구명
 # 불일치 검사가 같은 문구로 막아 변이가 살아남는다.
@@ -363,6 +367,20 @@ want_one_block_line() {
   local n
   n="$(printf '%s\n' "$ERR" | grep -c '^\[Hook ' 2>/dev/null | tr -d ' ')"
   [ "$n" = '1' ] || WHY="[Hook …] 로 시작하는 줄이 ${n}개다 (기대 1 — 줄 위조 가능)"
+}
+
+# want_no_uniformat — 차단 메시지에 **유니코드 서식문자**가 없어야 한다.
+# ASCII 제어문자만 걷어내면 U+2028(줄 구분자)·U+202E(RLO)가 남아 렌더러에서 줄이 갈리거나
+# 글자 순서가 뒤집힌다 — 제어문자를 지운 것과 같은 효과가 다른 부호점으로 되살아난다.
+want_no_uniformat() {
+  [ -z "$WHY" ] || return 0
+  local ch
+  for ch in "$(printf '\342\200\250')" "$(printf '\342\200\256')"; do
+    if printf '%s' "$ERR" | LC_ALL=C grep -qF "$ch"; then
+      WHY='차단 메시지에 유니코드 서식문자(U+2028/U+202E)가 그대로 실렸다'
+      return 0
+    fi
+  done
 }
 
 # want_grep <파일> <문자열>

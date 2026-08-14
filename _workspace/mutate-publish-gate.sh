@@ -283,10 +283,9 @@ mutate 'm40 영수증 심링크 거부 제거' "$HOOK" \
   'if [ -L "$receipt" ]; then' \
   'if false; then'
 
-mutate 'm41 used 판독 실패를 0건으로 접기' "$HOOK" \
-  '  [ "$st" -eq 1 ] && deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." \
-                          "경로: $RECEIPTS_USED (권한을 확인하세요)"' \
-  '  [ "$st" -eq 1 ] && { printf '"'"'0'"'"'; return 0; }'
+mutate 'm41 판독 불가를 "없음"으로 접기(dir_state)' "$HOOK" \
+  '  { [ -r "$1" ] && [ -x "$1" ]; } || return 1' \
+  '  { [ -r "$1" ] && [ -x "$1" ]; } || return 3'
 
 mutate 'm42 nonce 경계 하이픈 허용' "$COMMON" \
   'if not re.match(r"\A[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z", rec["nonce"]):' \
@@ -299,6 +298,28 @@ mutate 'm43 영수증 문자집합 검사 제거' "$COMMON" \
 mutate 'm44 승인 파일명↔nonce 대조 제거' "$HOOK" \
   '    [ "$(printf '"'"'%s'"'"' "$ap" | cut -f2)" = "$an" ] || continue' \
   '    :'
+
+# ── 재검수 2차(2026-08-15)에서 닫은 것 ──────────────────────────────────
+
+# **차단을 서브셸에서 하면 차단이 아니다.** 명령 치환 안의 exit 2 는 서브셸만 죽이고,
+# 부모는 빈 문자열을 받아 그대로 다음 줄로 간다 — 차단 메시지는 찍히는데 rc=0 이다.
+# p82 가 7단의 문구를 좁게 재기 때문에, 13단이 대신 막아도 이 변이는 적색이 된다.
+mutate 'm45 used 판정을 서브셸로 되돌리기' "$HOOK" \
+  'used_scan "$digest"
+if [ "$USED_RC" -eq 1 ]; then
+  deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." \
+       "경로: $RECEIPTS_USED (권한을 확인하세요)"
+fi
+[ "$USED_N" -gt 0 ] && replay=1' \
+  '[ "$( used_scan "$digest"; [ "$USED_RC" -eq 1 ] && deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." "경로: $RECEIPTS_USED"; printf '"'"'%s'"'"' "$USED_N" )" -gt 0 ] && replay=1'
+
+mutate 'm46 artifact open 뒤 fstat 재검사 제거' "$COMMON" \
+  '            fst = os.fstat(fh.fileno())' \
+  '            fst = st'
+
+mutate 'm47 정화에서 유니코드 서식문자 단계 제거' "$HOOK" \
+  '  [ -n "$s" ] || s="$t"' \
+  '  s="$t"'
 
 echo ""
 echo "— 변이 $total 종: 적색 $red · 살아남음 $green"

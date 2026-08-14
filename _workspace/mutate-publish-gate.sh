@@ -18,6 +18,10 @@
 #     있는 채로 **틀리게** 구현되는 변이는 이 하네스가 못 잡는다.
 #   · 자가 발급(에이전트가 스스로 영수증을 만드는 것)에 대한 변이는 없다. 설계 0절대로
 #     그것은 사전 차단 대상이 아니다 — 겨누지 않는 것을 재는 척하지 않는다.
+#   · **등가 변이 하나를 뺐다**: "판독기 rc 검사만 삭제"는 이제 관측 가능한 동작을 바꾸지
+#     않는다 — 바로 뒤의 도구 이름 **형태 검사**가 같은 판정을 내기 때문이다(검수 회차에서
+#     추가된 이중 방어). 살아남는 변이로 세면 방어가 없는 것처럼 보이므로 목록에서 뺐고,
+#     형태 검사 자체를 지우는 변이(m33)가 그 자리를 대신 잰다.
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -110,12 +114,6 @@ mutate 'm02 최상위 tool_name 중복 허용' "$COMMON" \
   'if len(names) != 1:' \
   'if len(names) < 1:'
 
-mutate 'm03 tool_name 판독 실패를 통과로' "$HOOK" \
-  'tool_name="$(printf '"'"'%s'"'"' "$payload" | publish_tool_name)"
-if [ $? -ne 0 ]; then' \
-  'tool_name="$(printf '"'"'%s'"'"' "$payload" | publish_tool_name)"
-if false; then'
-
 mutate 'm04 registry 부재를 통과로' "$HOOK" \
   'if [ "$reg_rc" -ne 0 ]; then' \
   'if false; then'
@@ -138,9 +136,9 @@ fi' \
 fi'
 
 mutate 'm08 엄격 파싱 → 관대 파싱' "$COMMON" \
-  '    data = json.loads(sys.stdin.read(), object_pairs_hook=no_dup,
+  '    data = json.loads(raw, object_pairs_hook=no_dup,
                       parse_float=reject_number, parse_constant=reject_number)' \
-  '    data = json.loads(sys.stdin.read())'
+  '    data = json.loads(raw)'
 
 mutate 'm09 digest 실패를 통과로' "$HOOK" \
   'digest="$(printf '"'"'%s'"'"' "$payload" | publish_digest "$artifact_field")"
@@ -148,13 +146,9 @@ if [ $? -ne 0 ]; then' \
   'digest="$(printf '"'"'%s'"'"' "$payload" | publish_digest "$artifact_field")"
 if false; then'
 
-mutate 'm10 Artifact 재해시 생략' "$COMMON" \
-  '    try:
-        with open(cur, "rb") as fh:
-            art = hashlib.sha256(fh.read()).hexdigest()
-    except Exception as exc:
-        die("artifact re-hash failed: %s" % exc)' \
-  '    art = ""'
+mutate 'm10 Artifact 재해시 결과 무시' "$COMMON" \
+  '        art = h.hexdigest()' \
+  '        art = ""'
 
 mutate 'm11 면제 플래그 선기록 삭제(로그가 먼저가 된다)' "$HOOK" \
   '      record_flag "$AUDIT_FLAG" "waived/$digest" \
@@ -173,7 +167,7 @@ mutate 'm13 면제 프리픽스를 부분 일치로' "$HOOK" \
   "    *'[비판정]'*)"
 
 mutate 'm14 replay 검사 삭제' "$HOOK" \
-  '[ "$(count_glob "$RECEIPTS_USED/$digest".\*)" -gt 0 ] && replay=1' \
+  '[ "$(used_count "$digest")" -gt 0 ] && replay=1' \
   ':'
 
 mutate 'm15 active 2개를 하나로 골라 통과' "$HOOK" \
@@ -205,16 +199,16 @@ mutate 'm20 min_tier 대조 삭제' "$HOOK" \
   'if false; then'
 
 mutate 'm21 3튜플 대조 삭제' "$HOOK" \
-  'if ! grep -qE "^발행-리뷰: tool=$tool_re digest=$digest tier=$r_tier\$" "$review_path" 2>/dev/null; then' \
-  'if false; then'
+  'tuple_n="$(grep -cE "^발행-리뷰: tool=$tool_re digest=$digest tier=$r_tier\$" "$review_path" 2>/dev/null | tr -d '"'"' '"'"')"' \
+  'tuple_n=1'
 
 mutate 'm22 approval_required 에서 replay 항 제거' "$HOOK" \
   '[ "$replay" -eq 1 ] && approval_required=1' \
   ':'
 
 mutate 'm23 승인 선택 순서를 뒤집기(결정성 파괴)' "$HOOK" \
-  'for an in $(ls "$RECEIPTS_APPROVAL_ACTIVE" 2>/dev/null | LC_ALL=C sort); do' \
-  'for an in $(ls "$RECEIPTS_APPROVAL_ACTIVE" 2>/dev/null | LC_ALL=C sort -r); do'
+  '  an="$(printf '"'"'%s'"'"' "$cands" | LC_ALL=C sort | head -1)"' \
+  '  an="$(printf '"'"'%s'"'"' "$cands" | LC_ALL=C sort -r | head -1)"'
 
 mutate 'm24 감사 선기록 실패를 무시(사실상 후기록)' "$HOOK" \
   'record_flag "$AUDIT_FLAG" "$intent" \

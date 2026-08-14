@@ -45,7 +45,7 @@ model: opus
 
 발행 게이트는 **누락 방지턱이지 위조 방지 장치가 아니다** — 영수증을 만드는 손과 감시받는 손이 같다. 그래서 진정성 판정이 여기로 온다. `.claude/.needs-audit` 에 다음 형태의 줄이 있으면 **전수**로 본다(표본 아님):
 
-`used/<digest>.<nonce>` · `publish-intent/<digest>.<nonce>[ approval/<nonce>]` · `waived/<digest>` · `wedged/<digest>.<nonce>` · `mismatch/<digest>.<nonce>`
+`used/<digest>.<nonce>` · `publish-intent/<digest>.<nonce>[ approval/<nonce>]` · `waived/<digest>` · `wedged/<digest>.<nonce>` · `wedged-approval/<nonce>` · `mismatch/<digest>.<nonce>`
 
 영수증 실물은 `_workspace/.receipts/{used,approval-used,active,quarantine}/` 와 `waived.log` 에 있다.
 
@@ -56,6 +56,8 @@ model: opus
 5. **미소비 시도** — `publish-intent/…` 는 있는데 같은 이름의 `used/…` 가 **없으면** 그 발행은 실행되지 않았다(선기록은 소비보다 먼저 적힌다). 완료 주장에 그 발행이 포함돼 있으면 반증이다.
 6. **면제 흔적** — `waived/<digest>` 플래그가 있는데 `waived.log` 에 대응 줄이 없으면, 로그 기록에 실패해 **막힌 시도**다(발행되지 않았다). 로그가 있으면 `[비판정]` 태그가 적정한지(정정·오타 수준인지) 표본 점검한다.
 7. **wedged** — `wedged/<digest>.<nonce>` 가 있거나 `used/` 와 `active/` 에 **같은 이름**이 함께 있으면, 소비가 중단된 상태이고 **그 발행은 실행되지 않았다.** 수동 복구(quarantine 이동) 전에는 재시도도 막힌다. 완료 보고에서 이 건은 미실행으로 잡는다.
+
+8. **wedged-approval** — `wedged-approval/<nonce>` 가 있거나 `approval-used/` 와 `approval-active/` 에 **같은 이름**이 함께 있으면, 승인 소비가 중단된 상태다. ⑦ 과 같은 형태이고 결론도 같다: **그 발행은 실행되지 않았다.** 게다가 그 잔존본은 같은 이름의 새 승인을 봉쇄하므로, 사용자가 재승인을 못 하는 원인이 된다 — 발견하면 quarantine 이동을 안내한다.
 
 `mismatch/…` 는 소비한 사본이 검증한 내용과 달라 막힌 경우다 — 그 자체로 조사 대상이다.
 

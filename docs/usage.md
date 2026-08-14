@@ -122,9 +122,11 @@ cd ~/.claude/harness-template
 **완전 롤백(설치본에서 게이트를 걷어낸다):**
 
 ```bash
+set -e                     # 한 단계라도 실패하면 멈춘다 — 반쯤 걷어낸 상태가 가장 나쁘다
 cd <프로젝트>
+STAMP=$(date +%Y%m%d-%H%M%S)
 # 1) settings.json 배선 제거 (백업 먼저)
-cp .claude/settings.json .claude/settings.json.bak-$(date +%Y%m%d-%H%M%S)
+cp .claude/settings.json ".claude/settings.json.bak-$STAMP"
 python3 - .claude/settings.json <<'EOF'
 import json, sys
 p = sys.argv[1]
@@ -138,15 +140,22 @@ with open(p, "w") as f:
     json.dump(s, f, ensure_ascii=False, indent=2)
     f.write("\n")
 EOF
-# 2) 훅·대상 목록·스크립트 제거 (**배선 제거 뒤에** — 순서를 바꾸면 훅 없는 배선이 남는다)
+# 2) 배선이 **정말로** 사라졌는지 확인한다. 확인 없이 다음으로 가면, 편집이 실패했을 때
+#    훅 파일만 사라지고 배선이 남아 매 호출이 "파일 없음"으로 깨진다.
+! grep -q guard-publish-receipt .claude/settings.json
+# 3) 훅·스크립트 제거 (**배선 제거 뒤에**)
 rm -f .claude/hooks/guard-publish-receipt.sh
-rm -f .claude/harness/publish-registry.txt
 rm -f .claude/scripts/publish-issue-receipt.sh .claude/scripts/publish-approve.sh
-# 3) 미소비 영수증·승인은 지우지 않는다 — 감사 증거다. 치우려면 옮기기만:
-#    mv _workspace/.receipts _workspace/.receipts-rollback-$(date +%Y%m%d)
+# 4) 대상 목록은 **지우지 말고 옮긴다** — 프로젝트가 등록한 행이 유일본이고, 되살릴 때
+#    그 목록이 없으면 처음부터 다시 실측해야 한다.
+mv .claude/harness/publish-registry.txt ".claude/harness/publish-registry.txt.rollback-$STAMP"
+# 5) 미소비 영수증·승인도 지우지 않는다 — 감사 증거다. 치우려면 옮기기만:
+#    mv _workspace/.receipts "_workspace/.receipts-rollback-$STAMP"
 ```
 
-순서가 중요하다: **배선을 먼저 지운다.** 훅 파일만 지우면 배선이 남아 매 MCP 호출마다 "파일 없음" 오류가 나고, 반대로 registry 만 지우면 등재 여부를 판정할 수 없어 광역 차단이 된다.
+순서가 중요하다: **배선을 먼저 지우고, 지워졌는지 확인한 뒤에 파일을 치운다.** 훅 파일만 지우면 배선이 남아 매 호출마다 "파일 없음" 오류가 나고, 반대로 registry 만 지우면 등재 여부를 판정할 수 없어 광역 차단이 된다.
+
+**영수증·승인의 보존 위치:** `_workspace/.receipts/` 는 **git 추적 대상이 아니다**(`.gitignore`). 감사 증거이지만 저장소에 올리지 않는다 — 발행 내용의 digest 와 리뷰 경로가 커밋 이력에 영구히 남는 것은 이 게이트가 요구하는 바가 아니고, 영수증은 그 기기의 작업 상태이지 공유 산출물이 아니기 때문이다. 대신 로컬에서는 **무기한 보존**한다(`used/`·`approval-used/` 는 지우지 않는다). 감사자는 이 디렉터리와 `.claude/.needs-audit` 플래그를 함께 읽는다.
 
 ### 완료 게이트 검사 범위 (mark-needs-audit)
 

@@ -196,22 +196,9 @@ classify() {
   printf 'gate\n'
 }
 
-# record_flag <플래그파일> <값> — 이미 있으면 그냥 두고, 없으면 한 줄 덧붙인다. 실패하면 rc=1.
-# grep 의 -- 는 필수다: 값이 - 로 시작하면(예: 파일명 --version) grep 이 그것을 옵션으로
-# 해석해 rc=0(=이미 있음)을 돌려주고, BSD grep 은 -q 아래서도 버전 문자열을 stdout 에 뱉는다.
-# append 를 중괄호로 감싸는 것도 필수다: 리다이렉트 **열기** 실패는 셸이 보고하는데,
-# printf 뒤에 붙인 2>/dev/null 은 그 시점에 아직 적용되지 않아 stderr 가 샌다(실측).
-record_flag() {
-  mkdir -p "$STATE_DIR" 2>/dev/null
-  if grep -qxF -- "$2" "$1" 2>/dev/null; then
-    # [cx] 같은 경로 재편집도 플래그 mtime 을 갱신해야 한다 — 안 하면 이전 리뷰
-    # 산출물이 플래그보다 "새로워서" 미리뷰 편집이 자동 해제된다(stale review 우회).
-    touch "$1" 2>/dev/null
-    return 0
-  fi
-  { printf '%s\n' "$2" >> "$1"; } 2>/dev/null || return 1
-  return 0
-}
+# record_flag 는 여기 없다 — **_common.sh 로 옮겼다.** 발행 게이트(guard-publish-receipt)가
+# 같은 플래그 파일에 같은 규칙으로 적어야 하고, 두 벌로 두면 한쪽만 고쳐진 채 "플래그는
+# 서는데 감사자가 못 읽는" 어긋남이 조용히 생긴다(ADR-0018).
 
 # --- 판정 -----------------------------------------------------------------
 

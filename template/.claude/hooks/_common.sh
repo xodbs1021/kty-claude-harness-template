@@ -23,6 +23,27 @@ RETRIEVAL_FLAG="$STATE_DIR/.needs-retrieval"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"
 BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플래그 상태) — 진전 인지 리셋용
 
+# ── 외부 발행 게이트(ADR-0018) ────────────────────────────────────────
+# 발행 도구 호출 앞에 "리뷰 영수증"을 요구하는 방지턱. **위조 방지 장치가 아니다** —
+# 영수증을 만드는 손과 감시받는 손이 같은 에이전트라 작정한 자가 발급은 사전 차단할 수
+# 없고, 진정성은 completion-auditor 사후 감사가 본다. 이 층이 구조적으로 막는 것은
+# 실사고의 원인 유형인 **누락**(리뷰 없이 그냥 발행)이다.
+#
+# 상태는 _workspace/ 아래 둔다: 스크래치 영역이라 완료 게이트 플래그(mark-needs-audit)가
+# 서지 않고, 그래서 영수증 발급·소비 자체가 무한 게이트 루프를 만들지 않는다.
+RECEIPTS_DIR="$PROJECT_DIR/_workspace/.receipts"
+RECEIPTS_ACTIVE="$RECEIPTS_DIR/active"                    # 미소비 영수증
+RECEIPTS_USED="$RECEIPTS_DIR/used"                        # 소비된 영수증 (무기한 보존)
+RECEIPTS_APPROVAL_ACTIVE="$RECEIPTS_DIR/approval-active"  # 미소비 kty 승인
+RECEIPTS_APPROVAL_USED="$RECEIPTS_DIR/approval-used"      # 소비된 승인 (무기한 보존)
+RECEIPTS_QUARANTINE="$RECEIPTS_DIR/quarantine"            # wedged 수동 복구용 격리
+RECEIPTS_WAIVED_LOG="$RECEIPTS_DIR/waived.log"            # [비판정] 면제 흔적
+PUBLISH_REGISTRY="$STATE_DIR/harness/publish-registry.txt"
+# 게이트 대상 도구 목록의 정본 경로와 digest 계약 버전. 계약 버전은 **영수증에 박히는
+# 정체성의 절반**이다(나머지 절반은 python3 버전) — 직렬화 방식을 바꾸면 이 값을 올려야
+# 하고, 그러면 이전 영수증이 조용히 통과하지 않고 "드리프트 의심"으로 걸린다.
+PUBLISH_CONTRACT_VERSION=1
+
 # Stop 훅이 "같은 지점에서 진전 없이" 최대 몇 번까지 막을 수 있는가. 소진되면 통과시킨다
 # (세션 벽돌 방지). 차단 지문이 바뀌면(=게이트를 하나 지웠으면) 카운터는 리셋되므로,
 # 게이트 개수가 늘어도 이 상수를 올릴 필요가 없다.
@@ -565,4 +586,336 @@ if len(hits) > MAX_HITS:
     sys.stdout.write("... 그리고 %d개 더\n" % (len(hits) - MAX_HITS))
 raise SystemExit(0)
 PY
+}
+
+# record_flag <플래그파일> <값> — 이미 있으면 그냥 두고, 없으면 한 줄 덧붙인다. 실패하면 rc=1.
+#
+# **여기 있는 이유**: 원래 mark-needs-audit.sh 안에 있었는데, 발행 게이트(guard-publish-receipt)
+# 도 같은 플래그 파일에 같은 규칙으로 적어야 한다. 두 벌로 두면 한쪽만 고쳐지고, 그 어긋남은
+# "플래그가 서긴 서는데 감사자가 못 읽는" 조용한 실패로 나온다.
+#
+# grep 의 -- 는 필수다: 값이 - 로 시작하면(예: 파일명 --version) grep 이 그것을 옵션으로
+# 해석해 rc=0(=이미 있음)을 돌려주고, BSD grep 은 -q 아래서도 버전 문자열을 stdout 에 뱉는다.
+# append 를 중괄호로 감싸는 것도 필수다: 리다이렉트 **열기** 실패는 셸이 보고하는데,
+# printf 뒤에 붙인 2>/dev/null 은 그 시점에 아직 적용되지 않아 stderr 가 샌다(실측).
+record_flag() {
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  if grep -qxF -- "$2" "$1" 2>/dev/null; then
+    # [cx] 같은 경로 재편집도 플래그 mtime 을 갱신해야 한다 — 안 하면 이전 리뷰
+    # 산출물이 플래그보다 "새로워서" 미리뷰 편집이 자동 해제된다(stale review 우회).
+    touch "$1" 2>/dev/null
+    return 0
+  fi
+  { printf '%s\n' "$2" >> "$1"; } 2>/dev/null || return 1
+  return 0
+}
+
+# ── 발행 영수증 계약 함수 ─────────────────────────────────────────────
+# 아래 다섯은 **발급기(scripts/publish-issue-receipt.sh)와 게이트(guard-publish-receipt.sh)가
+# 함께 쓰는 단일 구현**이다. 이것이 JCS(RFC 8785) 같은 표준 정규화를 쓰지 않는 근거의
+# 전제다 — 정규화 방식이 무엇이든 **양쪽이 같은 함수를 verbatim 으로 쓰면** 대조가 성립한다.
+# 그래서 이 함수들을 복제하지 마라. 복제하는 순간 근거가 무너진다(ADR-0018 2절 불변식 (i)).
+
+# publish_serializer_identity — 이 환경의 직렬화기 정체성 한 줄. 실패하면 rc=1.
+# 영수증에 박아 두고 소비 시점에 대조한다. 값이 다르면 "이 영수증을 만든 환경과 지금
+# 환경이 다르다"는 뜻이고, digest 가 갈렸을 수 있으므로 조용히 통과시키지 않는다.
+publish_serializer_identity() {
+  local v
+  v="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)" || return 1
+  [ -n "$v" ] || return 1
+  printf 'publish-digest/%s python3/%s' "$PUBLISH_CONTRACT_VERSION" "$v"
+}
+
+# publish_tool_name — stdin 의 훅 payload 에서 **최상위 tool_name 하나**를 뽑는다.
+# stdout = 도구명, rc=0. 판독 불가면 stdout 공백 + rc=1.
+#
+# **이 함수는 payload 를 엄격하게 보지 않는다.** 최상위 키에 tool_name 이 정확히 1개이고
+# 문자열인지만 본다 — tool_input 내부의 중복 키·비정수 수는 여기서 보지 않는다.
+# 순서가 계약이기 때문이다(ADR-0018 3절 2단): 등재 여부를 알기 전에 엄격 파싱을 하면
+# **게이트 대상이 아닌 도구의 정상 호출이 이 훅 때문에 막힌다.** 광역 매처가 붙어 있어
+# 그 폭발 반경은 발행과 무관한 MCP 도구 전체다.
+#
+# 중복 tool_name 을 거부하는 이유: 파서마다 이기는 값이 달라(첫 값/마지막 값) 훅이 본
+# 도구와 실제 실행될 도구가 갈릴 수 있다. 갈리면 "미등재라 통과"가 그대로 우회로가 된다.
+# 최상위만 보는 방법: json 파서는 중첩 객체를 **안쪽부터** 만들므로 마지막 hook 호출이
+# 곧 최상위 객체다.
+publish_tool_name() {
+  python3 -c '
+import json, sys
+calls = []
+def hook(pairs):
+    calls.append(pairs)
+    return dict(pairs)
+try:
+    data = json.loads(sys.stdin.read(), object_pairs_hook=hook)
+except Exception as exc:
+    sys.stderr.write("payload parse failed: %s\n" % exc)
+    raise SystemExit(1)
+if not isinstance(data, dict) or not calls:
+    sys.stderr.write("payload top level is not an object\n")
+    raise SystemExit(1)
+names = [v for k, v in calls[-1] if k == "tool_name"]
+if len(names) != 1:
+    sys.stderr.write("top-level tool_name count is %d (want 1)\n" % len(names))
+    raise SystemExit(1)
+if not isinstance(names[0], str) or names[0] == "":
+    sys.stderr.write("tool_name is not a non-empty string\n")
+    raise SystemExit(1)
+sys.stdout.write(names[0])
+' 2>&1
+}
+
+# publish_digest <artifact_field> — stdin 의 payload 로 canonical digest 를 계산한다.
+# stdout = 64자리 소문자 16진수, rc=0. 실패하면 rc=1 이고 stdout 은 **사유 한 줄**이다
+# (digest 형식이 아니므로 rc 를 무시한 호출부도 값으로 착각하지 않는다 — 진단을 stderr 로
+# 보내지 않는 것은 훅의 stderr 가 곧 사용자 화면이기 때문이다).
+# <artifact_field> 는 tool_input 안에서 발행 파일 경로를 담은 점 경로이며, 없는 도구는 `-` 다.
+#
+# digest = SHA-256( json.dumps({"schema_version":1,"tool_name":…,"tool_input":…,
+#                               "artifact_sha256":…},
+#                              sort_keys=True, separators=(",",":"), ensure_ascii=True) )
+#
+# **거부가 이 함수의 절반이다**(fail-closed). 조용히 빈 문자열을 내면 모든 호출이 같은
+# 값으로 수렴해 영수증 하나가 아무 payload 에나 들어맞는다 — json_get 의 관용을 여기로
+# 물려받으면 안 되는 이유다.
+#   중복 키   : 파서마다 이기는 값이 달라 훅이 본 값과 발행될 값이 갈린다
+#   비정수 수 : float·NaN·Infinity 는 직렬화기마다 표기가 갈린다(RFC 8785 실패원 목록)
+#   Artifact  : 경로가 없거나 못 읽으면 거부 — 빈 해시로 접으면 파일 없는 발행이 통과한다
+#
+# **공시된 한계 둘.** (1) 보장 범위는 "훅 stdin 에 남아 있는 중복"까지다 — 도구 제공자가
+# 우리보다 먼저 payload 를 정규화했다면 원본 wire 의 중복은 이미 소실됐을 수 있다.
+# (2) 중첩 JSON **문자열** 안의 내용은 문자열 한 덩어리라 검사 대상이 아니다.
+# (3) Artifact 는 이 재해시 시점의 내용만 보장한다 — 해시 뒤 업로드 전 파일이 바뀌는
+#     TOCTOU 창은 닫히지 않았다(ADR-0018 잔존 위험).
+publish_digest() {
+  python3 -c '
+import hashlib, json, sys
+
+field = sys.argv[1]
+
+def no_dup(pairs):
+    seen = set()
+    for k, _v in pairs:
+        if k in seen:
+            raise ValueError("duplicate key: " + k)
+        seen.add(k)
+    return dict(pairs)
+
+def reject_number(s):
+    raise ValueError("non-integer number: " + s)
+
+def die(msg):
+    sys.stdout.write(msg)
+    raise SystemExit(1)
+
+try:
+    data = json.loads(sys.stdin.read(), object_pairs_hook=no_dup,
+                      parse_float=reject_number, parse_constant=reject_number)
+except Exception as exc:
+    die("payload strict parse failed: %s" % exc)
+
+if not isinstance(data, dict):
+    die("payload top level is not an object")
+name = data.get("tool_name")
+if not isinstance(name, str) or name == "":
+    die("tool_name missing or not a string")
+tin = data.get("tool_input")
+if not isinstance(tin, dict):
+    die("tool_input missing or not an object")
+
+art = ""
+if field != "-":
+    cur = tin
+    for part in field.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            die("artifact field not found in tool_input: " + field)
+        cur = cur[part]
+    if not isinstance(cur, str) or cur == "":
+        die("artifact path is not a non-empty string")
+    try:
+        with open(cur, "rb") as fh:
+            art = hashlib.sha256(fh.read()).hexdigest()
+    except Exception as exc:
+        die("artifact re-hash failed: %s" % exc)
+
+env = {"schema_version": 1, "tool_name": name, "tool_input": tin, "artifact_sha256": art}
+blob = json.dumps(env, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+sys.stdout.write(hashlib.sha256(blob.encode("utf-8")).hexdigest())
+' "$1" 2>/dev/null
+}
+
+# publish_registry_lookup <도구명> [registry 경로] — 게이트 대상 목록에서 한 행을 찾는다.
+#   rc=0 : 등재됨. stdout = "min_tier<TAB>waivable<TAB>artifact_field<TAB>body_field"
+#   rc=3 : **미등재**(파일은 멀쩡하다). 호출부는 이때만 무판정 통과한다
+#   rc=1 : 목록 자체를 못 믿는다 — 부재·읽기 실패·형식 오류·중복 행. stdout = 사유 한 줄
+#
+# 3 을 쓰는 이유는 harness_env_value·decision_scan 과 같다: python 이 처리 못 한 예외로
+# 죽어도 rc=1 이라, 1 을 "미등재"로 쓰면 **크래시가 조용한 통과로 위장된다.**
+# 이 게이트에서 그 위장은 곧 게이트 소멸이다.
+#
+# 형식이 좁은 것은 의도다(전부 rc=1 로 떨어진다): 탭 5칸 고정 · min_tier 는 1|2 ·
+# waivable 은 yes|no · 필드는 `-` 또는 점 경로 · waivable=yes 인데 body_field 가 `-` 면
+# 면제 판정을 할 수 없으므로 오류 · 같은 도구 두 행이면 어느 쪽이 이기는지 알 수 없으므로 오류.
+# BOM·CR 도 오류다 — 눈에 안 보이는 채로 도구명 한 칸을 어긋나게 만들어 **게이트가 통째로
+# 미등재로 접힌다**(harness.env 판독기가 겪은 그 부류).
+publish_registry_lookup() {
+  python3 -c '
+import re, sys
+path, want = sys.argv[1], sys.argv[2]
+
+def die(msg):
+    sys.stdout.write(msg)
+    raise SystemExit(1)
+
+try:
+    with open(path, "rb") as fh:
+        raw = fh.read()
+except Exception as exc:
+    die("registry read failed: %s" % exc)
+try:
+    text = raw.decode("utf-8")
+except Exception:
+    die("registry is not valid UTF-8")
+if text.startswith("﻿"):
+    die("registry starts with a BOM")
+
+KEY = re.compile(r"\A[A-Za-z0-9_.-]+\Z")
+rows = {}
+for no, line in enumerate(text.split("\n"), 1):
+    if line.endswith("\r"):
+        die("registry line %d ends with CR" % no)
+    if line.strip() == "" or line.lstrip().startswith("#"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 5:
+        die("registry line %d: want 5 tab-separated columns, got %d" % (no, len(cols)))
+    name, tier, waivable, artifact, body = cols
+    if not KEY.match(name):
+        die("registry line %d: bad tool name" % no)
+    if tier not in ("1", "2"):
+        die("registry line %d: min_tier must be 1 or 2" % no)
+    if waivable not in ("yes", "no"):
+        die("registry line %d: waivable must be yes or no" % no)
+    for f in (artifact, body):
+        if f != "-" and not KEY.match(f):
+            die("registry line %d: field must be - or a dotted key" % no)
+    if waivable == "yes" and body == "-":
+        die("registry line %d: waivable=yes needs a body field" % no)
+    if name in rows:
+        die("registry line %d: duplicate row for %s" % (no, name))
+    rows[name] = (tier, waivable, artifact, body)
+
+if want not in rows:
+    raise SystemExit(3)
+sys.stdout.write("\t".join(rows[want]))
+' "${2:-$PUBLISH_REGISTRY}" "$1" 2>/dev/null
+}
+
+# publish_receipt_fields <영수증 파일> — 영수증 스키마를 **고정된 8필드**로 검증하고 읽는다.
+#   rc=0 : stdout = "tool_name<TAB>digest<TAB>tier<TAB>review_artifact<TAB>nonce<TAB>serializer_identity"
+#   rc=1 : 스키마 위반. stdout = 사유 한 줄
+#
+# 필수 8필드: schema_version · tool_name · digest · tier · review_artifact · nonce ·
+#             serializer_identity · issued_at. **누락도 미지 필드도 거부한다** — 미지 필드를
+# 관용하면 나중에 의미를 갖는 필드가 생겼을 때 옛 영수증이 그 필드 없이 통과한다.
+#
+# tier 는 `type(tier) is int and tier in (1,2)`. bool 을 배제하는 것이 핵심이다 —
+# 파이썬에서 True == 1 이라 `tier in (1,2)` 만으로는 `"tier": true` 가 tier1 로 통과한다.
+publish_receipt_fields() {
+  python3 -c '
+import json, re, sys
+
+def die(msg):
+    sys.stdout.write(msg)
+    raise SystemExit(1)
+
+def no_dup(pairs):
+    seen = set()
+    for k, _v in pairs:
+        if k in seen:
+            raise ValueError("duplicate key: " + k)
+        seen.add(k)
+    return dict(pairs)
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        rec = json.loads(fh.read(), object_pairs_hook=no_dup)
+except Exception as exc:
+    die("receipt parse failed: %s" % exc)
+if not isinstance(rec, dict):
+    die("receipt top level is not an object")
+
+WANT = ("schema_version", "tool_name", "digest", "tier", "review_artifact",
+        "nonce", "serializer_identity", "issued_at")
+missing = [k for k in WANT if k not in rec]
+if missing:
+    die("receipt is missing fields: " + ",".join(missing))
+extra = [k for k in rec if k not in WANT]
+if extra:
+    die("receipt has unknown fields: " + ",".join(sorted(extra)))
+
+if type(rec["schema_version"]) is not int or rec["schema_version"] != 1:
+    die("receipt schema_version must be the integer 1")
+tier = rec["tier"]
+if type(tier) is not int or tier not in (1, 2):
+    die("receipt tier must be the integer 1 or 2")
+for k in ("tool_name", "digest", "review_artifact", "nonce", "serializer_identity", "issued_at"):
+    if not isinstance(rec[k], str) or rec[k] == "":
+        die("receipt field is not a non-empty string: " + k)
+if not re.match(r"\A[0-9a-f]{64}\Z", rec["digest"]):
+    die("receipt digest is not a 64-hex string")
+if not re.match(r"\A[A-Za-z0-9-]+\Z", rec["nonce"]):
+    die("receipt nonce has unsupported characters")
+if "\n" in rec["review_artifact"]:
+    die("receipt review_artifact contains a newline")
+
+sys.stdout.write("\t".join([rec["tool_name"], rec["digest"], str(tier),
+                            rec["review_artifact"], rec["nonce"],
+                            rec["serializer_identity"]]))
+' "$1" 2>/dev/null
+}
+
+# publish_approval_fields <승인 파일> — 승인 스키마를 **고정된 3필드**로 검증하고 읽는다.
+#   rc=0 : stdout = "digest<TAB>nonce"      rc=1 : 위반. stdout = 사유 한 줄
+# 필수 3필드: digest · nonce · issued_at. 영수증과 같은 이유로 미지 필드도 거부한다.
+publish_approval_fields() {
+  python3 -c '
+import json, re, sys
+
+def die(msg):
+    sys.stdout.write(msg)
+    raise SystemExit(1)
+
+def no_dup(pairs):
+    seen = set()
+    for k, _v in pairs:
+        if k in seen:
+            raise ValueError("duplicate key: " + k)
+        seen.add(k)
+    return dict(pairs)
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        ap = json.loads(fh.read(), object_pairs_hook=no_dup)
+except Exception as exc:
+    die("approval parse failed: %s" % exc)
+if not isinstance(ap, dict):
+    die("approval top level is not an object")
+
+WANT = ("digest", "nonce", "issued_at")
+missing = [k for k in WANT if k not in ap]
+if missing:
+    die("approval is missing fields: " + ",".join(missing))
+extra = [k for k in ap if k not in WANT]
+if extra:
+    die("approval has unknown fields: " + ",".join(sorted(extra)))
+for k in WANT:
+    if not isinstance(ap[k], str) or ap[k] == "":
+        die("approval field is not a non-empty string: " + k)
+if not re.match(r"\A[0-9a-f]{64}\Z", ap["digest"]):
+    die("approval digest is not a 64-hex string")
+if not re.match(r"\A[A-Za-z0-9-]+\Z", ap["nonce"]):
+    die("approval nonce has unsupported characters")
+sys.stdout.write(ap["digest"] + "\t" + ap["nonce"])
+' "$1" 2>/dev/null
 }

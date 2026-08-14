@@ -771,11 +771,33 @@ case_75() { # 프로젝트 **경로**에 codex 가 들어도 마찬가지다 —
   check_case '75 경로에 codex 가 든 프로젝트의 설계 산출물 → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/00_design.md'
 }
 
+case_76() { # 앵커 확장 — 발행 게이트의 발급기·승인 스크립트가 사는 자리(ADR-0018).
+            # 하네스 **동작을 정의하는** 파일이므로 정본 저장소의 template/.claude/scripts/*
+            # 는 게이트 대상이다. 앵커에 빠져 있으면 이 스크립트들을 고쳐도 완료 게이트가
+            # 하나도 안 선다 — 정확히 2026-08-04 실사고의 형태다. 같은 축: 케이스 30(밖 앵커).
+            # **비차별 행이다**: 정본 스코프에서는 `*.sh` 가 문서 제외에 안 걸려 앵커가 없어도
+            # gate 다. 앵커 추가의 결함 증명은 케이스 77 이 한다 — 이 행은 계약을 고정한다.
+  local p r; p="$(new_project)"; r="$(new_dir harness)"
+  make_harness_repo "$r"
+  mkfile "$r/template/.claude/scripts/publish-approve.sh"
+  run_hook "$p" "$r/template/.claude/scripts/publish-approve.sh"
+  check_case '76 정본 저장소 template/.claude/scripts/*.sh → 게이트 4종(절대경로)' 0 gate "$r/template/.claude/scripts/publish-approve.sh"
+}
+
+case_77() { # 같은 앵커의 **설치본** 축 — git 저장소가 아니어도 발화한다(케이스 30 과 같은 계약).
+            # 프로젝트 **안**의 .claude/scripts/ 는 여전히 스킵이다(순서계약: .claude/* 제외가
+            # 앵커보다 먼저 — 케이스 07). 앵커는 밖과 정본 스코프에서만 의미를 갖는다.
+  local p nogit; p="$(new_project)"; nogit="$(new_dir nogit)"
+  mkfile "$nogit/.claude/scripts/publish-issue-receipt.sh"
+  run_hook "$p" "$nogit/.claude/scripts/publish-issue-receipt.sh"
+  check_case '77 밖+git 아님 .claude/scripts/*.sh → 게이트 4종(절대경로)' 0 gate "$nogit/.claude/scripts/publish-issue-receipt.sh"
+}
+
 # --- 계약 표의 크기 -------------------------------------------------------
 # 러너가 이 두 값으로 "케이스가 조용히 빠지거나 두 번 도는 것"을 잡는다.
 # 건수는 여기 말고 어디에도 숫자로 적지 않는다 — 케이스를 추가할 때마다 낡는다.
 
-EXPECTED_CASES=75
+EXPECTED_CASES=77
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 case_10 case_11
        case_12 case_13 case_14 case_15 case_16 case_17 case_18 case_19 case_20 case_21 case_22
@@ -783,4 +805,5 @@ CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 c
        case_34 case_35 case_36 case_37 case_38 case_39 case_40 case_41 case_42 case_43 case_44
        case_45 case_46 case_47 case_48 case_49 case_50 case_51 case_52 case_53 case_54 case_55
        case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66
-       case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75'
+       case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75
+       case_76 case_77'

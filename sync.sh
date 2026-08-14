@@ -51,6 +51,12 @@ if [ "$NO_PULL" -ne 1 ] \
   fi
 fi
 
+# ── 1b) 배선 프리체크 — diff 미리보기보다 먼저. 중복 배선 상태에서는 갱신을 보여 주기
+#       전에 멈추는 편이 낫다(사용자가 고칠 대상은 diff 가 아니라 배선이다).
+if command -v wiring_precheck >/dev/null 2>&1; then
+  wiring_precheck "$DST/settings.json" || exit 1
+fi
+
 # ── 2) 글루 diff 미리보기 (슬롯은 비교 대상에서 제외) ───────────────
 echo "== 갱신될 글루 diff:"
 changed=0
@@ -68,6 +74,7 @@ for d in "$SRC/skills/"*/; do
   while IFS= read -r f; do preview "$f" "$DST/skills/$(basename "$d")/${f#"$d"}"; done < <(find "$d" -type f)
 done
 for f in "$SRC/hooks/"*.sh; do preview "$f" "$DST/hooks/$(basename "$f")"; done
+for f in "$SRC/scripts/"*.sh; do [ -f "$f" ] && preview "$f" "$DST/scripts/$(basename "$f")"; done
 preview "$SRC/harness/principles.md" "$DST/harness/principles.md"
 for f in "$TPL_ROOT/global-agents/"*.md; do [ -f "$f" ] && preview "$f" "$HOME/.claude/agents/$(basename "$f")"; done
 
@@ -96,6 +103,13 @@ for ev, entries in ours.get("hooks", {}).items():
                 print(ev + ": " + h.get("command", ""))' "$SRC/settings.json" "$DST/settings.json")
 else
   echo "   [신규] settings.json 배선"
+  changed=$((changed + 1))
+fi
+
+# 발행 대상 목록(슬롯)은 **없을 때만** 새로 깔린다 — 있으면 프로젝트가 등록한 행을
+# 보존하려고 건드리지 않는다. 그래서 여기서도 "신규"일 때만 변경으로 센다.
+if [ ! -f "$DST/harness/publish-registry.txt" ]; then
+  echo "   [신규] harness/publish-registry.txt (발행 게이트 대상 목록 — 활성 행 0개)"
   changed=$((changed + 1))
 fi
 

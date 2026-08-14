@@ -194,8 +194,19 @@ else
 fi
 hook_count="$(ls "$DST/hooks"/*.sh 2>/dev/null | wc -l | tr -d ' ')"
 
+# 사람이 손으로 부르는 하네스 도구(발행 영수증 발급기·kty 승인기 — ADR-0018).
+# 훅과 달리 원자 스왑을 하지 않는다: 세션이 자동으로 부르지 않으므로 교체 도중 창이
+# 열려도 잘못된 판정을 내지 않는다(사람이 그 순간에 실행하면 실패할 뿐이다).
+script_count=0
+if ls "$SRC/scripts/"*.sh >/dev/null 2>&1; then
+  mkdir -p "$DST/scripts"
+  cp "$SRC/scripts/"*.sh "$DST/scripts/"
+  chmod +x "$DST/scripts/"*.sh
+  script_count="$(ls "$DST/scripts"/*.sh 2>/dev/null | wc -l | tr -d ' ')"
+fi
+
 cp "$SRC/harness/principles.md" "$DST/harness/"
-echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 $hook_count · 제0원칙"
+echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 $hook_count · 스크립트 $script_count · 제0원칙"
 
 # ── 1b) 전역 에이전트 배포 (~/.claude/agents/ — 프로젝트 무관 글루, 덮어씀) ──
 # 정본은 이 repo의 global-agents/ (전역 디렉토리는 버전 관리가 안 되므로 — ADR-0002)
@@ -326,6 +337,15 @@ if [ ! -f "$DST/harness/project-profile.md" ]; then
 else
   echo "   슬롯 보존    harness/project-profile.md   (기존 유지)"
 fi
+# 발행 대상 목록은 **슬롯이다** — 글루처럼 덮으면 프로젝트가 등록한 행이 재설치마다
+# 사라진다(그리고 그 소실은 "게이트가 조용히 없어졌다"로만 드러난다). 대신 없을 때만
+# 깔고, 템플릿 쪽 주석이 갱신돼도 기존 파일은 건드리지 않는다(공시된 대가 — usage.md).
+if [ ! -f "$DST/harness/publish-registry.txt" ]; then
+  cp "$SRC/harness/publish-registry.txt" "$DST/harness/publish-registry.txt"
+  echo "   슬롯 생성 ✓  harness/publish-registry.txt   ← 활성 행 0개(게이트 불활성). 등록 절차는 파일 주석"
+else
+  echo "   슬롯 보존    harness/publish-registry.txt   (프로젝트가 등록한 행 보존)"
+fi
 if [ ! -f "$DST/harness/harness.env" ]; then
   cp "$SRC/harness/harness.env.template" "$DST/harness/harness.env"
   echo "   슬롯 생성 ✓  harness/harness.env          ← HARNESS_TYPECHECK_CMD 채우세요"
@@ -335,6 +355,11 @@ else
 fi
 
 # ── 3) settings.json 병합 (기존 훅 보존) ────────────────────────────
+# 병합 **전에** 중복 배선을 본다. 병합은 (matcher, command) 단위로 멱등이라 이미 중복인
+# 상태를 고쳐 주지 않는데, 중복 배선은 한 호출에 훅을 두 번 발화시킨다.
+if command -v wiring_precheck >/dev/null 2>&1; then
+  wiring_precheck "$DST/settings.json" || exit 1
+fi
 if [ -f "$DST/settings.json" ]; then
   cp "$DST/settings.json" "$DST/settings.json.bak-$STAMP"
   echo "   settings 백업 → settings.json.bak-$STAMP"

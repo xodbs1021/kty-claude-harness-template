@@ -84,3 +84,64 @@ deploy_guard() {
   fi
   return 0
 }
+
+# wiring_precheck <대상 settings.json> — **배포 전** 훅 배선의 중복을 본다.
+#   rc=0 통과(파일 없음·파싱 성공·중복 없음) / rc=1 중단(사유는 stderr)
+#
+# 왜 배포 **전**인가: install 의 병합은 (matcher, command) 단위로 멱등이라 중복을 새로
+# 만들지는 않지만, **이미 중복인 상태를 고쳐 주지도 않는다.** 중복 배선은 같은 훅이 한
+# 호출에 두 번 발화한다는 뜻이고, 발행 게이트에서 그것은 "첫 발화가 영수증을 소비하고
+# 둘째 발화가 무영수증으로 차단한다"는 재현 불가능해 보이는 실패로 나온다.
+# 그리고 그 상태에서 사용자는 훅이 아니라 자기 호출을 의심한다.
+#
+# 판정은 **명령 문자열 단위**다(matcher 는 다를 수 있다 — 다른 matcher 에 같은 훅이
+# 붙어도 한 도구 호출에 둘 다 걸리면 두 번 돈다). 파싱 실패도 중단이다: 그 상태로
+# 병합하면 어차피 깨지는데, 여기서 멈추면 백업 이전이라 사용자 파일이 온전하다.
+wiring_precheck() {
+  local dst="$1" out rc
+  [ -f "$dst" ] || return 0
+  out="$(python3 - "$dst" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        cur = json.load(f)
+except Exception as exc:
+    print("settings.json 을 읽지 못했습니다: %s" % exc)
+    raise SystemExit(1)
+if not isinstance(cur, dict):
+    print("settings.json 의 루트가 객체가 아닙니다")
+    raise SystemExit(1)
+dups = []
+for event, entries in (cur.get("hooks") or {}).items():
+    if not isinstance(entries, list):
+        continue
+    seen = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        for h in (e.get("hooks") or []):
+            if not isinstance(h, dict):
+                continue
+            cmd = h.get("command")
+            if not isinstance(cmd, str):
+                continue
+            seen.setdefault(cmd, []).append(e.get("matcher"))
+    for cmd, matchers in seen.items():
+        if len(matchers) > 1:
+            dups.append("%s: %s  (matcher: %s)" % (event, cmd, ", ".join(str(m) for m in matchers)))
+if dups:
+    print("훅이 여러 항목에 중복 배선돼 있습니다 — 한 호출에 두 번 발화합니다:")
+    for d in dups:
+        print("  " + d)
+    raise SystemExit(1)
+PYEOF
+)"
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  {
+    echo "✗ 배선 프리체크에서 멈췄습니다: $dst"
+    printf '%s\n' "$out" | sed 's/^/  /'
+    echo "  중복 항목을 손으로 지운 뒤 다시 실행하세요(백업을 만들기 전이라 파일은 그대로입니다)."
+  } >&2
+  return 1
+}

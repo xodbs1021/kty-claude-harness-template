@@ -147,9 +147,11 @@ is_harness_canonical() {
 
 # harness_anchor <선행 슬래시가 있는 경로> — 하네스 동작을 정의하는 자리인가.
 # 앵커 목록을 정의하는 **유일 지점**이다.
+# scripts/ 는 발행 게이트의 발급기·승인 스크립트가 사는 자리다(ADR-0018) — 사람이 손으로
+# 부르는 도구지만 게이트의 동작을 정의하므로 앵커에 든다(케이스 76·77).
 harness_anchor() {
   case "$1" in
-    */.claude/agents/*|*/.claude/skills/*|*/.claude/hooks/*|*/.claude/harness/*|*/.claude/settings.json)
+    */.claude/agents/*|*/.claude/skills/*|*/.claude/hooks/*|*/.claude/harness/*|*/.claude/scripts/*|*/.claude/settings.json)
       return 0 ;;
   esac
   return 1

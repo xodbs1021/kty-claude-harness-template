@@ -260,7 +260,7 @@ mutate 'm34 판독기 진단을 stdout 으로 합치기(2>&1 재도입)' "$COMMO
   "' \"\$PUBLISH_MAX_PAYLOAD_BYTES\" 2>&1"
 
 mutate 'm35 Artifact 일반 파일 검사 제거' "$COMMON" \
-  '    if not stat.S_ISREG(st.st_mode):' \
+  '    if not stat.S_ISREG(fst.st_mode):' \
   '    if False:'
 
 mutate 'm36 Artifact 크기 상한 무력화' "$COMMON" \

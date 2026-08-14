@@ -43,6 +43,11 @@ PUBLISH_REGISTRY="$STATE_DIR/harness/publish-registry.txt"
 # 정체성의 절반**이다(나머지 절반은 python3 버전) — 직렬화 방식을 바꾸면 이 값을 올려야
 # 하고, 그러면 이전 영수증이 조용히 통과하지 않고 "드리프트 의심"으로 걸린다.
 PUBLISH_CONTRACT_VERSION=1
+# 입력 상한. 없으면 거대 입력·무한 스트림 하나로 훅을 세울 수 있고, **멈춘 훅은 차단도
+# 통과도 아니다**(검수 실측: FIFO 를 Artifact 경로로 주면 훅이 영원히 멈췄다).
+# 값은 잠정이다 — 실제 등록 도구의 payload·산출물 크기를 재고 나면 조정한다.
+PUBLISH_MAX_PAYLOAD_BYTES=1048576        # 1 MiB
+PUBLISH_MAX_ARTIFACT_BYTES=33554432      # 32 MiB
 
 # Stop 훅이 "같은 지점에서 진전 없이" 최대 몇 번까지 막을 수 있는가. 소진되면 통과시킨다
 # (세션 벽돌 방지). 차단 지문이 바뀌면(=게이트를 하나 지웠으면) 카운터는 리셋되므로,
@@ -627,7 +632,13 @@ publish_serializer_identity() {
 }
 
 # publish_tool_name — stdin 의 훅 payload 에서 **최상위 tool_name 하나**를 뽑는다.
-# stdout = 도구명, rc=0. 판독 불가면 stdout 공백 + rc=1.
+# stdout = 도구명, rc=0. 판독 불가면 rc=1.
+#
+# **진단을 stdout 으로 합치지 않는다(2>/dev/null).** 예전엔 `2>&1` 이었는데, 그러면
+# 인터프리터 시작 잡음(깨진 .pth 가 뱉는 오류 등 **우리와 무관한 환경 문제**)이 그대로
+# 도구 이름이 된다. 그 이름은 목록에 없으니 "미등재 → 통과"가 되어, **환경 잡음만으로
+# 게이트가 사라진다**(검수 실측). 그리고 stdout 쪽 잡음은 리다이렉션으로 못 막으므로
+# 호출부가 반환값의 **형태**(한 줄·허용 문자)를 한 번 더 본다 — 판독기 혼자 못 지킨다.
 #
 # **이 함수는 payload 를 엄격하게 보지 않는다.** 최상위 키에 tool_name 이 정확히 1개이고
 # 문자열인지만 본다 — tool_input 내부의 중복 키·비정수 수는 여기서 보지 않는다.
@@ -642,12 +653,17 @@ publish_serializer_identity() {
 publish_tool_name() {
   python3 -c '
 import json, sys
+cap = int(sys.argv[1])
+raw = sys.stdin.read(cap + 1)
+if len(raw) > cap:
+    sys.stderr.write("payload exceeds the size cap\n")
+    raise SystemExit(1)
 calls = []
 def hook(pairs):
     calls.append(pairs)
     return dict(pairs)
 try:
-    data = json.loads(sys.stdin.read(), object_pairs_hook=hook)
+    data = json.loads(raw, object_pairs_hook=hook)
 except Exception as exc:
     sys.stderr.write("payload parse failed: %s\n" % exc)
     raise SystemExit(1)
@@ -662,7 +678,7 @@ if not isinstance(names[0], str) or names[0] == "":
     sys.stderr.write("tool_name is not a non-empty string\n")
     raise SystemExit(1)
 sys.stdout.write(names[0])
-' 2>&1
+' "$PUBLISH_MAX_PAYLOAD_BYTES" 2>/dev/null
 }
 
 # publish_digest <artifact_field> — stdin 의 payload 로 canonical digest 를 계산한다.
@@ -689,9 +705,11 @@ sys.stdout.write(names[0])
 #     TOCTOU 창은 닫히지 않았다(ADR-0018 잔존 위험).
 publish_digest() {
   python3 -c '
-import hashlib, json, sys
+import hashlib, json, os, stat, sys
 
 field = sys.argv[1]
+pay_cap = int(sys.argv[2])
+art_cap = int(sys.argv[3])
 
 def no_dup(pairs):
     seen = set()
@@ -708,8 +726,11 @@ def die(msg):
     sys.stdout.write(msg)
     raise SystemExit(1)
 
+raw = sys.stdin.read(pay_cap + 1)
+if len(raw) > pay_cap:
+    die("payload exceeds the size cap")
 try:
-    data = json.loads(sys.stdin.read(), object_pairs_hook=no_dup,
+    data = json.loads(raw, object_pairs_hook=no_dup,
                       parse_float=reject_number, parse_constant=reject_number)
 except Exception as exc:
     die("payload strict parse failed: %s" % exc)
@@ -732,16 +753,39 @@ if field != "-":
         cur = cur[part]
     if not isinstance(cur, str) or cur == "":
         die("artifact path is not a non-empty string")
+    # **일반 파일만 연다.** FIFO 나 문자 장치를 열면 읽기가 끝나지 않아 훅이 그대로 멈추고,
+    # 멈춘 훅은 차단도 통과도 아니다(검수 실측). 크기도 미리 보고, 읽는 동안에도 다시 센다 —
+    # stat 이후에 커지는 파일이 있기 때문이다.
     try:
+        st = os.stat(cur)
+    except Exception as exc:
+        die("artifact stat failed: %s" % exc)
+    if not stat.S_ISREG(st.st_mode):
+        die("artifact is not a regular file")
+    if st.st_size > art_cap:
+        die("artifact exceeds the size cap")
+    try:
+        h = hashlib.sha256()
+        seen = 0
         with open(cur, "rb") as fh:
-            art = hashlib.sha256(fh.read()).hexdigest()
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                seen += len(chunk)
+                if seen > art_cap:
+                    die("artifact grew past the size cap while hashing")
+                h.update(chunk)
+        art = h.hexdigest()
+    except SystemExit:
+        raise
     except Exception as exc:
         die("artifact re-hash failed: %s" % exc)
 
 env = {"schema_version": 1, "tool_name": name, "tool_input": tin, "artifact_sha256": art}
 blob = json.dumps(env, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 sys.stdout.write(hashlib.sha256(blob.encode("utf-8")).hexdigest())
-' "$1" 2>/dev/null
+' "$1" "$PUBLISH_MAX_PAYLOAD_BYTES" "$PUBLISH_MAX_ARTIFACT_BYTES" 2>/dev/null
 }
 
 # publish_registry_lookup <도구명> [registry 경로] — 게이트 대상 목록에서 한 행을 찾는다.
@@ -864,10 +908,21 @@ for k in ("tool_name", "digest", "review_artifact", "nonce", "serializer_identit
         die("receipt field is not a non-empty string: " + k)
 if not re.match(r"\A[0-9a-f]{64}\Z", rec["digest"]):
     die("receipt digest is not a 64-hex string")
-if not re.match(r"\A[A-Za-z0-9-]+\Z", rec["nonce"]):
-    die("receipt nonce has unsupported characters")
-if "\n" in rec["review_artifact"]:
-    die("receipt review_artifact contains a newline")
+# nonce 는 파일명이 된다. 앞뒤 하이픈을 허용하면 옵션처럼 보이는 이름이 만들어진다.
+if not re.match(r"\A[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z", rec["nonce"]):
+    die("receipt nonce has unsupported characters or an edge hyphen")
+# **이 값들은 차단 메시지에 실린다.** 문자집합을 좁히지 않으면 영수증 한 줄로 터미널
+# 제어열을 흘려보내 하네스 문구를 위조할 수 있다(검수 실측). 정화는 출력 쪽에서도 하지만,
+# 애초에 들어오지 못하게 하는 쪽이 한 겹 더 두껍다.
+CHARSET = {
+    "tool_name": r"\A[A-Za-z0-9_.-]+\Z",
+    "serializer_identity": r"\A[A-Za-z0-9_./ -]+\Z",
+    "issued_at": r"\A[A-Za-z0-9:.+-]+\Z",
+    "review_artifact": r"\A[^\x00-\x1f\x7f]+\Z",
+}
+for k, pat in CHARSET.items():
+    if not re.match(pat, rec[k]):
+        die("receipt field has characters outside the allowed set: " + k)
 
 sys.stdout.write("\t".join([rec["tool_name"], rec["digest"], str(tier),
                             rec["review_artifact"], rec["nonce"],
@@ -914,8 +969,10 @@ for k in WANT:
         die("approval field is not a non-empty string: " + k)
 if not re.match(r"\A[0-9a-f]{64}\Z", ap["digest"]):
     die("approval digest is not a 64-hex string")
-if not re.match(r"\A[A-Za-z0-9-]+\Z", ap["nonce"]):
-    die("approval nonce has unsupported characters")
+if not re.match(r"\A[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z", ap["nonce"]):
+    die("approval nonce has unsupported characters or an edge hyphen")
+if not re.match(r"\A[A-Za-z0-9:.+-]+\Z", ap["issued_at"]):
+    die("approval field has characters outside the allowed set: issued_at")
 sys.stdout.write(ap["digest"] + "\t" + ap["nonce"])
 ' "$1" 2>/dev/null
 }

@@ -4,7 +4,7 @@
 # 실행 파일이 아니라 publish-receipt-gate.test.sh 가 source 하는 조각이다. 러너·픽스처·
 # assert 헬퍼는 전부 거기 있고 여기에는 계약 표만 둔다.
 #
-# **케이스 개수·ID 범위: p01~p66 (EXPECTED_CASES=66, 파일 끝에서 러너가 강제).**
+# **케이스 개수·ID 범위: p01~p83 (EXPECTED_CASES=83, 파일 끝에서 러너가 강제).**
 # 계획 rev5 는 55를 참고값으로 적었고, 승인 조건(정정판 v2)이 요구한 추가분
 # (영수증 스키마 위반 2건 · min_tier1+tier2 무승인 · WAL 직전 재검사 · tier 타입 3종 ·
 # 영수증 내용↔파일명 일치 2종 · 다중 승인 결정성 · claim 후 재파싱 · 발급기/승인기 왕복)
@@ -581,7 +581,7 @@ case_p35() { # waivable=yes 인데 본문 필드를 모르면 면제 판정 자�
 # 크기의 정본(EXPECTED_CASES·CASES)은 이 파일 하나뿐이고, 러너가 둘 다 읽는다.
 
 # --- 계약 표의 크기 -------------------------------------------------------
-EXPECTED_CASES=66
+EXPECTED_CASES=83
 
 CASES='case_p01 case_p02 case_p03 case_p04 case_p05 case_p06 case_p07 case_p08 case_p09 case_p10
        case_p11 case_p12 case_p13 case_p14 case_p15 case_p16 case_p17 case_p18 case_p19 case_p20
@@ -589,4 +589,6 @@ CASES='case_p01 case_p02 case_p03 case_p04 case_p05 case_p06 case_p07 case_p08 c
        case_p31 case_p32 case_p33 case_p34 case_p35 case_p36 case_p37 case_p38 case_p39 case_p40
        case_p41 case_p42 case_p43 case_p44 case_p45 case_p46 case_p47 case_p48 case_p49 case_p50
        case_p51 case_p52 case_p53 case_p54 case_p55 case_p56 case_p57 case_p58 case_p59 case_p60
-       case_p61 case_p62 case_p63 case_p64 case_p65 case_p66'
+       case_p61 case_p62 case_p63 case_p64 case_p65 case_p66 case_p67 case_p68 case_p69
+       case_p70 case_p71 case_p72 case_p73 case_p74 case_p75 case_p76 case_p77 case_p78
+       case_p79 case_p80 case_p81 case_p82 case_p83'

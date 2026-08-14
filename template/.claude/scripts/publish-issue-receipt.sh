@@ -68,8 +68,12 @@ case "$review" in
 esac
 [ -r "$review_path" ] || die "리뷰 산출물을 읽을 수 없습니다: $review_path"
 tool_re="$(printf '%s' "$tool_name" | sed 's/\./\\./g')"
-if ! grep -qE "^발행-리뷰: tool=$tool_re digest=$digest tier=$tier\$" "$review_path" 2>/dev/null; then
-  printf '✗ 리뷰 산출물에 이 발행의 3튜플이 없습니다.\n' >&2
+# 게이트와 같은 계약: **정확히 1회**. 여러 등급을 함께 적어 두고 낮은 쪽으로 발급받는
+# 우회를 발급 시점에 막는다 — 게이트에서만 걸리면 "영수증이 있는데 왜 막히나"가 된다.
+tuple_n="$(grep -cE "^발행-리뷰: tool=$tool_re digest=$digest tier=$tier\$" "$review_path" 2>/dev/null | tr -d ' ')"
+[ -n "$tuple_n" ] || tuple_n=0
+if [ "$tuple_n" != '1' ]; then
+  printf '✗ 리뷰 산출물의 3튜플이 정확히 한 줄이 아닙니다(찾은 줄 %s개).\n' "$tuple_n" >&2
   printf '  다음 줄을 리뷰 산출물에 그대로 넣으세요:\n' >&2
   printf '  발행-리뷰: tool=%s digest=%s tier=%s\n' "$tool_name" "$digest" "$tier" >&2
   exit 1
@@ -78,6 +82,17 @@ fi
 mkdir -p "$RECEIPTS_ACTIVE" "$RECEIPTS_USED" "$RECEIPTS_APPROVAL_ACTIVE" \
          "$RECEIPTS_APPROVAL_USED" "$RECEIPTS_QUARANTINE" 2>/dev/null \
   || die "영수증 디렉터리를 만들지 못했습니다: $RECEIPTS_DIR"
+
+# **같은 digest 발급은 한 번에 하나만.** 아래 "이미 있나" 검사와 파일 생성 사이에 다른
+# 발급이 끼어들면 nonce 가 달라 둘 다 성공하고, active 가 2개가 된 순간부터 게이트는
+# 통째로 잠긴다(어느 것을 소비할지 알 수 없으므로 — 검수 실측). mkdir 은 원자적이다.
+mkdir -p "$RECEIPTS_DIR/locks" 2>/dev/null
+ISSUE_LOCK="$RECEIPTS_DIR/locks/$digest"
+if ! mkdir "$ISSUE_LOCK" 2>/dev/null; then
+  die "같은 digest 의 발급이 이미 진행 중입니다: $digest
+    (그 프로세스가 죽었다면: rmdir '$ISSUE_LOCK')"
+fi
+trap 'rmdir "$ISSUE_LOCK" 2>/dev/null' EXIT
 
 for f in "$RECEIPTS_ACTIVE/$digest".*; do
   [ -e "$f" ] || continue
@@ -95,8 +110,9 @@ done
 
 ident="$(publish_serializer_identity)" || die 'python3 정체성을 읽지 못했습니다'
 nonce="$(date -u +%Y%m%dT%H%M%S)-$(python3 -c 'import secrets; print(secrets.token_hex(4))' 2>/dev/null)"
+# 앞뒤 하이픈도 막는다 — 파일명이 되는 값이라 옵션처럼 보이는 이름이 만들어지면 곤란하다.
 case "$nonce" in
-  *[!A-Za-z0-9-]* | '' | *--*) die "nonce 를 만들지 못했습니다: $nonce" ;;
+  *[!A-Za-z0-9-]* | '' | *--* | -* | *-) die "nonce 를 만들지 못했습니다: $nonce" ;;
 esac
 
 # 파일 생성은 **배타 모드**다(open "x") — 같은 이름이 이미 있으면 발급 자체가 실패한다.

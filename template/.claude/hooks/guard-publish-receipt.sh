@@ -50,9 +50,19 @@ NEED_TIER=''   # 요구 등급(알게 된 시점부터)
 # deny <사유> [추가 안내] — 차단 메시지를 stderr 로 내고 rc=2 로 끝낸다.
 # 공통 꼬리(digest·요구 등급·발급/승인 절차)를 붙이는 **유일 지점**이다 — 막힌 사람이
 # 다음에 뭘 해야 하는지 모르는 상태를 만들지 않는다.
+# sanitize <문자열> — 제어문자를 걷어내고 길이를 자른다.
+# **차단 메시지에는 payload·영수증에서 온 문자열이 섞인다.** 무가공으로 내보내면 ESC 와
+# 개행으로 가짜 하네스 줄을 만들어 사용자를 속일 수 있다(검수 실측). 진단을 포기하지 않고
+# 위조만 없애는 지점이 여기다 — 값을 안 보여주면 막힌 사람이 원인을 못 찾는다.
+sanitize() {
+  local s
+  s="$(printf '%s' "$1" | LC_ALL=C tr -d '[:cntrl:]')"
+  printf '%s' "${s:0:400}"
+}
+
 deny() {
-  printf '[Hook 차단] %s\n' "$1" >&2
-  [ -n "${2-}" ] && printf '  %s\n' "$2" >&2
+  printf '[Hook 차단] %s\n' "$(sanitize "$1")" >&2
+  [ -n "${2-}" ] && printf '  %s\n' "$(sanitize "$2")" >&2
   [ -n "$DIGEST" ] && printf '  digest=%s\n' "$DIGEST" >&2
   [ -n "$NEED_TIER" ] && printf '  요구 등급: tier%s\n' "$NEED_TIER" >&2
   printf '  발급: .claude/scripts/publish-issue-receipt.sh --payload <payload.json> --tier <1|2> --review <리뷰 산출물 경로>\n' >&2
@@ -60,14 +70,38 @@ deny() {
   exit 2
 }
 
-# count_glob <패턴> — 매치한 실재 파일 수. bash 3.2 에는 nullglob 를 켜지 않고
-# "존재하는 것만 센다"로 처리한다(패턴이 안 맞으면 패턴 문자열 자신이 나온다).
-count_glob() {
+# count_prefixed <디렉터리> <접두어> — `<디렉터리>/<접두어>.*` 에 맞는 실재 파일 수.
+#
+# **인자를 인용한 채로 글로브한다.** 예전엔 패턴 문자열 하나를 받아 `for f in $1` 로 풀었는데,
+# 그러면 경로에 공백이 있는 순간 워드 스플리팅으로 열거가 0건이 된다 — 그리고 0건은 이
+# 훅에서 "재발행이 아니다"라는 뜻이라, **경로에 공백이 있는 프로젝트에서는 재승인 요구가
+# 통째로 사라졌다**(검수 실측). 변수 부분만 인용하고 `.*` 만 밖에 두면 둘 다 지켜진다.
+count_prefixed() {
   local n=0 f
-  for f in $1; do
+  for f in "$1/$2".*; do
     [ -e "$f" ] && n=$((n + 1))
   done
   printf '%s' "$n"
+}
+
+# dir_state <디렉터리> — rc=0 열거 가능 / rc=3 없음(=0건과 같다) / rc=1 **못 읽는다**
+# 3 을 따로 두는 이유: "아직 아무것도 없다"와 "읽을 수 없다"는 반대 방향이다. 뭉뚱그리면
+# 권한 오류 하나로 재발행 차단이 조용히 사라진다(fail-open).
+dir_state() {
+  [ -e "$1" ] || return 3
+  [ -d "$1" ] || return 1
+  { [ -r "$1" ] && [ -x "$1" ]; } || return 1
+  return 0
+}
+
+# used_count <digest> — used/ 에서 그 digest 의 소비 기록 수. 못 읽으면 막는다.
+used_count() {
+  local st
+  dir_state "$RECEIPTS_USED"; st=$?
+  [ "$st" -eq 1 ] && deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." \
+                          "경로: $RECEIPTS_USED (권한을 확인하세요)"
+  [ "$st" -eq 3 ] && { printf '0'; return 0; }
+  count_prefixed "$RECEIPTS_USED" "$1"
 }
 
 # field_value <점 경로> — stdin payload 의 tool_input 안에서 문자열 값 하나. 없으면 rc=1.
@@ -89,7 +123,14 @@ sys.stdout.write(cur)
 ' "$1" 2>/dev/null
 }
 
-payload="$(cat)"
+# 입력을 상한까지만 읽는다. 상한이 없으면 거대 입력 하나로 훅을 세울 수 있고,
+# 멈춘 훅은 차단도 통과도 아니다. 넘치면 조용히 자르지 않고 **막는다**(자르면 다른
+# payload 가 되어 "영수증 없음"이라는 엉뚱한 사유로 끝난다).
+payload="$(head -c "$((PUBLISH_MAX_PAYLOAD_BYTES + 1))")"
+if [ "${#payload}" -gt "$PUBLISH_MAX_PAYLOAD_BYTES" ]; then
+  deny "호출 입력이 너무 큽니다 — 상한을 넘는 입력은 판정하지 않습니다." \
+       "상한: $PUBLISH_MAX_PAYLOAD_BYTES 바이트"
+fi
 
 # ── 2) 최소 파싱 ────────────────────────────────────────────────────────
 tool_name="$(printf '%s' "$payload" | publish_tool_name)"
@@ -97,6 +138,16 @@ if [ $? -ne 0 ]; then
   deny "호출의 도구 이름을 판독하지 못했습니다 — 발행 대상인지 판정할 수 없어 막습니다." \
        "최상위 tool_name 이 정확히 하나여야 합니다."
 fi
+# 판독기 밖에서 **형태를 한 번 더 본다.** 인터프리터 시작 잡음이 stdout 으로 나오는 환경
+# (깨진 .pth 등)에서는 리다이렉션으로 값을 지킬 수 없다 — 그 잡음이 섞인 이름은 목록에
+# 없으니 "미등재 → 통과"가 되어 **환경 문제만으로 게이트가 사라진다**(검수 실측).
+# 공시된 대가: 허용 문자 밖의 이름을 쓰는 도구는 등록할 수도 없지만 여기서 **막힌다**.
+# 등록 가능한 이름의 문자집합과 같은 기준이라 판정이 갈리지 않는 쪽을 골랐다.
+case "$tool_name" in
+  *[!A-Za-z0-9_.-]* | '')
+    deny "호출의 도구 이름을 판독하지 못했습니다(허용 문자 밖) — 판정할 수 없어 막습니다." \
+         "판독값: $tool_name" ;;
+esac
 
 # ── 3) registry 로드 ────────────────────────────────────────────────────
 row="$(publish_registry_lookup "$tool_name")"
@@ -147,11 +198,16 @@ fi
 
 # ── 7) replay 판정 (여기서는 **판정만** 한다 — 승인 요구의 확정은 12) 이후) ──
 replay=0
-[ "$(count_glob "$RECEIPTS_USED/$digest".\*)" -gt 0 ] && replay=1
+[ "$(used_count "$digest")" -gt 0 ] && replay=1
 
 # ── 8) active 탐색 ──────────────────────────────────────────────────────
 receipt=''
 n_active=0
+dir_state "$RECEIPTS_ACTIVE"
+if [ $? -eq 1 ]; then
+  deny "영수증 상태를 읽지 못했습니다 — 영수증 유무를 판정할 수 없어 막습니다." \
+       "경로: $RECEIPTS_ACTIVE (권한을 확인하세요)"
+fi
 for f in "$RECEIPTS_ACTIVE/$digest".*; do
   [ -e "$f" ] || continue
   n_active=$((n_active + 1))
@@ -183,6 +239,12 @@ if [ "$n_active" -eq 0 ]; then
 fi
 
 # ── 9) 영수증 스키마·파일명·정체성 ──────────────────────────────────────
+# 심링크는 받지 않는다. 소비는 하드링크(ln)인데, 심링크에 하드링크를 걸면 **링크 자체**가
+# 복제돼 검증한 내용과 소비한 실체가 갈릴 수 있다.
+if [ -L "$receipt" ]; then
+  deny "영수증이 심볼릭 링크입니다 — 검증한 내용과 소비할 실체가 갈릴 수 있어 막습니다." \
+       "경로: $receipt"
+fi
 fields="$(publish_receipt_fields "$receipt")"
 if [ $? -ne 0 ]; then
   deny "영수증 형식이 계약과 다릅니다 — 판독할 수 없어 막습니다." "사유: $fields"
@@ -225,8 +287,12 @@ fi
 # 정규식 한 벌로 도구·digest·등급을 **한 번에** 본다. 셋을 따로 보면 서로 다른 줄의
 # 조각이 조합돼 통과할 수 있다. 도구명의 `.` 만 이스케이프한다(등재 이름은 [A-Za-z0-9_.-]).
 tool_re="$(printf '%s' "$tool_name" | sed 's/\./\\./g')"
-if ! grep -qE "^발행-리뷰: tool=$tool_re digest=$digest tier=$r_tier\$" "$review_path" 2>/dev/null; then
-  deny "리뷰 산출물에 이 발행의 3튜플이 없습니다(도구·digest·등급이 한 줄로 일치해야 합니다)." \
+# **정확히 1회**여야 한다. 존재만 보면 리뷰 하나에 여러 등급을 함께 적어 두고 낮은 쪽
+# 영수증으로 통과할 수 있다(검수 실측) — 그러면 등급이 리뷰어의 판정이 아니라 선택지가 된다.
+tuple_n="$(grep -cE "^발행-리뷰: tool=$tool_re digest=$digest tier=$r_tier\$" "$review_path" 2>/dev/null | tr -d ' ')"
+[ -n "$tuple_n" ] || tuple_n=0
+if [ "$tuple_n" != '1' ]; then
+  deny "리뷰 산출물의 3튜플이 정확히 한 줄이 아닙니다(찾은 줄 ${tuple_n}개)." \
        "필요한 줄: 발행-리뷰: tool=$tool_name digest=$digest tier=$r_tier"
 fi
 
@@ -241,14 +307,28 @@ approval_file=''
 if [ "$approval_required" -eq 1 ]; then
   # 선택은 **파일명 사전순 단일 총순서**다 — 비결정적으로 고르면 어느 승인이 소비됐는지
   # 감사자가 재현할 수 없다. 판독 불가한 승인 파일은 승인이 아니므로 세지 않는다.
-  for an in $(ls "$RECEIPTS_APPROVAL_ACTIVE" 2>/dev/null | LC_ALL=C sort); do
-    af="$RECEIPTS_APPROVAL_ACTIVE/$an"
+  dir_state "$RECEIPTS_APPROVAL_ACTIVE"
+  if [ $? -eq 1 ]; then
+    deny "승인 상태를 읽지 못했습니다 — 승인 유무를 판정할 수 없어 막습니다." \
+         "경로: $RECEIPTS_APPROVAL_ACTIVE (권한을 확인하세요)"
+  fi
+  # `$(ls)` 를 쓰지 않는다 — 워드 스플리팅이 이름을 쪼개고, 그러면 있는 승인이 없어 보인다.
+  # 후보 이름은 판독기가 문자집합을 강제한 nonce 이고 **파일명과 같아야** 하므로,
+  # 공백·개행이 든 이름은 애초에 후보가 되지 않는다(그래서 줄 단위 정렬이 안전하다).
+  cands=''
+  for af in "$RECEIPTS_APPROVAL_ACTIVE"/*; do
     [ -f "$af" ] || continue
+    [ -L "$af" ] && continue
     ap="$(publish_approval_fields "$af")" || continue
     [ "$(printf '%s' "$ap" | cut -f1)" = "$digest" ] || continue
-    approval_file="$af"
-    break
+    an="$(basename "$af")"
+    # 내용의 nonce 와 파일명이 다르면 선택 순서(파일명)와 소비 대상(내용)이 갈린다.
+    [ "$(printf '%s' "$ap" | cut -f2)" = "$an" ] || continue
+    cands="$cands$an
+"
   done
+  an="$(printf '%s' "$cands" | LC_ALL=C sort | head -1)"
+  [ -n "$an" ] && approval_file="$RECEIPTS_APPROVAL_ACTIVE/$an"
   if [ -z "$approval_file" ]; then
     if [ "$replay" -eq 1 ]; then
       deny "이 digest 는 이미 소비됐습니다 — 재발행에는 kty 승인이 필요합니다(재발행 = 재승인)." \
@@ -263,7 +343,7 @@ fi
 # 승인을 고른 사이에 다른 프로세스가 같은 digest 를 소비했을 수 있다. 그러면 이 호출은
 # 재발행이 되는데, 이미 고른 승인은 "최초 발행"에 대한 것이라 그대로 쓸 수 없다.
 # 재진입하지 않고 deny 한다 — 승인 절차를 안내하는 쪽이 상태 기계를 단순하게 유지한다.
-if [ "$replay" -eq 0 ] && [ "$(count_glob "$RECEIPTS_USED/$digest".\*)" -gt 0 ]; then
+if [ "$replay" -eq 0 ] && [ "$(used_count "$digest")" -gt 0 ]; then
   deny "판정 도중 같은 digest 가 다른 경로로 소비됐습니다 — 이 호출은 재발행이 되어 막습니다." \
        "재발행에는 새 kty 승인이 필요합니다."
 fi
@@ -284,7 +364,14 @@ if [ -n "$approval_file" ]; then
   if ! ln "$approval_file" "$RECEIPTS_APPROVAL_USED/$an" 2>/dev/null; then
     deny "kty 승인을 소비하지 못했습니다(다른 호출이 먼저 가져갔을 수 있습니다)." "승인: $an"
   fi
-  rm -f "$approval_file" 2>/dev/null
+  # 영수증 쪽과 **대칭**이다: ln 은 됐는데 rm 이 실패하면 승인이 양쪽에 남고, 그 잔존본이
+  # 다음 승인까지 EEXIST 로 봉쇄한다(검수 실측). 조용히 넘기면 사용자는 승인을 다시 만들 수
+  # 없는 이유를 영영 못 찾는다.
+  if ! rm -f "$approval_file" 2>/dev/null || [ -e "$approval_file" ]; then
+    record_flag "$AUDIT_FLAG" "wedged-approval/$an"
+    deny "승인 소비가 중단된 흔적이 있습니다(approval-used 와 approval-active 에 같은 이름이 함께 있습니다)." \
+         "수동 복구: mv '$approval_file' '$RECEIPTS_QUARANTINE/' 후 다시 승인하세요. 발행은 실행되지 않았습니다."
+  fi
   approval_consumed=1
 fi
 

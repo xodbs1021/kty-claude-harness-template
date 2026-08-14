@@ -32,7 +32,7 @@ mkdir -p "$RECEIPTS_APPROVAL_ACTIVE" "$RECEIPTS_APPROVAL_USED" 2>/dev/null \
 
 nonce="$(date -u +%Y%m%dT%H%M%S)-$(python3 -c 'import secrets; print(secrets.token_hex(4))' 2>/dev/null)"
 case "$nonce" in
-  *[!A-Za-z0-9-]* | '') die "nonce 를 만들지 못했습니다: $nonce" ;;
+  *[!A-Za-z0-9-]* | '' | -* | *-) die "nonce 를 만들지 못했습니다: $nonce" ;;
 esac
 
 # 배타 모드 생성 — 같은 nonce 가 이미 있으면 실패한다(재사용 시도를 덮어쓰지 않는다).

@@ -24,9 +24,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 HOOK="template/.claude/hooks/guard-publish-receipt.sh"
 COMMON="template/.claude/hooks/_common.sh"
+ISSUER="template/.claude/scripts/publish-issue-receipt.sh"
 TEST="./tests/publish-receipt-gate.test.sh"
 
-for f in "$HOOK" "$COMMON"; do
+for f in "$HOOK" "$COMMON" "$ISSUER"; do
   if ! git diff --quiet -- "$f" || ! git diff --cached --quiet -- "$f"; then
     echo "✗ 대상에 미커밋 변경이 있습니다: $f — 먼저 커밋하고 재세요 (복원이 작업물을 지웁니다)" >&2
     exit 1
@@ -41,7 +42,18 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
   exit 1
 fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# **중단돼도 주입된 변이를 남기지 않는다.** 락만 지우고 끝나면 변이본이 트리에 남고,
+# 그 트리를 배포하면 정확히 이 저장소가 겪은 사고(측정 중 트리 배포)가 재현된다.
+# 복원은 최선 노력이다 — 실패하면 소리를 낸다(조용히 남기지 않는다).
+cleanup() {
+  local f
+  for f in "$HOOK" "$COMMON" "$ISSUER"; do
+    git restore --source=HEAD --worktree -- "$f" 2>/dev/null \
+      || echo "✗ 복원 실패 — 변이본이 남았을 수 있습니다: $f" >&2
+  done
+  rmdir "$LOCK" 2>/dev/null
+}
+trap cleanup EXIT
 
 if ! "$TEST" >/dev/null 2>&1; then
   echo "✗ 기준선 실패 — 변이 없이도 테스트가 빨갛습니다. 먼저 초록으로 만들고 재세요" >&2
@@ -228,6 +240,71 @@ mutate 'm28 영수증 내용↔파일명 대조 삭제' "$HOOK" \
 mutate 'm29 영수증 도구명 대조 삭제' "$HOOK" \
   'if [ "$r_tool" != "$tool_name" ]; then' \
   'if false; then'
+
+# ── 검수 1차 회차(2026-08-15)에서 추가된 방어 ───────────────────────────
+
+mutate 'm30 비인용 글로브 재도입(공백 경로 붕괴)' "$HOOK" \
+  '  for f in "$1/$2".*; do' \
+  '  for f in $1/$2.*; do'
+
+mutate 'm31 차단 메시지 정화 제거' "$HOOK" \
+  '  [ -n "${2-}" ] && printf '"'"'  %s\n'"'"' "$(sanitize "$2")" >&2' \
+  '  [ -n "${2-}" ] && printf '"'"'  %s\n'"'"' "$2" >&2'
+
+mutate 'm32 3튜플 count 검사를 존재 검사로' "$HOOK" \
+  'if [ "$tuple_n" != '"'"'1'"'"' ]; then' \
+  'if [ "$tuple_n" = '"'"'0'"'"' ]; then'
+
+mutate 'm33 도구 이름 형태 검증 제거' "$HOOK" \
+  'case "$tool_name" in
+  *[!A-Za-z0-9_.-]* | '"'"''"'"')' \
+  'case "$tool_name" in
+  '"'"''"'"')'
+
+mutate 'm34 판독기 진단을 stdout 으로 합치기(2>&1 재도입)' "$COMMON" \
+  "' \"\$PUBLISH_MAX_PAYLOAD_BYTES\" 2>/dev/null" \
+  "' \"\$PUBLISH_MAX_PAYLOAD_BYTES\" 2>&1"
+
+mutate 'm35 Artifact 일반 파일 검사 제거' "$COMMON" \
+  '    if not stat.S_ISREG(st.st_mode):' \
+  '    if False:'
+
+mutate 'm36 Artifact 크기 상한 무력화' "$COMMON" \
+  'art_cap = int(sys.argv[3])' \
+  'art_cap = 1 << 60'
+
+mutate 'm37 payload 상한 검사 제거(훅 층)' "$HOOK" \
+  'if [ "${#payload}" -gt "$PUBLISH_MAX_PAYLOAD_BYTES" ]; then' \
+  'if false; then'
+
+mutate 'm38 승인 rm 실패 무시(대칭 파괴)' "$HOOK" \
+  '  if ! rm -f "$approval_file" 2>/dev/null || [ -e "$approval_file" ]; then' \
+  '  if false; then'
+
+mutate 'm39 발급 락 제거(동시 발급 허용)' "$ISSUER" \
+  'if ! mkdir "$ISSUE_LOCK" 2>/dev/null; then' \
+  'if false; then'
+
+mutate 'm40 영수증 심링크 거부 제거' "$HOOK" \
+  'if [ -L "$receipt" ]; then' \
+  'if false; then'
+
+mutate 'm41 used 판독 실패를 0건으로 접기' "$HOOK" \
+  '  [ "$st" -eq 1 ] && deny "영수증 상태를 읽지 못했습니다 — 재발행 여부를 판정할 수 없어 막습니다." \
+                          "경로: $RECEIPTS_USED (권한을 확인하세요)"' \
+  '  [ "$st" -eq 1 ] && { printf '"'"'0'"'"'; return 0; }'
+
+mutate 'm42 nonce 경계 하이픈 허용' "$COMMON" \
+  'if not re.match(r"\A[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z", rec["nonce"]):' \
+  'if not re.match(r"\A[A-Za-z0-9-]+\Z", rec["nonce"]):'
+
+mutate 'm43 영수증 문자집합 검사 제거' "$COMMON" \
+  'for k, pat in CHARSET.items():' \
+  'for k, pat in []:'
+
+mutate 'm44 승인 파일명↔nonce 대조 제거' "$HOOK" \
+  '    [ "$(printf '"'"'%s'"'"' "$ap" | cut -f2)" = "$an" ] || continue' \
+  '    :'
 
 echo ""
 echo "— 변이 $total 종: 적색 $red · 살아남음 $green"

@@ -75,6 +75,15 @@ TOK_WEDGED='소비가 중단된 흔적'
 TOK_REAPPROVE='재승인'
 TOK_CLAIM='영수증을 소비하지'
 TOK_ESCAPE='publish:receipt'
+TOK_WEDGED_APPROVAL='승인 소비가 중단된 흔적'
+TOK_SYMLINK='심볼릭 링크'
+TOK_TOOBIG='너무 큽니다'
+TOK_STATE='영수증 상태를 읽지'
+# 아래 둘은 판독기(_common.sh)의 사유 문구다. 같은 "영수증 형식" 차단 안에서 **어느 검사가
+# 걸었는지**를 가르기 위해 조각을 따로 둔다 — 안 가르면 문자집합 검사를 지워도 도구명
+# 불일치 검사가 같은 문구로 막아 변이가 살아남는다.
+TOK_CHARSET='outside the allowed set'
+TOK_NONCE_BAD='nonce has unsupported'
 
 # 합성 도구들. **실제 MCP 도구명을 쓰지 않는다** — 실물 payload fixture 는 실세션에서만
 # 캡처되고 이 환경에 없다. 게이트가 지키는 것은 도구의 정체가 아니라 계약이므로,
@@ -102,10 +111,12 @@ new_dir() {
   ( CDPATH='' cd -- "$d" && pwd -P )
 }
 
-# new_project — 훅·_common.sh·발급기·승인기·registry·receipts 골격을 갖춘 가짜 프로젝트.
+# new_project [디렉터리 접두어] — 훅·_common.sh·발급기·승인기·registry·receipts 골격을
+# 갖춘 가짜 프로젝트. 접두어를 주면 그 이름으로 만든다 — **공백이 든 경로**를 만들기
+# 위해서다(비인용 글로브·워드 스플리팅 결함은 공백 없는 경로에서 전부 초록으로 보인다).
 new_project() {
   local p
-  p="$(new_dir proj)"
+  p="$(new_dir "${1:-proj}")"
   mkdir -p "$p/.claude/hooks" "$p/.claude/harness" "$p/.claude/scripts" \
            "$p/_workspace/.receipts/active" "$p/_workspace/.receipts/used" \
            "$p/_workspace/.receipts/approval-active" "$p/_workspace/.receipts/approval-used" \
@@ -207,6 +218,58 @@ run_gate() {
   rm -f "$errf"
 }
 
+# run_gate_limited <초> <proj> <payload> [env 인자...] — **감시 시간이 붙은** 실행.
+# 훅이 끝나지 않는 결함(FIFO·무한 스트림 재해시)을 겨누는 케이스 전용이다. 보통의
+# run_gate 로 그런 케이스를 돌리면 러너 자신이 영원히 멈춰 CI 가 타임아웃으로만 죽는다 —
+# 무엇이 잘못됐는지 아무도 모른 채. 시간이 넘으면 RC=-9 로 표시해 그 자체를 실패로 만든다.
+run_gate_limited() {
+  local secs="$1" proj="$2" pay="$3"
+  shift 3
+  OUT=''; ERR=''; RC=999; DID_RUN=1; PROJ="$proj"
+  local errf="$TMPROOT/lerr.$$" outf="$TMPROOT/lout.$$" rcf="$TMPROOT/lrc.$$"
+  rm -f "$rcf" "$outf" "$errf"
+  ( printf '%s' "$pay" \
+      | env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS ${@+"$@"} CLAUDE_PROJECT_DIR="$proj" \
+            bash "$proj/.claude/hooks/guard-publish-receipt.sh" >"$outf" 2>"$errf"
+    echo $? > "$rcf" ) &
+  local pid=$! i=0
+  while [ "$i" -lt $((secs * 10)) ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    pkill -9 -P "$pid" 2>/dev/null
+    kill -9 "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    RC=-9
+    OUT=''
+    ERR='(감시 시간 초과 — 훅이 끝나지 않았다)'
+    return 0
+  fi
+  wait "$pid" 2>/dev/null
+  RC="$(cat "$rcf" 2>/dev/null)"
+  [ -n "$RC" ] || RC=999
+  OUT="$(cat "$outf" 2>/dev/null)"
+  ERR="$(cat "$errf" 2>/dev/null)"
+  rm -f "$outf" "$errf" "$rcf"
+}
+
+# make_noisy_python <디렉터리> <stdout|stderr> — python 시작 시 잡음을 내는 환경을 만든다.
+# 검수자가 실측한 재현(깨진 .pth 가 인터프리터 시작마다 오류를 뱉는 환경)을 sitecustomize
+# 로 똑같이 재현한다 — site 모듈이 시작 시 자동 import 하므로 `python3 -c` 에도 걸린다.
+# 반환: PYTHONPATH 에 넣을 디렉터리 경로.
+make_noisy_python() {
+  local d="$1" where="$2"
+  mkdir -p "$d"
+  if [ "$where" = 'stdout' ]; then
+    printf 'import sys\nsys.stdout.write("junk-from-broken-pth\\n")\n' > "$d/sitecustomize.py"
+  else
+    printf 'import sys\nsys.stderr.write("Error processing line 1 of broken.pth:\\n")\n' > "$d/sitecustomize.py"
+  fi
+  printf '%s\n' "$d"
+}
+
 # run_script <proj> <스크립트> [인자...] — 발급기·승인기 실행(같은 캡처 계약).
 run_script() {
   local proj="$1" script="$2"
@@ -283,6 +346,25 @@ want_no_flag_file() {
     && WHY="감사 플래그가 서면 안 된다: [$(cat "$PROJ/.claude/.needs-audit" 2>/dev/null)]"
   return 0
 }
+# want_no_esc — 차단 메시지에 **ESC 바이트가 없어야 한다**. 있으면 payload 유래 문자열이
+# 무가공으로 나간 것이고, 그 순간 터미널 제어열로 하네스 문구를 위조할 수 있다.
+want_no_esc() {
+  [ -z "$WHY" ] || return 0
+  if printf '%s' "$ERR" | LC_ALL=C grep -q "$(printf '\033')"; then
+    WHY='차단 메시지에 ESC 제어문자가 그대로 실렸다 (문구 위조 가능)'
+  fi
+  return 0
+}
+
+# want_one_block_line — `[Hook 차단]` 으로 시작하는 줄이 정확히 하나여야 한다.
+# 개행이 든 값이 무가공으로 나가면 공격자가 가짜 하네스 줄을 한 줄 더 만들 수 있다.
+want_one_block_line() {
+  [ -z "$WHY" ] || return 0
+  local n
+  n="$(printf '%s\n' "$ERR" | grep -c '^\[Hook ' 2>/dev/null | tr -d ' ')"
+  [ "$n" = '1' ] || WHY="[Hook …] 로 시작하는 줄이 ${n}개다 (기대 1 — 줄 위조 가능)"
+}
+
 # want_grep <파일> <문자열>
 want_grep() {
   [ -z "$WHY" ] || return 0

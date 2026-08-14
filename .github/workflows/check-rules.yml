@@ -50,6 +50,12 @@ jobs:
       # 기존 게이트 기계를 깨지 않는지가 케이스의 절반이다.
       - name: 머리 표명 게이트 회귀 테스트
         run: ./tests/retrieval-attestation.test.sh
+      # 외부 발행 게이트(ADR-0018). 함수 층(digest 계약) → 게이트 층(판정 순서) 순서다:
+      # digest 가 흔들리면 게이트 케이스의 실패가 전부 "무영수증"으로 뭉뚱그려져 원인이 안 보인다.
+      - name: 발행 envelope(digest) 회귀 테스트
+        run: ./tests/publish-envelope.test.sh
+      - name: 발행 영수증 게이트 회귀 테스트
+        run: ./tests/publish-receipt-gate.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh
       # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를

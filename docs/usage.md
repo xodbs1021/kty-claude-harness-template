@@ -19,7 +19,7 @@ cd ~/.claude/harness-template
 ./install.sh /path/to/project [프로젝트이름]
 ```
 
-install이 하는 일: 글루 복사(자체 에이전트 8·스킬 2(harness-orchestrator·readable-writing)·훅 4·제0원칙) + 슬롯 스캐폴드(없을 때만) + settings.json 병합(기존 훅 보존·명령 단위 추가·백업) + CLAUDE.md 포인터 append.
+install이 하는 일: 글루 복사(자체 에이전트 8·스킬 2(harness-orchestrator·readable-writing)·훅 8·사람이 부르는 스크립트 2(발행 영수증 발급기·kty 승인기)·제0원칙) + 슬롯 스캐폴드(없을 때만) + settings.json 병합(기존 훅 보존·명령 단위 추가·백업) + CLAUDE.md 포인터 append.
 
 설계·계획·검수·보안검수 4역할은 자체 에이전트가 아니라 **ECC 참조**(`ecc:architect`·`ecc:planner`·`ecc:code-reviewer`·`ecc:security-reviewer`)다 — 하네스 계약(판정 형식·태그·프로필 준수)은 오케스트레이터의 dispatch 계약이 프롬프트로 주입한다. 이 중 2종은 **조건부**로만 돈다: `ecc:architect`(구조적 변경 — 새 모듈/레이어·경계/데이터모델 변경·3개+ 모듈 영향 — 일 때 Phase 2 전단, plan-reviewer가 설계·계획 2-pass 검증), `ecc:security-reviewer`(보안 민감 변경 — 인증/입력/DB/파일시스템/외부API/암호화/결제/시크릿 — 일 때 Phase 3에서 검수와 병렬, CRITICAL=병합 차단). 추가로 테스트가 핵심 방어선인 변경에는 ECC의 `pr-test-analyzer`를 참조 dispatch(`[tq]` 태그) — 템플릿 소유 에이전트가 아니라 전역 ECC 재사용.
 
@@ -65,11 +65,12 @@ cd ~/.claude/harness-template
 | guard-codex-invocation | Bash 실행 전 | `codex exec` 호출의 모델(`gpt-5.6-sol`)·effort(`high`) 미달 차단 — 임의 하향 금지 (2026-08-01 사용자 지시) |
 | check-harness-env | 파일 편집 후 | `harness.env` 편집 직후 알려진 키를 실제 판독기로 읽어, 문법 실수로 **값을 믿을 수 없게 된 키**를 그 자리에서 알린다(안 그러면 해당 검사가 조용히 생략된 채 턴 종료 때에야 드러난다 — ADR-0016). 안 쓰는 키(부재)는 침묵 — 판독기의 rc=1/rc=3 구분이 위양성을 막는다 |
 | mark-needs-audit | 파일 편집 후 | 게이트 플래그 5종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview`·`.needs-retrieval` (코드는 앞 4종 · 설계·계획 산출물은 듀얼리뷰+지식+**머리 표명** · 결정 문서는 지식만). 검사 범위는 아래 "완료 게이트 검사 범위" 참조 |
+| guard-publish-receipt | MCP 도구 호출 전 | `publish-registry.txt` 에 등재된 **외부 발행** 도구는 리뷰 영수증 없이는 못 나간다(ADR-0018). 미등재 도구는 무판정 통과. **현재 등재 행은 0개라 게이트는 배선돼 있되 아무것도 막지 않는다** — 아래 "외부 발행 게이트" 참조 |
 | verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → **혼자 정하지 않았나** → **머리 표명**(설계·계획 산출물 1줄 회수·2줄 레퍼런스 조사 — 형식을 지키면 스스로 풀린다) → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → **push 미완** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
 
 **지식 저장소 게이트가 아는 것은 계약 하나뿐이다** — "지식 저장소가 설정돼 있으면, 결정·설계가 나온 턴은 반영 없이 끝낼 수 없다." **어디에 어떤 구조로 반영하는지는 하네스가 모른다.** 그건 사용자 층 설정(전역 `CLAUDE.md` 등)이 답하고, 하네스에는 켜짐/꺼짐 1비트만 있다. 그래서 지식 저장소를 바꿔도 하네스는 고치지 않고, 아예 안 쓰는 프로젝트에서도 그대로 돈다.
 
-**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `post:edit:harness-env`(편집 검증 훅) / `stop:verify`(완료 게이트 전체) / `stop:decision`(결정 게이트만) / `stop:retrieval`(머리 표명 게이트만 — 회수·레퍼런스 두 표명 검사가 **함께** 꺼진다(개별 끄기 없음). **비활성이 "남은 할 일" 판정(`work_pending`)에 접혀 있어, 게이트를 꺼도 남은 플래그가 조기 종료를 막지 않는 유일한 플래그다.** 다른 플래그는 훅 비활성 여부를 각 게이트 호출부에서만 본다) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
+**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `post:edit:harness-env`(편집 검증 훅) / `stop:verify`(완료 게이트 전체) / `stop:decision`(결정 게이트만) / `stop:retrieval`(머리 표명 게이트만 — 회수·레퍼런스 두 표명 검사가 **함께** 꺼진다(개별 끄기 없음). **비활성이 "남은 할 일" 판정(`work_pending`)에 접혀 있어, 게이트를 꺼도 남은 플래그가 조기 종료를 막지 않는 유일한 플래그다.** 다른 플래그는 훅 비활성 여부를 각 게이트 호출부에서만 본다) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) / `publish:receipt`(외부 발행 게이트만) 나열.
 
 **머리 표명 게이트가 있는 이유 (ADR-0013·ADR-0015):** 설계·계획 산출물(`_workspace/00_design*.md`·`01_plan*.md`)이 저장된 턴은 **머리 두 줄**이 표명 형식을 지키기 전엔 끝나지 않는다. 첫 줄(`사전 결정 회수:`)은 ADR-0009 부터 계약이었는데 검증이 산문("확인한다")뿐이었다 — 산문 절차는 잊힌다(실사고 2회, ADR-0013). 둘째 줄(`레퍼런스 조사: 조사함(<대상·출처>)|불요(<사유>)|실패(<시도 — 사유>)`)은 "조사가 필요한 지시인가"의 판정을 기계가 못 하므로 판정의 **무표명 통과**를 막는 자리다 — 불요·실패에도 괄호 안 사유가 비면 불량이라 조용한 스킵이 없다(ADR-0015. 계기: 인접 도메인 선례 조사가 통째로 생략된 실사고 — "라이브 스트리밍이 아니니 Netflix 는 안 봤다"). **지울 플래그가 없다** — 형식을 지키면 게이트가 스스로 푼다. 형식만 본다: 진짜 읽었는지·조사했는지·표명 내용이 사실인지는 plan-reviewer·codex 검수(산문 계약)의 몫이고, 파일을 지워 우회하는 것도 기계로는 안 막힌다(실존 검증은 감사자 몫). 게이트 ID 는 `stop:retrieval` 그대로다 — **이름이 계약보다 좁다**(회수만 가리키는 이름이 두 표명을 검사한다). 저장소 밖 사용처(셸 설정·CI)에 박힌 ID 라 바꾸지 않았고, 이 괴리는 여기 공시한다. 이 ID 하나로 **두 표명 검사가 함께 꺼진다** — 개별 끄기는 없다.
 **`guard-hook-disable` 은 과속방지턱이지 보안 경계가 아니다.** 판정이 정규식 하나라 셸을 해석하지 못한다 — `read`+`export`, 따옴표로 쪼갠 `env 'X''=off'`, 변수 조립, `eval`, 생성한 스크립트 실행은 전부 통과한다(실측). 그럼에도 값을 하는 이유는 막으려는 것이 적대적 공격자가 아니라 **막힌 에이전트의 직진 충동**이고, 그건 `HARNESS_HOOKS=off ...` 라는 직진형으로 나오기 때문이다. 제대로 막으려면 셸 파서가 필요한데, 반쯤 만든 셸 파서는 안 만든 것보다 나쁘다(막힌다고 믿게 하면서 안 막는다 — 이 저장소가 `harness.env` 판독기에서 겪은 늪).
@@ -94,6 +95,58 @@ cd ~/.claude/harness-template
 **대화 기록을 못 읽으면 막지 않고 통과시킨다 — 이 게이트의 유일한 fail-open 이다.** 기록 형식은 하네스가 소유하지 않아 예고 없이 바뀔 수 있는데, 그때 차단하면 **그 세션 안에 고칠 방법이 없어 통째로 벽돌이 된다**(기록을 고칠 수 없으므로 어떤 행동으로도 안 풀린다). 대신 사유가 마지막 게이트 메시지에 실린다 — 조용히 통과하면 게이트가 죽은 것을 아무도 모른다. **공시된 한계:** `HARNESS_KNOWLEDGE_GATE` 를 비운 환경에서는 결정 문서만 고친 턴이 조기 종료에 걸려 이 게이트까지 오지 않는다(기본값이 켜짐이라 기본 구성에서는 정상 발동). 자세한 근거는 [ADR-0012](decisions/2026-08-10-decision-gate.md).
 
 **push 게이트가 있는 이유:** 이 저장소는 커밋 29개를 잃은 적이 있다. 코드는 다 짜여 있었고 "아직 PR 전이니까"라며 push 를 미뤘다. 게이트는 **네트워크를 쓰지 않는다** — 로컬 remote-tracking ref 만 본다. 원격에 있는데도 ref 가 안 보이면(`remote.origin.fetch` 가 좁혀진 경우) 그 사실을 사유에 적는다. push 여부가 로컬에서 안 보이는 것 자체가 위험이기 때문이다. 예외: guard-codex-invocation은 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만.
+
+### 외부 발행 게이트 (guard-publish-receipt · ADR-0018)
+
+**지금 이 게이트는 배선돼 있지만 아무 도구도 막지 않는다.** `.claude/harness/publish-registry.txt` 의 활성 행이 0개이기 때문이다. 조용한 상태가 아니라 **공시된 상태**다 — 각 행은 실세션에서 payload 를 캡처해야만 알 수 있는 사실(도구 전체 이름·본문 필드·파일 경로 필드·float 실재·환경 정체성)로 채워야 하고, 추측으로 적은 행은 게이트를 조용히 없애거나 정상 발행을 영영 막는다. 등록 절차 체크리스트는 그 파일 주석에 있다.
+
+무엇을 하는가: 등재된 도구의 호출에 대해 `{schema_version, tool_name, tool_input, artifact_sha256}` 의 canonical digest 를 계산하고, `_workspace/.receipts/active/<digest>.<nonce>` 영수증을 **원자 소비**(ln→rm)한 뒤에만 통과시킨다. tier2(또는 재발행)는 `publish-approve.sh` 로 만든 kty 승인도 함께 소비한다. 발급·리뷰 규약은 harness-orchestrator SKILL.md 의 "발행 리뷰 규약".
+
+**이건 누락 방지턱이지 위조 방지 장치가 아니다.** 영수증을 만드는 손과 감시받는 손이 같은 에이전트라 작정한 자가 발급은 사전 차단이 불가능하다. 막는 것은 실사고의 원인 유형인 **누락**이고, 진정성은 completion-auditor 의 사후 감사가 본다.
+
+**잔존 위험 (전부 공시 — 사후 감사 영역):**
+
+- Bash 의 `git push`·`gh`·`curl` 은 사정권 밖이다(코드는 커밋 가드+PR, 위키는 docs-check+사람 머지가 담당).
+- 사용자 대면 파일 전송(SendUserFile 류)은 대상이 아니다.
+- **신규·중립적 이름의 mutation 도구는 등록 전까지 무방비다.** 이 목록은 아는 것만 안다.
+- 에이전트의 영수증·승인·면제 자가 생성(위 "위조 방지가 아니다"와 같은 자리).
+- Artifact 는 **재해시 시점까지만** 보장한다 — 해시 뒤 업로드 전에 파일이 바뀌는 TOCTOU 창은 닫히지 않았다.
+- 하네스 밖 디렉터리에서의 발행은 이 게이트를 지나지 않는다(프로젝트 층에만 배선한다).
+- registry 는 **슬롯**이라 install/sync 가 덮지 않는다 — 프로젝트가 등록한 행은 보존되지만, 그 대가로 템플릿 쪽 주석 갱신이 기존 설치본에 전파되지 않는다.
+- **registry 한 파일의 오류가 MCP 도구 전체를 멈춘다**(광역 매처 `mcp__.*`). 부재·형식 오류·중복 행은 전부 차단이다 — "어떤 도구가 대상인지 모르는 상태의 통과"는 곧 게이트 소멸이라 그 방향을 골랐다.
+- **구 훅이 남은 채 registry 만 없어지는 조합**이 가장 나쁘다(광역 차단). 훅을 걷어낼 때는 배선도 함께 걷어야 한다 — 아래 롤백 절차.
+- **python3 정체성이 바뀌면**(버전 업그레이드 등) 미소비 영수증 전량이 "직렬화 드리프트 의심"으로 막힌다. **영구 무효가 아니라 현 환경에서 소비 불가**다 — 환경을 되돌리거나, 리뷰는 그대로 두고 발급만 다시 하면 된다(digest 는 리뷰 내용에 묶여 있어 리뷰 재실행은 불요). tier2 였다면 재승인이 필요하다.
+
+**끄기(되돌리기 전에 먼저 해 보라):** 위 "탈출구" 문단의 표준 표기를 그대로 쓴다 — 게이트 ID 는 `publish:receipt` 이고, 전체를 끄는 표기도 다른 훅과 같다. 훅은 세션 시작 시 스냅샷되므로 **새 세션부터** 적용된다.
+
+**완전 롤백(설치본에서 게이트를 걷어낸다):**
+
+```bash
+cd <프로젝트>
+# 1) settings.json 배선 제거 (백업 먼저)
+cp .claude/settings.json .claude/settings.json.bak-$(date +%Y%m%d-%H%M%S)
+python3 - .claude/settings.json <<'EOF'
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+pre = s.get("hooks", {}).get("PreToolUse", [])
+for e in pre:
+    e["hooks"] = [h for h in e.get("hooks", [])
+                  if "guard-publish-receipt.sh" not in h.get("command", "")]
+s["hooks"]["PreToolUse"] = [e for e in pre if e.get("hooks")]
+with open(p, "w") as f:
+    json.dump(s, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+EOF
+# 2) 훅·대상 목록·스크립트 제거 (**배선 제거 뒤에** — 순서를 바꾸면 훅 없는 배선이 남는다)
+rm -f .claude/hooks/guard-publish-receipt.sh
+rm -f .claude/harness/publish-registry.txt
+rm -f .claude/scripts/publish-issue-receipt.sh .claude/scripts/publish-approve.sh
+# 3) 미소비 영수증·승인은 지우지 않는다 — 감사 증거다. 치우려면 옮기기만:
+#    mv _workspace/.receipts _workspace/.receipts-rollback-$(date +%Y%m%d)
+```
+
+순서가 중요하다: **배선을 먼저 지운다.** 훅 파일만 지우면 배선이 남아 매 MCP 호출마다 "파일 없음" 오류가 나고, 반대로 registry 만 지우면 등재 여부를 판정할 수 없어 광역 차단이 된다.
 
 ### 완료 게이트 검사 범위 (mark-needs-audit)
 

@@ -83,35 +83,6 @@ for skill_dir in "$SRC/skills/"*/; do
   cp -R "$skill_dir"/. "$DST/skills/$skill_name/"
   skill_count=$((skill_count + 1))
 done
-# ── 1a-0) 실행 유틸 배포 — **훅 교체보다 먼저** ──────────────────────
-# rulecopy Stop 게이트(3.1b)는 이 유틸이 실행 가능할 때만 선다. 훅을 먼저 활성화하고
-# 유틸 배포가 실패하면 게이트만 조용히 생략되는 부분 설치가 남는다 — 순서가 계약이다.
-# 유틸 부재·0건·판독 실패는 오류로 중단한다(조용한 생략 금지 — 게이트가 사라진 것을
-# 아무도 모르는 상태가 이 저장소가 부르는 조용한 실패다).
-if ! ls "$SRC/scripts/"*.sh >/dev/null 2>&1; then
-  echo "✗ 템플릿 실행 유틸이 없습니다: $SRC/scripts/*.sh — 템플릿 복사본이 불완전합니다." >&2
-  exit 1
-fi
-if [ -L "$DST/scripts" ]; then
-  # 사용자가 디렉터리를 심볼릭 링크로 두었다 — 훅과 같은 정책: 배치를 바꾸지 않되 알린다.
-  echo "   ⚠ .claude/scripts 가 심볼릭 링크입니다 — 링크 대상에 배포합니다." >&2
-fi
-mkdir -p "$DST/scripts"
-util_count=0
-for _u in "$SRC/scripts/"*.sh; do
-  _b="$(basename "$_u")"
-  # 목적지 leaf 가 심링크면 따라가지 않고 링크 자체를 치운다(훅 스테이징과 같은 관용구 —
-  # cp 가 링크를 따라가면 디렉터리 밖 사용자 파일을 덮어쓴다). 링크 대상은 건드리지 않는다.
-  [ -L "$DST/scripts/$_b" ] && rm -f "$DST/scripts/$_b"
-  # 같은 디렉터리 임시 파일 + mv 원자 교체 — 실행 중 세션이 부분 기록 파일을 보지 않게.
-  # chmod 는 템플릿 소유 파일에만 — 사용자가 둔 다른 .sh 의 권한은 건드리지 않는다.
-  _tmp="$(mktemp "$DST/scripts/.$_b.XXXXXX")"
-  cp "$_u" "$_tmp"
-  chmod +x "$_tmp"
-  mv -f "$_tmp" "$DST/scripts/$_b"
-  util_count=$((util_count + 1))
-done
-
 # ── 1a) 훅 교체는 파일 단위가 아니라 **디렉터리 rename 스왑** ────────
 #
 # 훅을 하나씩 덮으면 신·구가 섞인 중간 상태가 **반드시** 존재한다. 순서를 바꿔도 못
@@ -224,6 +195,38 @@ fi
 hook_count="$(ls "$DST/hooks"/*.sh 2>/dev/null | wc -l | tr -d ' ')"
 
 cp "$SRC/harness/principles.md" "$DST/harness/"
+
+# ── 1a-1) 실행 유틸 배포 (rulecopy Stop 게이트 3.1b 가 실행) ──────────
+# 유틸 부재·0건·판독 실패는 오류로 중단한다(조용한 생략 금지 — 게이트가 사라진 것을
+# 아무도 모르는 상태가 이 저장소가 부르는 조용한 실패다). set -e 라 실패는 시끄럽다.
+#
+# 위치가 훅 스왑 **뒤**인 이유: 회귀 스위트(tests/install-hook-swap.test.sh)의 중단 주입이
+# "전체 실행에서 2번째 mv = 스왑의 rename2" 라는 shim 계약으로 계측한다 — 이 블록의 mv 가
+# 스왑보다 먼저 돌면 주입 지점이 통째로 빗나간다(41b6106 실측: 5케이스 적색). 뒤에 있어도
+# 여기서 실패하면 설치 전체가 오류로 끝나므로(재실행 유도) 조용한 부분 설치는 아니다.
+if ! ls "$SRC/scripts/"*.sh >/dev/null 2>&1; then
+  echo "✗ 템플릿 실행 유틸이 없습니다: $SRC/scripts/*.sh — 템플릿 복사본이 불완전합니다." >&2
+  exit 1
+fi
+if [ -L "$DST/scripts" ]; then
+  # 사용자가 디렉터리를 심볼릭 링크로 두었다 — 훅과 같은 정책: 배치를 바꾸지 않되 알린다.
+  echo "   ⚠ .claude/scripts 가 심볼릭 링크입니다 — 링크 대상에 배포합니다." >&2
+fi
+mkdir -p "$DST/scripts"
+util_count=0
+for _u in "$SRC/scripts/"*.sh; do
+  _b="$(basename "$_u")"
+  # 목적지 leaf 가 심링크면 따라가지 않고 링크 자체를 치운다(훅 스테이징과 같은 관용구 —
+  # cp 가 링크를 따라가면 디렉터리 밖 사용자 파일을 덮어쓴다). 링크 대상은 건드리지 않는다.
+  [ -L "$DST/scripts/$_b" ] && rm -f "$DST/scripts/$_b"
+  # 같은 디렉터리 임시 파일 + mv 원자 교체 — 실행 중 세션이 부분 기록 파일을 보지 않게.
+  # chmod 는 템플릿 소유 파일에만 — 사용자가 둔 다른 .sh 의 권한은 건드리지 않는다.
+  _tmp="$(mktemp "$DST/scripts/.$_b.XXXXXX")"
+  cp "$_u" "$_tmp"
+  chmod +x "$_tmp"
+  mv -f "$_tmp" "$DST/scripts/$_b"
+  util_count=$((util_count + 1))
+done
 echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 $hook_count · 제0원칙 · 유틸 $util_count"
 
 # ── 1b) 전역 에이전트 배포 (~/.claude/agents/ — 프로젝트 무관 글루, 덮어씀) ──

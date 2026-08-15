@@ -33,9 +33,13 @@ Karpathy 의 LLM 코딩 실패 관찰을 정리한 공개 저장소(multica-ai/a
    금지·내 고아만 청소(기존 죽은 코드는 지적만).
 3. **각 역은 자기 계약의 문구로 집행한다**: developer(준수) · ecc:code-reviewer 검수 계약
    ⑧(diff 판정, 규약 지목) · pr-reviewer 점검 1(PR 위생) · plan-reviewer 점검 1(계획 수준).
-4. **문서가 주장하던 유령 스크립트를 실체화한다**: `.claude/scripts/check-rule-copies.sh`
-   (rule:core 정본·사본 대조, 마커 무결성 검증 포함). Stop 게이트 3.1b(rulecopy)가 매 턴
-   실행해 어긋난 턴을 기계로 막고, install.sh가 `scripts/`를 배포 대상에 포함한다.
+4. **설치본 층에도 검사기를 배포한다**: 소스 레벨(이 repo)에는 루트
+   `scripts/check-rule-copies.sh` + CI(check-rules.yml)가 이미 있었으나 install.sh가
+   배포하지 않아 **설치본 문서의 참조는 유령**이었다(pokeclip 실측 — 파일 부재).
+   설치본용 경량 검사기 `template/.claude/scripts/check-rule-copies.sh`를 신설·배포하고
+   (마커 무결성 검증 포함, 소스 스캐너의 미등록 검출을 피하려고 마커 문자열은 조립식),
+   Stop 게이트 3.1b(rulecopy)가 매 턴 실행해 어긋난 턴을 기계로 막는다.
+   **두 층의 관계: 소스는 CI가, 설치본은 Stop 게이트가 지킨다.**
 5. **규약에 경계선을 명시한다**: 이 규약은 diff의 **위생**을 제한하지 작업의 **완결**을
    줄이는 근거가 아니다. 실사고 — 도입 직후 에이전트(Claude)가 이 규약을 작업 범위에
    오적용해, 만든 규칙의 강제 장치 연결·정본 반영을 "요청 밖"으로 분류하고 멈췄다.

@@ -215,6 +215,27 @@ else
   fi
 fi
 
+# (3.1b) rule:core 사본 대조 — 결정론적 바닥 2. principles.md 정본과 판정자 사본이
+#      어긋난 채 턴이 끝나면 다음 세션부터 판정 기준이 이중화된다. 2026-08-16 변경 규약
+#      분리 작업에서 "기계 대조 없는 복붙 규칙은 유령"이 실증됐다(스크립트 참조가 유령이었음).
+#      스크립트 부재는 생략한다(사본 구조가 없는 하네스 변형) — 어긋남만 막는다.
+RULECOPY_SH="$PROJECT_DIR/.claude/scripts/check-rule-copies.sh"
+if [ -x "$RULECOPY_SH" ]; then
+  rulecopy_out="$("$RULECOPY_SH" 2>&1)"; rulecopy_rc=$?
+  if [ "$rulecopy_rc" -ne 0 ]; then
+    gate_budget "rulecopy"
+    {
+      echo "[완료 차단] rule:core 정본·사본 불일치 — 판정 기준이 갈라진 채로 끝낼 수 없습니다."
+      echo
+      printf '%s\n' "$rulecopy_out" | head -n 15
+      echo
+      echo "정본(.claude/harness/principles.md)을 고쳤으면 사본에 그대로 복사한 뒤 다시 종료하세요.  (차단 $((count + 1))/${MAX_BLOCKS})"
+      echo "탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+    } >&2
+    bump_and_block
+  fi
+fi
+
 # (3.2) **결정 게이트** — "물어봤어야 할 것을 혼자 정했나".
 #      나머지 게이트가 전부 **산출물**을 볼 때 이것만 **에이전트 자신의 행동**을 본다.
 #      판정 규칙·좁히는 장치 셋·fail-open 사유는 _common.sh 의 decision_scan 주석이 정본이다.

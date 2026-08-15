@@ -195,7 +195,16 @@ fi
 hook_count="$(ls "$DST/hooks"/*.sh 2>/dev/null | wc -l | tr -d ' ')"
 
 cp "$SRC/harness/principles.md" "$DST/harness/"
-echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 $hook_count · 제0원칙"
+# 실행 유틸(rule:core 사본 대조 등) — Stop 게이트 3.1b(rulecopy)가 실행한다.
+# 이 복사가 빠지면 설치본에서 게이트가 "스크립트 부재 = 생략"으로 조용히 사라진다.
+util_count=0
+if [ -d "$SRC/scripts" ] && ls "$SRC/scripts"/*.sh >/dev/null 2>&1; then
+  mkdir -p "$DST/scripts"
+  cp "$SRC/scripts/"*.sh "$DST/scripts/"
+  chmod +x "$DST/scripts/"*.sh
+  util_count=$(ls "$SRC/scripts"/*.sh | wc -l | tr -d ' ')
+fi
+echo "   글루 ✓  에이전트 $(ls "$DST/agents" | wc -l | tr -d ' ') · 스킬 $skill_count · 훅 $hook_count · 제0원칙 · 유틸 $util_count"
 
 # ── 1b) 전역 에이전트 배포 (~/.claude/agents/ — 프로젝트 무관 글루, 덮어씀) ──
 # 정본은 이 repo의 global-agents/ (전역 디렉토리는 버전 관리가 안 되므로 — ADR-0002)

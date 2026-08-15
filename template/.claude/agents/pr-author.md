@@ -57,7 +57,7 @@ PR 본문 등 사용자 대면 본문은 readable-writing 스킬을 로드해 �
 
 ## 입력/출력 프로토콜
 
-**입력**: `ecc:code-reviewer` 통과 판정 + 변경 파일 목록.
+**입력**: 통합된 Phase 3 최종 판정(`_workspace/phase3-review[-rN].md` 첫 줄이 `Phase 3 최종 판정: 통과`) + 변경 파일 목록. `ecc:code-reviewer` 의 판정 줄은 그 통합 판정의 입력 중 하나다.
 **출력**: 생성된 PR URL + 브랜치명 + 최종 diff 파일 목록.
 
 ## 에러 핸들링
@@ -68,7 +68,7 @@ PR 본문 등 사용자 대면 본문은 readable-writing 스킬을 로드해 �
 
 ## 협업 (팀 통신 프로토콜)
 
-- **ecc:code-reviewer로부터** 통과된 변경을 받는다.
+- **오케스트레이터로부터** Phase 3 최종 판정이 통과인 변경을 받는다(`ecc:code-reviewer` 의 판정 줄은 그 판정의 입력 중 하나다).
 - **PR 생성 후** URL을 `pr-reviewer`(점검)에게 넘긴다. `change-explainer`(설명)에는 pr-reviewer 승인 후 오케스트레이터가 전달한다.
 - 실제 **merge는 사용자 승인 후에만.** 임의로 머지하지 않는다.
 

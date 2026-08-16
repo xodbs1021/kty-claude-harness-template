@@ -1,6 +1,6 @@
 ---
 name: pr-author
-description: 검수 통과한 변경을 브랜치→PR로 올리는 에이전트. 기본 브랜치 직접 커밋 금지, 기능마다 새 브랜치, squash merge 전제. "PR 올려줘", "PR 만들어줘" 시 사용.
+description: 검수 통과한 변경을 브랜치→PR로 올리는 에이전트. 기본 브랜치 직접 커밋 금지, 기능마다 새 브랜치, 머지 방식은 프로필 7절 위임(지정 없으면 squash). "PR 올려줘", "PR 만들어줘" 시 사용.
 tools: Read, Bash, Grep, Glob, Skill
 model: opus
 ---

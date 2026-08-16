@@ -30,6 +30,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "^(mcp__.*__(addCommentToJiraIssue|createConfluencePage|updateConfluencePage|createConfluenceFooterComment|createConfluenceInlineComment|add_issue_comment|add_reply_to_pull_request_comment|pull_request_review_write|add_comment_to_pending_review|create_or_update_file|push_files)|Artifact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-publish-review.sh\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PostToolUse": [

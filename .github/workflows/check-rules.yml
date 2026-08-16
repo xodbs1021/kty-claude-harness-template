@@ -50,6 +50,10 @@ jobs:
       # 기존 게이트 기계를 깨지 않는지가 케이스의 절반이다.
       - name: 머리 표명 게이트 회귀 테스트
         run: ./tests/retrieval-attestation.test.sh
+      # 발행 전 리뷰 게이트(ADR-0022 — 영수증 게이트의 축소판). 위음성(리뷰 없는 발행
+      # 통과)이 유일한 치명 결함이라, 케이스가 rc 와 차단 사유 문구를 함께 잰다.
+      - name: 발행 전 리뷰 게이트 회귀 테스트
+        run: ./tests/guard-publish-review.test.sh
       - name: 규칙 사본 동기화 검사
         run: ./scripts/check-rule-copies.sh
       # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를

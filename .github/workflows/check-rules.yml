@@ -1,5 +1,6 @@
-# 규칙 정본과 판정자 사본이 어긋난 채로 머지되는 걸 막는다.
-# 사본이 낡아도 아무것도 안 깨지던 상태가 이 저장소의 유일한 조용한 실패였다.
+# 하네스 게이트·검사기의 회귀 테스트 모음 — 게이트 위음성(조용한 실패)을 머지 전에 잡는다.
+# (사본 대조 검사는 2026-08-17 단일 정본화로 폐지 — 판정 기준은 principles.md 한 곳뿐이고
+#  dispatch 주입으로 전달된다. ADR-0021 실험 종결 판정.)
 name: check-rules
 
 permissions:
@@ -20,8 +21,6 @@ jobs:
           # 이 워크스페이스에서 PR 이 작성한 셸 스크립트를 실행한다 —
           # .git/config 에 토큰을 남기지 않는다.
           persist-credentials: false
-      - name: 검사기 회귀 테스트
-        run: ./tests/check-rule-copies.test.sh
       - name: 완료 게이트 검사 범위 회귀 테스트
         run: ./tests/mark-needs-audit.test.sh
       # harness.env 를 실행하지 않고 원문으로 읽는 파서의 회귀 방어.
@@ -54,9 +53,5 @@ jobs:
       # 통과)이 유일한 치명 결함이라, 케이스가 rc 와 차단 사유 문구를 함께 잰다.
       - name: 발행 전 리뷰 게이트 회귀 테스트
         run: ./tests/guard-publish-review.test.sh
-      - name: 규칙 사본 동기화 검사
-        run: ./scripts/check-rule-copies.sh
-      # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를
-      # 그대로 이어받는다 — 적힌 결합이다.
       - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
         run: ./scripts/check-layer-boundary.sh

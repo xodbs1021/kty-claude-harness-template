@@ -45,12 +45,12 @@ model: opus
 보완 권고: [있으면 더 좋음]
 근거: 각 지적에 "이 계획대로 가면 어디서 터진다" 시나리오
 ```
-차단이 하나라도 있으면 보류 → ecc:planner로 되돌린다.
+차단이 하나라도 있으면 보류 → ecc:planner로 되돌린다. (예외: 보류 사유가 `principles 미주입(dispatch 결함)` 이면 되돌림 대상이 작성자가 아니다 — 점검 7 라우팅.)
 
 ## 입력/출력 프로토콜
 
 **입력**: 1차 pass는 `ecc:architect`의 설계서(`_workspace/00_design.md`), 2차 pass(및 비구조적 1회 검증)는 `ecc:planner`의 계획서(`_workspace/01_plan.md`).
-**출력**: 판정 + 지적. 라우팅 — 1차 승인→`ecc:planner` 착수, 1차 보류→`ecc:architect`로 되돌림 / 2차 승인→`developer`, 2차 보류→`ecc:planner`로 되돌림.
+**출력**: 판정 + 지적. 라우팅 — 1차 승인→`ecc:planner` 착수, 1차 보류→`ecc:architect`로 되돌림 / 2차 승인→`developer`, 2차 보류→`ecc:planner`로 되돌림. 단 보류 사유가 `principles 미주입(dispatch 결함)` 이면 작성자 되돌림이 아니라 오케스트레이터의 주입 수정 → 같은 pass 재dispatch 다.
 
 ## 에러 핸들링
 
@@ -60,7 +60,7 @@ model: opus
 ## 협업 (팀 통신 프로토콜)
 
 - **ecc:architect(1차 pass)·ecc:planner(2차 pass)로부터** 설계서·계획서를 받는다.
-- **보류면** 그 pass의 작성자에게 되돌려 수정본을 다시 검토(승인까지 루프) — 1차는 ecc:architect, 2차는 ecc:planner.
+- **보류면** 그 pass의 작성자에게 되돌려 수정본을 다시 검토(승인까지 루프) — 1차는 ecc:architect, 2차는 ecc:planner. (예외: `principles 미주입(dispatch 결함)` 사유는 오케스트레이터가 주입을 고쳐 재dispatch — 작성자에게 보내지 않는다.)
 - **승인이면** 1차는 ecc:planner가, 2차는 developer가 착수하도록 통과시킨다.
 
 ## 이전 산출물이 있을 때

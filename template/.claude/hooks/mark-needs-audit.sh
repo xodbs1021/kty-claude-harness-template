@@ -9,7 +9,7 @@
 #   프로젝트 안       — _workspace/·.claude/·순수 *.md|*.markdown(대소문자 무관) 를 뺀 전부
 #   밖 + 하네스 정본  — 저장소(루트에 template/.claude/) **전체**를 프로젝트와 같은 규칙으로
 #   밖 + 그 외        — .claude/ 앵커에 걸린 하네스 파일만 (git 저장소일 필요 없음)
-#   설계·계획 산출물  — 위치·git 무관하게 _workspace/00_design*.md·01_plan*.md 는
+#   설계·계획 산출물  — 위치·git 무관하게 _workspace/0?_design*.md·0?_plan*.md 는
 #                       듀얼리뷰+지식+**머리 표명 2종**(ADR-0013·0015 — 머리 두 줄
 #                       형식(회수·레퍼런스 조사)을 Stop 이 검사)
 #   결정 문서        — docs/decisions/*.md 는 문서 제외의 예외로 지식만
@@ -257,10 +257,14 @@ lower_abs="$(printf '%s' "$abs" | tr '[:upper:]' '[:lower:]')"
 # 회수 플래그(ADR-0013·0015)는 머리 두 줄(`사전 결정 회수:`·`레퍼런스 조사:`) 표명을
 # Stop 이 검사하고 지키면 스스로 지운다. 이름에 codex 가 든다고 빼는 식의 **이름 제외는 두지 않는다** —
 # 관측되지 않은 재귀를 막으려고 실재하는 위음성(codex 를 다루는 정상 설계서의 무게이트)을
-# 만들게 된다. 리뷰 산출물과의 재귀는 명명 계약(리뷰 산출물은 00_design·01_plan 접두어
+# 만들게 된다. 리뷰 산출물과의 재귀는 명명 계약(리뷰 산출물은 0?_design·0?_plan 앵커
 # 금지 — 오케스트레이터 스킬)이 막는다.
+# 0?_ 앵커(2026-08-17 감사): 조사 산출물이 00_·01_ 번호를 선점하면 계획서가 02_plan_… 이
+# 되어 01_plan* 만 보던 글롭을 조용히 우회한다(POK-79 실측 — 게이트 미발동). 숫자 두 자리
+# 바로 뒤에 _design/_plan 을 요구하므로 NN_codex_plan_review 류 리뷰 파일(출처 토큰이 번호
+# 뒤에 옴)은 걸리지 않는다.
 case "$lower_abs" in
-  */_workspace/00_design*.md|*/_workspace/01_plan*.md)
+  */_workspace/0?_design*.md|*/_workspace/0?_plan*.md)
     dual_value="$(project_rel "$abs")" || dual_value="$abs"
     dw=0
     record_flag "$DUALREVIEW_FLAG" "$dual_value" || dw=1

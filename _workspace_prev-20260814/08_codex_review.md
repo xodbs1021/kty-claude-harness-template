@@ -1,0 +1,3005 @@
+Reading additional input from stdin...
+2026-08-10T07:20:55.773534Z ERROR codex_models_manager::cache: failed to load models cache: missing field `supports_reasoning_summaries` at line 93 column 5
+OpenAI Codex v0.144.5
+--------
+workdir: /Users/kty/Downloads/kty-claude-harness-template
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 019fea8b-c3f4-7253-b141-ee630dc7696a
+--------
+user
+# 검수 대상: 결정 게이트 (kty-claude-harness-template, feat/decision-gate)
+
+너는 독립 코드 검수자다. **파일을 생성·삭제·수정하지 마라.** 샌드박스가 `mktemp`·`rm` 을
+거부하므로 시도하면 판정 없이 끝난다. **정적 독해만으로 판정하고, 반드시 마지막에
+`판정: 통과` 또는 `판정: 보류` 줄을 내라.** 그 줄이 없으면 이 라운드는 미수행으로 센다.
+
+## 무엇을 만들었나
+
+Stop 훅에 **결정 게이트**를 추가했다. 다른 완료 게이트 넷은 전부 *산출물*을 보는데
+(타입체크·듀얼리뷰·변경설명·지식반영), 이것만 **에이전트 자신의 행동**을 본다.
+
+    코드/결정 변경 플래그가 서 있고
+      AND 이 턴에 AskUserQuestion 도구 호출이 0회이고
+      AND 에이전트 발화에 "결정 표지 어휘"를 담은 서술형 문장이 있으면
+    -> 턴 종료 차단(rc=2) + 걸린 문장을 목록으로 출력
+
+겨누는 실패: 게이트가 막을 때는 따르면서, 게이트가 없는 자리에서는 혼자 정하고
+보고서에 한 줄 적는 것. 그 "한 줄"은 도구 호출이 아니라 문장이라 어떤 PreToolUse
+훅도 못 보고 승인창도 안 뜬다.
+
+## 읽을 파일 (전부 저장소 안)
+
+- `template/.claude/hooks/_common.sh` — `decision_scan()` (파일 끝). python3 스캐너
+- `template/.claude/hooks/verify-before-stop.sh` — 게이트 절 `(3.2)` + `transcript_path` 추출 + `(6)` 의 note 출력
+- `tests/decision-gate.test.sh` — 회귀 48건
+- `_workspace/mutate-decision-gate.sh` — 변이 24건 (전건 적색 측정 완료)
+- `docs/decisions/2026-08-10-decision-gate.md` — ADR-0012 (설계 근거·기각 대안·공시)
+- `_workspace/08_decision-gate.diff` — 전체 diff (main=dd6be57 기준)
+
+## 설계 의도 (이걸 반박해도 좋다 — 근거를 대라)
+
+1. **위양성이 여기서는 위음성만큼 비싸다.** 형제 검사기(`check-layer-boundary`,
+   `guard-hook-disable`)는 전부 위양성 쪽으로 기우는데 이것만 반대로 좁혔다. 이유:
+   위양성 비용이 "메시지 한 번"이 아니라 사용자에게 가는 불필요한 질문이고, 반복되면
+   질문이 소음이 되어 진짜 질문도 무시된다. 게다가 이 게이트의 훅·테스트·ADR 이 그
+   어휘를 데이터로 품어서, 어휘만 보면 게이트를 유지보수하는 작업 자체가 매번 걸린다.
+2. **좁히는 장치 넷**: 구조적 제외(코드펜스·인라인코드·인용줄·따옴표 안) · 질문 신호
+   제외 · 서술형 종결 요구 · 도구 입력 미스캔(발화 text 블록만). thinking·서브에이전트도 제외.
+3. **fail-open 을 하나 뒀다(rc=2 경로).** 대화 기록 형식은 하네스 소유가 아니라 예고
+   없이 바뀔 수 있고, 그때 차단하면 그 세션 안에 고칠 방법이 없어(기록을 고칠 수 없다)
+   세션이 통째로 벽돌이 된다. 조건은 사유를 마지막 게이트 메시지에 싣는 것.
+4. **탈출구를 뒀다**(`ECC_DISABLED_HOOKS=stop:decision`). `guard-hook-disable` 은 안 뒀는데
+   그건 "끄면 나머지를 전부 끌 수 있어서"이고, 이건 꺼도 나머지가 산다.
+5. **순서**: 타입체크 다음, 듀얼리뷰 앞. 질문의 답이 코드를 바꿀 수 있으므로 앞이다.
+
+## 특히 봐 달라
+
+- **위음성**: 자백이 통과하는 경로. 표지 어휘를 담은 정당한 자백인데 안 걸리는 형태
+- **위양성 폭증**: 정상 발화가 막히는 경로. 특히 정규식·문장 분할·구조적 제외의 경계
+- **fail-open 신설**: 의도한 rc=2 말고 **조용히 통과하는** 경로가 또 있나
+  (python 예외 · awk/셸 rc 삼킴 · 빈 출력 오독 · `$(...)` 의 후행 개행 · `set -uo pipefail` 상호작용)
+- **셸/파이썬 이식성**: macOS bash 3.2 · GNU/BSD 차이 · python3 버전 차이 · locale
+- **기존 게이트 회귀**: 이 절이 앞뒤 게이트(조기 종료·예산·지문·push 탐지)에 준 영향
+- **테스트가 실제로 무엇을 붙드나**: 통과를 위한 통과 케이스 · 기대값이 결함을 요구하는 것
+- ADR 이 검증 범위보다 **넓게 약속**하고 있지 않은가 (거짓 공시가 남은 결함보다 나쁘다)
+
+## 형식
+
+지적마다 `[등급] 파일:줄 — 무엇이/왜/어떻게`. 등급은 CRITICAL·HIGH·MEDIUM·LOW.
+근거 없는 추측은 `추정`이라고 명시해라. 마지막 줄에 반드시 `판정: 통과|보류`.
+codex
+요청대로 어떤 파일도 변경하지 않고 정적 독해만 하겠습니다. 지정된 구현·테스트·변이·ADR·전체 diff를 서로 대조해, 특히 조용한 fail-open과 정당한 자백의 위음성을 우선 추적하겠습니다.
+exec
+/bin/zsh -lc "pwd && rg --files -g 'AGENTS.md' -g '"'!node_modules'"' -g '"'!vendor'"'" in /Users/kty/Downloads/kty-claude-harness-template
+ exited 1 in 0ms:
+/Users/kty/Downloads/kty-claude-harness-template
+
+exec
+/bin/zsh -lc 'nl -ba template/.claude/hooks/verify-before-stop.sh' in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+     1	#!/usr/bin/env bash
+     2	# Stop: 코드를 건드린 턴은 (1) 타입체크 통과 (2) change-explainer 실행
+     3	#       (3) completion-auditor 실행 없이는 끝낼 수 없다.
+     4	#
+     5	# 무한루프 가드: "같은 지점에서 진전 없이" MAX_BLOCKS(3)회까지만 막는다.
+     6	# 게이트를 하나 지울 때마다(차단 지문 변화) 카운터가 리셋되므로 순차 처리로는
+     7	# 소진되지 않는다. 소진되면 플래그를 지우고 통과시키되 사용자에게 큰 경고를
+     8	# 띄운다. 세션이 벽돌이 되는 것보다 낫다. 지문 파일을 못 쓰면 리셋 없는 구식
+     9	# 누적으로, 카운터 파일도 못 쓰면 stop_hook_active 로 폴백한다.
+    10	
+    11	set -uo pipefail
+    12	# shellcheck source=_common.sh
+    13	. "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+    14	
+    15	HOOK_ID="stop:verify"
+    16	hook_disabled "$HOOK_ID" && exit 0
+    17	
+    18	payload="$(cat)"
+    19	stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
+    20	# 대화 기록 경로. 결정 게이트(3.2)가 이 턴의 발화를 읽는 데 쓴다. 비어 있거나 못 읽으면
+    21	# 그 게이트만 생략되고 **사유가 마지막 게이트 메시지에 실린다** — 조용히 사라지지 않는
+    22	# 것이 이 fail-open 의 조건이다(decision_scan 주석 참조).
+    23	transcript_path="$(printf '%s' "$payload" | json_get transcript_path)"
+    24	
+    25	# (0) push 미완 **탐지** — 조기 종료보다 **먼저** 해야 한다.
+    26	#     플래그를 다 처리해 지운 뒤가 바로 위험한 시점인데(29커밋을 잃은 그 상태),
+    27	#     아래 조기 종료가 먼저 걸리면 push 게이트는 영영 안 돈다(검수 [치명] 지적).
+    28	#     탐지만 여기서 하고 차단은 예산·지문 기계가 준비된 뒤에 한다.
+    29	push_unsent=""
+    30	push_branch=""
+    31	if ! hook_disabled "stop:push" && git -C "$PROJECT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    32	  push_branch="$(git -C "$PROJECT_DIR" symbolic-ref --short HEAD 2>/dev/null)"
+    33	  if [ -n "$push_branch" ] && git -C "$PROJECT_DIR" remote get-url origin >/dev/null 2>&1; then
+    34	    if git -C "$PROJECT_DIR" rev-parse --verify -q "refs/remotes/origin/$push_branch" >/dev/null 2>&1; then
+    35	      # rc 를 따로 본다. 실패를 "ahead 0" 으로 읽으면 게이트가 조용히 사라진다([cx] 지적).
+    36	      if push_n="$(git -C "$PROJECT_DIR" rev-list --count "refs/remotes/origin/$push_branch..HEAD" 2>/dev/null)"; then
+    37	        [ -n "$push_n" ] && [ "$push_n" != "0" ] && push_unsent="원격보다 ${push_n}개 앞서 있습니다"
+    38	      else
+    39	        push_unsent="원격과의 차이를 셀 수 없습니다(저장소 상태 이상) — 직접 확인하세요"
+    40	      fi
+    41	    elif git -C "$PROJECT_DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    42	      # ref 가 없다. 다만 **HEAD 가 이미 다른 원격 브랜치에 있으면** 새 커밋이 없는
+    43	      # 갓 만든 브랜치이므로 요구하지 않는다 — 안 그러면 브랜치를 파자마자 막힌다.
+    44	      # 파이프 안 서브셸에서 exit 로 신호하면 그 rc 가 밖으로 안 나온다 — 실제로 그렇게
+    45	      # 짰다가 조건이 항상 거짓이 됐다. 서브셸 없는 for 루프로 판정한다(ref 이름에는
+    46	      # 공백이 못 들어가므로 단어 분리가 안전하다).
+    47	      head_on_remote=0
+    48	      for _r in $(git -C "$PROJECT_DIR" for-each-ref --format='%(refname)' refs/remotes 2>/dev/null); do
+    49	        if git -C "$PROJECT_DIR" merge-base --is-ancestor HEAD "$_r" 2>/dev/null; then
+    50	          head_on_remote=1; break
+    51	        fi
+    52	      done
+    53	      if [ "$head_on_remote" -eq 0 ]; then
+    54	        push_unsent="이 브랜치의 원격 추적 ref 가 없습니다 (한 번도 push 되지 않았거나, refspec 이 좁혀져 보이지 않습니다)"
+    55	      fi
+    56	    fi
+    57	  fi
+    58	fi
+    59	
+    60	# (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
+    61	#     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
+    62	#     지식 플래그는 **게이트가 켜져 있을 때만** 할 일로 센다 — 껐는데 예전에 남은
+    63	#     플래그 파일이 읽기 전용 턴의 조기 종료를 막으면 안 된다.
+    64	if [ -z "$push_unsent" ] && [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then
+    65	  rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+    66	  exit 0
+    67	fi
+    68	
+    69	# (2) 카운터 확인 — 벽돌 방지, 진전 인지 리셋 (2026-08-03 [cx] 지적 반영)
+    70	# 카운터의 목적은 "갇힘 감지"이지 노력 예산이 아니다. 게이트가 4종으로 늘며 공유 카운터
+    71	# 3회로는 게이트를 순서대로 성실히 처리해도 마지막 감사 게이트 전에 소진되는 역설이 있었다.
+    72	# → 차단 지문(어느 게이트에서, 어떤 플래그 상태로 막혔나)이 지난 차단과 다르면 = 진전이면
+    73	#   카운터를 리셋한다. 같은 지문으로 MAX_BLOCKS회 = 진짜 갇힘일 때만 경고와 통과.
+    74	count=0
+    75	if [ -f "$BLOCK_COUNT" ]; then
+    76	  count="$(tr -dc '0-9' < "$BLOCK_COUNT" 2>/dev/null)"
+    77	fi
+    78	[ -z "$count" ] && count=0
+    79	prev_fp="$(cat "$BLOCK_FP" 2>/dev/null)"
+    80	# 지문 = 서 있는 플래그의 집합(내용 아님). 내용을 넣으면 갇힌 채 새 파일만 편집해도
+    81	# 리셋되고(무한 차단), cksum 충돌로 실제 진전이 리셋 안 될 수도 있다([cx] 지적).
+    82	flags_fp=""
+    83	[ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
+    84	[ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
+    85	knowledge_gate_active     && flags_fp="${flags_fp}k"
+    86	[ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
+    87	# push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
+    88	# 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
+    89	[ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
+    90	new_fp=""
+    91	
+    92	gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출력 전에 호출한다.
+    93	  new_fp="$1|$flags_fp"
+    94	  # 지문을 기록할 수 있을 때만 리셋한다 — 지문 파일을 못 쓰는 환경에서 리셋하면
+    95	  # prev_fp가 영원히 비어 매번 1/3로 무한 차단된다([cx] 지적). 그 경우 리셋 없는
+    96	  # 구식 누적으로 동작해 3회 후 통과가 보장된다.
+    97	  if printf '%s\n' "$new_fp" > "$BLOCK_FP" 2>/dev/null; then
+    98	    if [ "$new_fp" != "$prev_fp" ]; then
+    99	      count=0   # 지난 차단과 다른 게이트/플래그 집합 = 진전 — 예산 리셋
+   100	    fi
+   101	  fi
+   102	  if [ "$count" -ge "$MAX_BLOCKS" ]; then
+   103	    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+   104	    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+   105	    printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
+   106	      "$1" "$MAX_BLOCKS" "$changed"
+   107	    exit 0
+   108	  fi
+   109	}
+   110	
+   111	bump_and_block() {
+   112	  if ! printf '%s\n' "$((count + 1))" > "$BLOCK_COUNT" 2>/dev/null; then
+   113	    # 카운터를 못 쓰면 무한루프 위험 → 표준 가드로 폴백
+   114	    case "$stop_active" in
+   115	      [Tt]rue) exit 0 ;;
+   116	    esac
+   117	  fi
+   118	  exit 2
+   119	}
+   120	
+   121	# (3) 타입체크 — 결정론적 바닥. 명령은 프로필에서 파생된 harness.env 에서 읽는다.
+   122	#     HARNESS_TYPECHECK_CMD 가 비어 있으면(타입 없는 언어/미설정) 생략한다.
+   123	#     이렇게 하면 이 훅이 특정 스택(pnpm/tsc)에 묶이지 않는다 — 도메인-무관 재사용.
+   124	#     **이 파일을 실행하지 않는다.** source 하면 사용자 소유 셸 파일이 훅의 제어 흐름을
+   125	#     가져간다 — `exit 0` 한 줄이면 이 훅이 조용히 끝나 **게이트 4종이 통째로 사라지고**
+   126	#     흔적도 안 남는다. 원문 판독으로 그 부류를 없앤다(harness_env_value 주석 참조).
+   127	typecheck_note=""
+   128	#     rc 를 함께 받는다. "리터럴로 비웠다"(rc=0 + 빈 값 = 의도한 생략)와 "값을 믿을 수
+   129	#     없다"(rc=1 = 미설정·선언 2개 이상·지원 문법 밖·읽기 실패)는 둘 다 생략으로 가지만
+   130	#     사용자에게 **다른 정보**다. 후자는 고칠 수 있는 실수라 그렇게 적어야 한다.
+   131	TYPECHECK_CMD="$(harness_env_value HARNESS_TYPECHECK_CMD)"; typecheck_rc=$?
+   132	
+   133	if [ "$typecheck_rc" -ne 0 ]; then
+   134	  typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 를 읽지 못함 — 미설정이거나, 선언이 2개 이상이거나, 지원 문법 밖입니다)"
+   135	elif [ -z "$TYPECHECK_CMD" ]; then
+   136	  typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 가 빈 값으로 설정됨)"
+   137	else
+   138	  timeout_bin=""
+   139	  if command -v timeout >/dev/null 2>&1; then
+   140	    timeout_bin="timeout"
+   141	  elif command -v gtimeout >/dev/null 2>&1; then
+   142	    timeout_bin="gtimeout"
+   143	  fi
+   144	  # macOS 기본에는 timeout 이 없다. 그 경우 settings.json 의 "timeout": 120 이 최종 안전망.
+   145	
+   146	  if [ -n "$timeout_bin" ]; then
+   147	    tc_out="$(cd "$PROJECT_DIR" && "$timeout_bin" 90 sh -c "$TYPECHECK_CMD" 2>&1)"; tc_rc=$?
+   148	  else
+   149	    tc_out="$(cd "$PROJECT_DIR" && sh -c "$TYPECHECK_CMD" 2>&1)"; tc_rc=$?
+   150	  fi
+   151	
+   152	  if [ "$tc_rc" -eq 124 ] || [ "$tc_rc" -eq 137 ]; then
+   153	    # 타임아웃은 "타입 오류"가 아니라 "모름". 차단하지 않고 감사자에게 넘긴다.
+   154	    typecheck_note="타입체크 타임아웃 → 생략 (감사자가 재확인할 것)"
+   155	  elif [ "$tc_rc" -eq 127 ]; then
+   156	    # 명령/도구 없음(rc=127)은 "타입 오류"가 아니다. 오탐 차단 방지 위해 생략.
+   157	    typecheck_note="타입체크 생략 (명령 실행 불가 rc=127): $TYPECHECK_CMD"
+   158	  elif [ "$tc_rc" -ne 0 ]; then
+   159	    gate_budget "typecheck"
+   160	    {
+   161	      echo "[완료 차단] 타입체크 실패 — 지금은 '완료'가 아닙니다."
+   162	      echo
+   163	      echo "명령: $TYPECHECK_CMD"
+   164	      echo
+   165	      printf '%s\n' "$tc_out" | head -n 15
+   166	      echo
+   167	      echo "고친 뒤 다시 종료하세요.  (차단 $((count + 1))/${MAX_BLOCKS})"
+   168	      echo "탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+   169	    } >&2
+   170	    bump_and_block
+   171	  fi
+   172	fi
+   173	
+   174	# (3.2) **결정 게이트** — "물어봤어야 할 것을 혼자 정했나".
+   175	#      나머지 게이트가 전부 **산출물**을 볼 때 이것만 **에이전트 자신의 행동**을 본다.
+   176	#      판정 규칙·좁히는 장치 셋·fail-open 사유는 _common.sh 의 decision_scan 주석이 정본이다.
+   177	#
+   178	#      **다른 게이트보다 앞에 둔다.** 질문의 답이 코드를 바꿀 수 있으므로, 리뷰·설명·감사에
+   179	#      노력을 쓰기 전에 묻는 편이 싸다. (push 탐지와 달리 순서가 정확성을 바꾸지는 않는다 —
+   180	#      대화 기록은 이미 다 쓰였고 게이트 순서가 그 내용을 바꾸지 않기 때문이다.)
+   181	decision_note=""
+   182	if ! hook_disabled "stop:decision"; then
+   183	  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?
+   184	  if [ "$decision_rc" -eq 2 ]; then
+   185	    # **이 게이트의 유일한 fail-open.** 통과시키되 사유를 (6) 의 메시지에 실어 보낸다.
+   186	    # 대화 기록 형식은 하네스 소유가 아니라, 여기서 차단하면 그 세션 안에 고칠 방법이 없다.
+   187	    decision_note="결정 게이트 생략 ($decision_hits)"
+   188	  elif [ "$decision_rc" -eq 0 ]; then
+   189	    gate_budget "decision"
+   190	    {
+   191	      echo "[완료 차단] 혼자 정한 것이 있는데 이 턴에 사용자에게 한 번도 묻지 않았습니다."
+   192	      echo
+   193	      echo "걸린 문장:"
+   194	      printf '%s\n' "$decision_hits" | sed 's/^/  - /'
+   195	      echo
+   196	      echo "이 게이트가 겨누는 것:"
+   197	      echo "  게이트가 막을 때는 따르면서, 게이트가 없는 자리에서는 혼자 정하고 보고서에"
+   198	      echo "  한 줄 적는 부류입니다. 그 '한 줄'은 도구 호출이 아니라 문장이라 승인창이"
+   199	      echo "  안 뜨고, 그래서 이 저장소가 겪은 실패 대부분이 이 축에서 났습니다."
+   200	      echo
+   201	      echo "해야 할 일:"
+   202	      echo "  1. 위 문장들이 정말 **사용자가 정할 일**이었는지 본다."
+   203	      echo "     '범위 밖'·'별도로'·'그대로 뒀'는 대개 선택지를 줬어야 하는 자리입니다."
+   204	      echo "  2. AskUserQuestion 으로 **실제로 묻는다.** 보고서에 적는 것은 묻는 것이 아닙니다."
+   205	      echo "  3. 질문을 한 번이라도 하면 이 게이트는 풀립니다."
+   206	      echo
+   207	      echo "위양성이라면(그 어휘를 설명·인용한 것이지 결정이 아니라면):"
+   208	      echo "  - 백틱이나 따옴표로 감싸면 스캔에서 빠집니다 — 인용은 결정이 아니니까요."
+   209	      echo "  - 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받으세요."
+   210	      echo
+   211	      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+   212	    } >&2
+   213	    bump_and_block
+   214	  fi
+   215	fi
+   216	
+   217	# (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
+   218	#      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
+   219	#      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
+   220	if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
+   221	  gate_budget "dualreview"
+   222	  {
+   223	    echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
+   224	    echo
+   225	    echo "이 턴의 듀얼 리뷰 대상:"
+   226	    sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+   227	    echo
+   228	    echo "해야 할 일:"
+   229	    echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
+   230	    echo "  2. 결과를 _workspace/ 에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
+   231	    echo "  3. 그 뒤에만:  rm -f .claude/.needs-dualreview"
+   232	    echo "     codex 미설치·호출 실패면 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을 명시한 뒤에 지운다."
+   233	    echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+   234	    echo
+   235	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
+   236	  } >&2
+   237	  bump_and_block
+   238	fi
+   239	
+   240	# (4) change-explainer 게이트 (Phase 5) — 감사자보다 먼저 강제한다.
+   241	#     코드가 바뀐 턴은 변경 설명 없이 끝낼 수 없다. change-explainer 가 실제로
+   242	#     사용자용 설명을 낸 뒤에만 .needs-explain 을 지운다.
+   243	#     (완료 감사와 별개로 이 게이트만 끄려면 ECC_DISABLED_HOOKS=stop:explain)
+   244	if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
+   245	  gate_budget "explain"
+   246	  {
+   247	    echo "[완료 차단] change-explainer 미실행 — 변경 설명 없이 끝낼 수 없습니다."
+   248	    echo
+   249	    echo "이 턴에서 바뀐 코드/설정:"
+   250	    sed 's/^/  - /' "$EXPLAIN_FLAG" 2>/dev/null
+   251	    echo
+   252	    echo "해야 할 일:"
+   253	    echo "  1. change-explainer 에이전트로 실제 diff 기반 사용자용 변경 설명을 낸다."
+   254	    echo "  2. 설명을 낸 뒤에만:  rm -f .claude/.needs-explain"
+   255	    echo "     설명 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+   256	    echo
+   257	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"
+   258	  } >&2
+   259	  bump_and_block
+   260	fi
+   261	
+   262	# (5) 지식 저장소 반영 게이트 — 감사보다 먼저 강제한다 (감사자가 반영 결과를 검증하도록).
+   263	#     (2026-08-02 kty — 산문 규칙이 세션 내내 0회 이행된 실사고의 기계화)
+   264	#
+   265	#     **이 훅이 아는 것은 계약 하나뿐이다**: "지식 저장소가 설정돼 있으면, 결정·설계가
+   266	#     나온 턴은 반영 없이 끝낼 수 없다." 저장소가 어디인지·어떤 구조인지·무엇을 어느
+   267	#     파일에 나눠 담는지는 **상위 층의 구현**이고 이 파일은 모른다. 알게 되면 그 저장소를
+   268	#     안 쓰는 환경에서 하네스가 없는 구조를 요구하게 된다(제0원칙 4 — 구체가 아닌 계약).
+   269	#     어디에 어떻게 저장했는지의 검증은 그 저장소 자신의 규약이 한다.
+   270	if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
+   271	  gate_budget "knowledge"
+   272	  {
+   273	    echo "[완료 차단] 지식 저장소 반영 미확인 — 이 턴의 결정·설계를 남기지 않고 끝낼 수 없습니다."
+   274	    echo
+   275	    echo "이 턴에서 바뀐 코드/설정:"
+   276	    sed 's/^/  - /' "$KNOWLEDGE_FLAG" 2>/dev/null
+   277	    echo
+   278	    echo "해야 할 일:"
+   279	    echo "  1. 이 머신의 지식 저장소가 **어디이고 어떤 형식인지는 사용자 층 설정**(전역"
+   280	    echo "     CLAUDE.md 등)이 답한다. 그 규약을 **전문** 읽는다 — 부분 독해 금지."
+   281	    echo "  2. 이번 턴에 결정·설계·개발작업이 있으면 그 규약대로 반영하고, 반영됐다는"
+   282	    echo "     확인 가능한 증거(커밋 해시·파일 경로 등)를 확보한다."
+   283	    echo "     판단을 만든 **근거(raw)** 도 규약이 정한 자리에 함께 남긴다 — 요약만 남기면"
+   284	    echo "     \"왜 그렇게 정했나\"가 복원 불가능해진다."
+   285	    echo "  3. 반영할 지식이 없으면(순수 버그픽스·기계적 수정) 불요 사유를 _workspace/progress.md 에 기록한다."
+   286	    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f .claude/.needs-knowledge"
+   287	    echo "     completion-auditor 가 그 증거(또는 불요 사유의 타당성)를 검증한다."
+   288	    echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
+   289	    echo
+   290	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
+   291	  } >&2
+   292	  bump_and_block
+   293	fi
+   294	
+   295	# (5.5) **커밋했는데 원격에 없다** — 이 저장소가 커밋 29개를 잃은 바로 그 상태다.
+   296	#      그때는 "아직 PR 전이니까"라며 라운드 6개를 미뤘고, 임시 폴더째 사라졌다.
+   297	#      탐지는 (0) 에서 이미 했다 — 조기 종료보다 앞이어야 하기 때문이다.
+   298	if [ -n "$push_unsent" ]; then
+   299	  gate_budget "push"
+   300	  {
+   301	    echo "[완료 차단] 커밋이 원격에 없습니다 — $push_unsent"
+   302	    echo
+   303	    echo "이 저장소는 이 상태로 **커밋 29개를 잃은 적이 있습니다.** 그때도 코드는"
+   304	    echo "다 짜여 있었고, \"아직 PR 전이니까\"라며 push 를 미뤘습니다."
+   305	    echo
+   306	    echo "해야 할 일:"
+   307	    echo "  git push -u origin $push_branch"
+   308	    echo "  그리고 실제로 올라갔는지 확인하세요:"
+   309	    echo "  git rev-list --left-right --count HEAD...origin/$push_branch   → 0 0"
+   310	    echo
+   311	    echo "  원격에는 있는데 위 명령이 실패한다면 refspec 이 좁혀진 것입니다:"
+   312	    echo "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && git fetch origin"
+   313	    echo "  push 여부가 로컬에서 안 보이는 것 자체가 위험합니다 — 29개를 잃을 때 그랬습니다."
+   314	    echo
+   315	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
+   316	  } >&2
+   317	  bump_and_block
+   318	fi
+   319	
+   320	# (6) 타입체크는 통과했지만 감사자가 아직 안 돌았다.
+   321	gate_budget "audit"
+   322	{
+   323	  echo "[완료 차단] completion-auditor 미실행 — '완료'라고 말할 수 없습니다."
+   324	  echo
+   325	  echo "이 턴에서 바뀐 코드/설정:"
+   326	  sed 's/^/  - /' "$AUDIT_FLAG" 2>/dev/null
+   327	  if [ -n "$typecheck_note" ]; then
+   328	    echo
+   329	    echo "참고: $typecheck_note"
+   330	  fi
+   331	  # 결정 게이트가 대화 기록을 못 읽었으면 **여기서 소리를 낸다.** 그 게이트만 조용히
+   332	  # 사라지면 "물어봤나"를 아무도 안 보게 되고, 그게 정확히 이 게이트를 만든 이유다.
+   333	  if [ -n "$decision_note" ]; then
+   334	    echo
+   335	    echo "참고: $decision_note"
+   336	    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
+   337	  fi
+   338	  echo
+   339	  echo "해야 할 일:"
+   340	  echo "  1. completion-auditor 에이전트로 완료 주장을 1차 증거로 검증한다."
+   341	  echo "  2. 검증을 통과했을 때만:  rm -f .claude/.needs-audit"
+   342	  echo "     감사 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+   343	  echo
+   344	  echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+   345	} >&2
+   346	bump_and_block
+
+exec
+/bin/zsh -lc 'nl -ba docs/decisions/2026-08-10-decision-gate.md' in /Users/kty/Downloads/kty-claude-harness-template
+exec
+/bin/zsh -lc 'nl -ba template/.claude/hooks/_common.sh | tail -n 260' in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+   211	  }
+   212	
+   213	  # **인용이 이전 줄에서 열린 채면 이 줄은 값의 본문이지 선언이 아니다.**
+   214	  # 이 검사가 없으면 다른 키의 여러 줄 값 안에 있는 우리 키가 유일한 선언으로 판독돼
+   215	  # 게이트가 꺼진다(실측). 판정 전에 물어야 한다.
+   216	  if (OPENQ == "") {
+   217	    # 선언 판정이 히어독 시작 판정보다 **먼저**다: `KEY=v <<EOF` 의 대입은 실제로 발효한다.
+   218	    if (line ~ RX) {
+   219	      N++
+   220	      if (N == 1) FOUND = substr(line, index(line, "=") + 1)
+   221	    }
+   222	  }
+   223	  scan_line(line)
+   224	}
+   225	END {
+   226	  if (INHD) exit 1          # 히어독이 EOF 까지 안 닫혔다 = 탐지가 빗나갔다
+   227	  if (OPENQ != "") exit 1   # 인용이 EOF 까지 안 닫혔다 = 파일을 못 믿는다
+   228	  if (N != 1) exit 1
+   229	  v = parse_value(FOUND)
+   230	  if (BAD) exit 1
+   231	  printf "%s", v
+   232	  exit 0
+   233	}
+   234	' "$file" 2>/dev/null)"
+   235	  rc=$?
+   236	  [ "$rc" -eq 0 ] || { printf '%s' ''; return 1; }
+   237	  printf '%s' "$val"
+   238	  return 0
+   239	}
+   240	
+   241	# 지식 반영 게이트가 켜져 있는가 (rc=0 켜짐 / rc=1 꺼짐).
+   242	#
+   243	# 하네스가 소유하는 것은 **계약 하나**뿐이다 — "지식 저장소가 설정돼 있으면, 결정·설계가
+   244	# 나온 턴은 반영 없이 끝낼 수 없다." 어디에 어떤 구조로 반영하는지는 이 층이 모른다.
+   245	# 그래서 필요한 것도 1비트뿐이고, 그 1비트를 얻으려고 파일을 실행하지 않는다.
+   246	#
+   247	# **기본이 켜짐인 것이 이 함수의 핵심이다.** 기존 설치본에는 이 키가 아예 없는데,
+   248	# 없을 때 "꺼짐"으로 읽으면 하네스를 갱신하는 순간 게이트가 **조용히 꺼진다** — 사용자는
+   249	# 지식이 쌓인다고 믿는데 그 턴부터 아무것도 안 남는다. 표명이 없으면 이전 동작을 보존한다.
+   250	# 선언이 2개 이상이거나 문법 밖일 때도 같은 이유로 켠다(rc=1 → 켜짐).
+   251	#
+   252	# 끄는 방법은 **값을 리터럴로 비우는 것 하나뿐**이다: HARNESS_KNOWLEDGE_GATE=""
+   253	# `="off"` 는 켜진 것으로 읽힌다 — 비어 있지 않기 때문이다. harness.env 주석에 명시돼 있다.
+   254	harness_knowledge_gate_on() {
+   255	  local v
+   256	  v="$(harness_env_value HARNESS_KNOWLEDGE_GATE)" || return 0   # 값을 못 믿으면 켠다
+   257	  [ -n "$v" ]                                                   # 리터럴로 비었을 때만 꺼짐
+   258	}
+   259	
+   260	# 지식 게이트가 이번 턴에 **발효 중인가** — 플래그가 섰고 게이트도 켜져 있는가.
+   261	# 판정을 이 한 곳에 모은다. 두 군데서 따로 물으면 "게이트를 껐는데 남아 있던 플래그가
+   262	# 읽기 전용 턴의 조기 종료를 막는" 종류의 어긋남이 생긴다.
+   263	knowledge_gate_active() {
+   264	  [ -s "$KNOWLEDGE_FLAG" ] || return 1
+   265	  harness_knowledge_gate_on
+   266	}
+   267	
+   268	# stdin 의 JSON 에서 점 경로로 값 하나를 뽑는다. 없거나 파싱 실패면 빈 문자열.
+   269	# 훅 입력이 깨져도 절대 죽지 않는다 — 죽으면 오탐 차단이 된다.
+   270	json_get() {
+   271	  python3 -c '
+   272	import json, sys
+   273	try:
+   274	    data = json.load(sys.stdin)
+   275	except Exception:
+   276	    sys.exit(0)
+   277	for key in sys.argv[1].split("."):
+   278	    if not isinstance(data, dict):
+   279	        sys.exit(0)
+   280	    data = data.get(key)
+   281	    if data is None:
+   282	        sys.exit(0)
+   283	print(data)
+   284	' "$1" 2>/dev/null
+   285	}
+   286	
+   287	# 이 턴의 대화 기록을 읽어 **"물어봤어야 할 것을 혼자 정했다"는 자백**을 찾는다.
+   288	#
+   289	# 왜 이런 게이트가 필요한가: 완료 게이트 넷(타입체크·듀얼리뷰·변경설명·지식반영)은 전부
+   290	# **산출물**을 본다. 에이전트 자신의 행동을 겨눈 것은 없었고, 그 비대칭이 실물로 드러났다 —
+   291	# 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에
+   292	# 한 줄 적었다. 그 "한 줄"은 **도구 호출이 아니라 문장**이라 어떤 PreToolUse 훅도 볼 수 없고
+   293	# 승인창도 안 뜬다(승인창은 *한 일*에만 뜬다). 그래서 Stop 이 대화 기록을 직접 읽는다.
+   294	#
+   295	# ── 판정 ─────────────────────────────────────────────────────────────
+   296	#   결정 표지 어휘를 담은 **서술형** 문장이 있는데  AND  이 턴에 AskUserQuestion 이 0회
+   297	#   → 차단. 질문을 한 번 하면 풀리므로 세션이 벽돌이 되지 않는다.
+   298	#
+   299	# 표지 어휘를 이렇게 고른 이유: 저 말들은 "물어봤어야 할 것을 혼자 정했다"를 **자백**할
+   300	# 때만 나온다. 자백은 있는데 질문이 0회면 그 자체가 위반이다.
+   301	#
+   302	# ── 좁히는 장치 셋 (위양성 억제) ─────────────────────────────────────
+   303	# 어휘만 보면 이 게이트를 **유지보수하는 작업 자체가 매번 걸린다** — 훅·테스트·결정 문서가
+   304	# 그 어휘를 데이터로 품기 때문이다. 그러면 사람이 게이트를 끄게 되고 그게 최악이다.
+   305	#   1) 구조적 제외 — 코드펜스 · 인라인 코드 · 인용줄(>) · 따옴표로 감싼 부분은 안 본다.
+   306	#      그래서 어휘를 **인용부호로 감싸 언급하는 것**은 안 걸린다(문서·설명의 정상 형태다).
+   307	#   2) 질문 신호 제외 — 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+   308	#   3) 서술형 종결 요구 — "…했다/…습니다" 같은 단정으로 끝나야 "내가 그렇게 했다"이다.
+   309	# 대가는 위음성 증가다. 표현을 바꾸면 빠져나간다 — 겨누는 것이 적대적 회피가 아니라
+   310	# **무의식적 습관**이라 그래도 실효가 남는다. guard-hook-disable 과 같은 판단 구조다.
+   311	#
+   312	# **도구 입력은 보지 않는다(text 블록만 본다).** 그래서 이 패턴이 적힌 파일을 Write/Edit
+   313	# 로 쓰는 것은 안 걸린다 — 자기참조 폭발을 원천에서 없애는 장치다.
+   314	# thinking 블록도 안 본다: 거기서 선택지를 저울질하는 것은 결정 통보가 아니다.
+   315	# 서브에이전트 발화(isSidechain)도 뺀다: 서브에이전트는 사용자에게 물을 수 없다.
+   316	#
+   317	# ── 반환 계약 ─────────────────────────────────────────────────────────
+   318	#   rc=0 : 차단해야 한다. stdout = 걸린 문장들(줄당 하나)
+   319	#   rc=1 : 차단 불필요 (표지 없음 · 또는 이 턴에 질문을 했음)
+   320	#   rc=2 : **판독 불가.** stdout = 사유 한 줄
+   321	#
+   322	# ── rc=2 가 이 게이트의 유일한 fail-open 지점이다 ────────────────────
+   323	# 대화 기록의 형식은 하네스가 소유하지 않는다 — 도구 제공자가 정하고 예고 없이 바뀐다.
+   324	# 형식이 바뀌었다고 차단하면 **세션이 통째로 벽돌이 되는데 그 세션 안에 고칠 방법이 없다**
+   325	# (기록을 고칠 수는 없으므로 어떤 행동으로도 게이트가 안 풀린다). 그래서 여기서만 통과로
+   326	# 간다. 나머지 판정은 전부 fail-closed 다.
+   327	# **조건은 경고를 삼키지 않는 것이다** — 호출부가 이 사유를 마지막 게이트 메시지에 싣는다.
+   328	# 조용히 통과하면 게이트가 죽은 것을 아무도 모르고, 그것이 이 저장소가 부르는 조용한 실패다.
+   329	decision_scan() {   # $1 = 대화 기록(JSONL) 경로
+   330	  local path="$1"
+   331	  [ -n "$path" ] || { printf '%s\n' '대화 기록 경로가 훅 입력에 없습니다'; return 2; }
+   332	  [ -r "$path" ] || { printf '%s\n' "대화 기록을 읽을 수 없습니다: $path"; return 2; }
+   333	  python3 - "$path" <<'PY'
+   334	import json, re, sys
+   335	
+   336	# 결정 표지. 굴절 변형만 최소로 넓혔고 그 이상 넓히지 않는다 — 넓히면 위양성이 늘고,
+   337	# 위양성이 늘면 질문이 소음이 되고, 소음이 되면 진짜 질문도 무시된다.
+   338	MARKER = re.compile(
+   339	    "공시하|공시했|공시함"
+   340	    "|범위 ?밖"
+   341	    "|별도로"
+   342	    "|그대로 (?:뒀|두었|남겼|남겨)"
+   343	    "|(?:제|내) 판단으로"
+   344	    "|가정하(?:고|여|였|겠)|가정했"
+   345	    "|수용(?:된|한) 한계"
+   346	    "|트레이드오프"
+   347	    "|안 했(?:습니다|다|음)"
+   348	)
+   349	# 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+   350	QUESTION = re.compile(
+   351	    "\\?|까요|나요|ㄹ까|을까|할까|여쭤|여쭈|여쭙|물어|어떠신|어느 쪽"
+   352	    "|골라|선택해|정해 ?주|알려 ?주|괜찮으신|의견"
+   353	)
+   354	# 서술형 종결. "내가 그렇게 했다"는 단정만 잡는다.
+   355	DECLARATIVE = re.compile("(?:다|음|함|됨|임|옴)$")
+   356	
+   357	INLINE     = re.compile("`[^`\n]*`")
+   358	QUOTED     = re.compile("\"[^\"\n]*\"|'[^'\n]*'|“[^”\n]*”"
+   359	                        "|‘[^’\n]*’|「[^」\n]*」"
+   360	                        "|『[^』\n]*』")
+   361	BLOCKQUOTE = re.compile("^\\s{0,3}>")
+   362	SENT       = re.compile("([\n.!?…。！？]+)")
+   363	LEAD       = re.compile("^[\\s*_>#\\-–—•·]+")
+   364	TRAIL      = re.compile("[\\s*_`~\\[\\](){}<>:;,·…\\-—–]+$")
+   365	
+   366	MAX_HITS, MAX_LEN = 8, 140
+   367	
+   368	
+   369	def fail(reason):
+   370	    sys.stdout.write(reason + "\n")
+   371	    raise SystemExit(2)
+   372	
+   373	
+   374	def drop_fences(s):
+   375	    # 짝수 조각만 코드 **밖**이다. 펜스가 안 닫혔으면 마지막 조각은 코드 안으로 친다 —
+   376	    # 스트리밍 중 잘린 기록에서 코드가 산문으로 새는 것을 막는다.
+   377	    return "\n".join(p for i, p in enumerate(s.split("```")) if i % 2 == 0)
+   378	
+   379	
+   380	def is_user_prompt(e):
+   381	    if e.get("type") != "user" or e.get("isSidechain"):
+   382	        return False
+   383	    if "toolUseResult" in e:            # 도구 결과는 사용자 발화가 아니다
+   384	        return False
+   385	    msg = e.get("message")
+   386	    if not isinstance(msg, dict):
+   387	        return False
+   388	    content = msg.get("content")
+   389	    if isinstance(content, list):
+   390	        for b in content:
+   391	            if isinstance(b, dict) and b.get("type") == "tool_result":
+   392	                return False
+   393	    return True
+   394	
+   395	
+   396	try:
+   397	    with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as fh:
+   398	        raw = fh.read()
+   399	except Exception as exc:
+   400	    fail("대화 기록을 열지 못했습니다: %s" % exc.__class__.__name__)
+   401	
+   402	lines = [ln for ln in raw.splitlines() if ln.strip()]
+   403	entries = []
+   404	for ln in lines:
+   405	    try:
+   406	        entries.append(json.loads(ln))
+   407	    except Exception:
+   408	        pass                # 개별 줄 손상은 건너뛴다. 전멸이면 바로 아래에서 걸린다
+   409	if lines and not entries:
+   410	    fail("대화 기록을 한 줄도 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+   411	
+   412	start = -1
+   413	for i, e in enumerate(entries):
+   414	    if isinstance(e, dict) and is_user_prompt(e):
+   415	        start = i
+   416	if start < 0:
+   417	    # 사용자 프롬프트가 없는 기록은 있을 수 없다 — 경계를 못 찾았다는 뜻이다.
+   418	    # 전체를 훑으면 지난 턴의 문장까지 걸려 위양성이 폭주하므로 판독 불가로 떨어뜨린다.
+   419	    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+   420	
+   421	asked, texts = 0, []
+   422	for e in entries[start + 1:]:
+   423	    if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):
+   424	        continue
+   425	    content = (e.get("message") or {}).get("content")
+   426	    if not isinstance(content, list):
+   427	        continue
+   428	    for b in content:
+   429	        if not isinstance(b, dict):
+   430	            continue
+   431	        if b.get("type") == "tool_use":
+   432	            if b.get("name") == "AskUserQuestion":
+   433	                asked += 1
+   434	        elif b.get("type") == "text":
+   435	            t = b.get("text")
+   436	            if isinstance(t, str):
+   437	                texts.append(t)
+   438	
+   439	if asked > 0:
+   440	    raise SystemExit(1)
+   441	
+   442	hits, seen = [], set()
+   443	for text in texts:
+   444	    for line in drop_fences(text).split("\n"):
+   445	        if BLOCKQUOTE.match(line):
+   446	            continue
+   447	        line = QUOTED.sub(" ", INLINE.sub(" ", line))
+   448	        chunks = SENT.split(line)
+   449	        for i in range(0, len(chunks), 2):
+   450	            body = chunks[i]
+   451	            whole = body + (chunks[i + 1] if i + 1 < len(chunks) else "")
+   452	            if QUESTION.search(whole):
+   453	                continue
+   454	            core = TRAIL.sub("", LEAD.sub("", body).strip())
+   455	            if not core or not MARKER.search(core) or not DECLARATIVE.search(core):
+   456	                continue
+   457	            if core in seen:
+   458	                continue
+   459	            seen.add(core)
+   460	            hits.append(core if len(core) <= MAX_LEN else core[:MAX_LEN] + "…")
+   461	
+   462	if not hits:
+   463	    raise SystemExit(1)
+   464	for h in hits[:MAX_HITS]:
+   465	    sys.stdout.write(h + "\n")
+   466	if len(hits) > MAX_HITS:
+   467	    sys.stdout.write("... 그리고 %d개 더\n" % (len(hits) - MAX_HITS))
+   468	raise SystemExit(0)
+   469	PY
+   470	}
+
+ succeeded in 0ms:
+     1	# ADR-0012: 게이트가 대화를 읽는다 — 자백은 있는데 질문이 없으면 막는다
+     2	
+     3	**Date**: 2026-08-10
+     4	**Status**: accepted
+     5	**Deciders**: 김태윤(요구·판단·확정 3건), Claude(설계·실측)
+     6	
+     7	---
+     8	
+     9	## Context
+    10	
+    11	[ADR-0011](2026-08-10-self-discipline-gates.md)이 게이트 둘을 에이전트 자신에게 겨눴고, **가장 큰 공백을 열어 둔 채 닫았다**:
+    12	
+    13	> **"혼자 정하고 보고서에 한 줄 적는" 부류는 아직 안 막혔다.** 그건 도구 호출이 아니라 문장이라 어떤 PreToolUse 훅도 못 본다.
+    14	
+    15	그 부류가 무엇인지는 실측으로 남아 있다. ADR-0006 이행 세션에서 Stop 훅이 세 번 막았고 세 번 다 따랐는데, 게이트가 없는 자리에서는 전부 혼자 정했다 — 기존 설정의 동작을 바꾸면서 묻지 않았고, 기록된 사용자 선호와 어긋난 상태를 발견하고 넘겼고, 다른 훅이 26번 막는 동안 선택지를 주지 않고 보고만 했다.
+    16	
+    17	**승인 모드는 이걸 대체하지 못한다.** 승인창은 *한 일*에만 뜬다. 안 한 일(질문)은 원리적으로 안 잡힌다. 같은 세션에서 다른 훅이 26번 승인을 요구했는데 혼자 결정하는 것은 **한 번도** 막지 못했다.
+    18	
+    19	## Decision
+    20	
+    21	**Stop 훅이 이 턴의 대화 기록을 직접 읽어 판정한다.**
+    22	
+    23	```
+    24	코드/결정 변경 플래그가 서 있고
+    25	  AND 이 턴에 AskUserQuestion 이 0회이고
+    26	  AND 발화에 결정 표지 어휘를 담은 서술형 문장이 있으면
+    27	→ 턴 종료 차단 + 걸린 문장을 목록으로 출력
+    28	```
+    29	
+    30	**표지 어휘**(사용자가 지정): 공시하고 · 범위 밖 · 별도로 · 그대로 뒀 · 제 판단으로 · 가정하고 · 수용된 한계 · 트레이드오프 · 안 했습니다.
+    31	
+    32	이 조합이 강한 이유는 저 말들이 **"물어봤어야 할 것을 혼자 정했다"를 자백할 때만** 나온다는 것이다. 자백은 있는데 질문이 0회면 그 자체가 위반이다. 그리고 **질문 한 번이면 풀린다** — 세션이 벽돌이 되지 않는다.
+    33	
+    34	### ① 위양성이 여기서는 위음성만큼 비싸다
+    35	
+    36	이 저장소의 다른 검사기들은 전부 위양성 쪽으로 기운다(`check-layer-boundary` · `guard-hook-disable`). *"위양성은 메시지 한 번이 비용이고 위음성은 방어가 꺼진 걸 아무도 모르는 것이 비용"* 이기 때문이다.
+    37	
+    38	**이 게이트는 그 계산이 다르다.** 위양성의 비용이 메시지 한 번이 아니라 **사용자에게 가는 불필요한 질문**이고, 그게 반복되면 질문이 소음이 되고, 소음이 되면 **진짜 질문도 무시된다.** 게이트가 스스로를 무력화하는 경로다.
+    39	
+    40	그리고 위양성의 가장 큰 원천이 **자기참조**다 — 이 게이트의 훅·테스트·이 ADR 이 전부 그 어휘를 데이터로 품는다. 어휘만 보면 **이 게이트를 유지보수하는 작업 자체가 매번 걸리고**, 그러면 사람이 게이트를 끈다. 꺼진 게이트는 없는 게이트다.
+    41	
+    42	그래서 좁히는 장치 셋을 둔다:
+    43	
+    44	1. **구조적 제외** — 코드펜스 · 인라인 코드 · 인용줄 · 따옴표로 감싼 부분은 안 본다. 어휘를 인용부호로 감싸 언급하는 것은 문서·설명의 정상 형태다
+    45	2. **질문 신호 제외** — 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다
+    46	3. **서술형 종결 요구** — 단정으로 끝나야 "내가 그렇게 했다"이다
+    47	
+    48	그리고 **도구 입력을 보지 않는다(발화 텍스트만 본다).** 이 패턴이 적힌 파일을 쓰는 것 자체는 결정이 아니므로 자기참조 폭발이 **원천에서** 없어진다. 사고 블록도 안 본다(저울질은 통보가 아니다). 서브에이전트 발화도 뺀다(서브에이전트는 사용자에게 물을 수 없다).
+    49	
+    50	**대가는 위음성 증가다.** 표현을 조금 바꾸면 빠져나간다. 그럼에도 값을 하는 이유는 겨누는 것이 적대적 회피가 아니라 **무의식적 습관**이기 때문이다 — `guard-hook-disable` 이 "막힌 에이전트의 직진 충동"을 겨눈 것과 같은 판단 구조다.
+    51	
+    52	### ② fail-open 은 한 곳뿐이고, 소리를 낸다
+    53	
+    54	이 저장소의 원칙은 *"검사기의 유일한 치명 결함은 위음성"* 이고 애매하면 전부 fail-closed 다. **이 게이트에 예외를 하나 둔다.**
+    55	
+    56	대화 기록의 형식은 **하네스가 소유하지 않는다** — 도구 제공자가 정하고 예고 없이 바뀐다. 형식이 바뀌었다고 차단하면 **그 세션 안에 고칠 방법이 없다**: 기록을 고칠 수는 없으므로 어떤 행동으로도 게이트가 안 풀리고, 세션이 통째로 벽돌이 된다. 다른 게이트는 전부 "무언가를 하면 풀리는" 구조라 이 문제가 없다.
+    57	
+    58	**조건은 경고를 삼키지 않는 것이다.** 판독에 실패하면 사유가 마지막 게이트 메시지에 실린다. 조용히 통과하면 게이트가 죽은 것을 아무도 모르고, 그것이 이 저장소가 부르는 조용한 실패다. 그 침묵 자체를 변이 5건으로 붙들었다.
+    59	
+    60	### ③ 사용자 확정 3건 (2026-08-10)
+    61	
+    62	| 물은 것 | 확정 | 근거 |
+    63	|---|---|---|
+    64	| 탈출구를 둘까 | **둔다** (`ECC_DISABLED_HOOKS=stop:decision`) | 위양성이 구조적으로 나므로 사용자가 즉시 뺄 수 있어야 한다. 끄는 대입 자체는 `guard-hook-disable` 이 한 번 세운다 |
+    65	| 어느 턴에서 도나 | **코드 + 결정 문서 + 설계 산출물** | 표지 어휘가 가장 자주 나오는 자리가 결정 문서를 쓰는 턴이다 |
+    66	| 패턴을 얼마나 좁히나 | **좁힌 서술형 + 구조적 제외** | 자기참조 폭발을 막는 유일한 길 |
+    67	
+    68	**탈출구 유무가 `guard-hook-disable` 과 갈리는 이유**를 적어 둔다. 그쪽은 *"탈출구가 있으면 그것으로 나머지를 전부 끌 수 있어서"* 두지 않았다. 이쪽은 그렇지 않다 — 이 게이트를 꺼도 나머지 게이트는 그대로 살아 있고, 반대로 위양성으로 막혔을 때 사용자가 뺄 수단이 없으면 세 번 헛돌아야 한다. **비대칭이 다르면 답도 다르다.**
+    69	
+    70	### ④ 순서 — 다른 게이트보다 앞이다
+    71	
+    72	질문의 답이 코드를 바꿀 수 있으므로 리뷰·설명·감사에 노력을 쓰기 전에 묻는 편이 싸다.
+    73	
+    74	`stop:push` 의 "탐지가 조기 종료보다 앞"과는 성격이 다르다. 그건 **정확성** 문제였다(뒤에 두면 게이트가 영영 안 돈다). 이건 **비용** 문제다 — 대화 기록은 이미 다 쓰였고 게이트 순서가 그 내용을 바꾸지 않는다. 그래도 계약으로 고정하고, 지우는 변이가 아니라 **옮기는 변이**로 잰다(지우면 "게이트 없음"을 재는 것이지 "순서가 틀림"을 재는 것이 아니다).
+    75	
+    76	## Alternatives Considered
+    77	
+    78	### A. 단순 어휘 목록, 위양성 쪽으로 기운다 (집안 표준)
+    79	- **Pros**: 단순하다. 위음성이 거의 없다. 형제 검사기들과 판단이 일관된다
+    80	- **Cons**: 자기참조가 폭발한다 — 이 게이트를 손대는 모든 작업, 이 ADR 을 쓰는 턴, 회수 정책 ADR 을 쓰는 턴이 전부 걸린다
+    81	- **Why not**: 그 상태의 종착지는 **사람이 게이트를 끄는 것**이다. 다른 검사기는 CI 에서 한 번 걸리고 끝이지만 이건 대화마다 걸린다
+    82	
+    83	### B. 산문 질문도 질문으로 센다
+    84	- **Pros**: "이대로 갈까요?"로 끝나는 정직한 보고가 안 막힌다
+    85	- **Cons**: 게이트가 물음표 하나로 뚫린다. 그리고 막으려는 것이 정확히 **"보고서에 한 줄 적고 넘어가기"** 인데, 그 한 줄 끝에 물음표를 붙이는 것은 같은 행동이다
+    86	- **Why not**: 사용자가 도구 호출을 기준으로 못박았다 — *"보고서에 적는 것은 묻는 것이 아니다"*
+    87	
+    88	### C. 탈출구를 두지 않는다 (`guard-hook-disable` 방식)
+    89	- **Pros**: 막힌 에이전트가 못 끈다
+    90	- **Cons**: 사용자도 못 끈다. 구조적 위양성이 나는 게이트에서 이건 비싸다
+    91	- **Why not**: ③의 비대칭 논거. 이 게이트를 꺼도 나머지는 산다
+    92	
+    93	### D. 플래그와 무관하게 항상 검사한다
+    94	- **Pros**: 순수 질의응답에서 혼자 정하는 것도 잡는다
+    95	- **Cons**: 아무것도 안 바꾼 턴까지 막아 대화를 방해한다
+    96	- **Why not**: 사용자 기각
+    97	
+    98	## Consequences
+    99	
+   100	### Positive
+   101	- **"혼자 정하고 한 줄 적는" 부류가 처음으로 기계에 걸린다.** ADR-0011 이 남긴 가장 큰 공백이 닫힌다
+   102	- 걸린 문장이 메시지에 실리므로 **무엇을 물어야 하는지**가 화면에 뜬다. 안 실으면 "일단 아무거나 물어서 풀자"가 되어 게이트가 의식(儀式)이 된다
+   103	- 질문 한 번이면 풀린다 — 비용이 낮아 게이트를 끌 동기가 약하다
+   104	
+   105	### Negative
+   106	- **위음성이 있다.** 표현을 바꾸면 빠져나간다. 좁힌 대가이고, 겨누는 것이 적대적 회피가 아니라 습관이라 감수한다
+   107	- **위양성이 남는다.** 서술형으로 끝나면서 이 어휘를 쓰는 정당한 문장은 걸린다. 인용부호로 감싸면 빠지고, 그 안내를 차단 메시지에 넣었다
+   108	- **fail-open 이 하나 있다.** 대화 기록 형식이 바뀌면 게이트가 사라진다 — 통과하되 사유를 마지막 메시지에 싣는다
+   109	- 대화 기록 형식에 **의존이 하나 생겼다.** 하네스가 소유하지 않는 형식이고, 바뀌면 위 fail-open 으로 떨어진다
+   110	
+   111	### 공시된 한계 — 지식 게이트를 끄면 결정 문서 턴이 빠진다
+   112	`HARNESS_KNOWLEDGE_GATE` 를 리터럴로 비운 환경에서는 **결정 문서만** 고친 턴이 조기 종료에 걸려 결정 게이트까지 도달하지 못한다. 기본값이 켜짐이라 기본 구성에서는 정상 발동한다.
+   113	
+   114	**고치지 않는다(사용자 확정).** 조기 종료가 지식 플래그를 게이트 켜짐일 때만 세는 것은 *"게이트를 껐는데 예전에 남은 플래그가 읽기 전용 턴의 조기 종료를 막는"* 문제를 막으려고 넣은 것이다. 결정 게이트를 위해 그걸 되돌리면 알려진 버그 부류가 되살아난다. **한계 자체를 케이스(d30b)로 붙들었다** — 이 동작이 바뀌면 그 케이스가 빨개진다.
+   115	
+   116	## 기계적 장치
+   117	
+   118	`tests/decision-gate.test.sh` **48건** + CI 스텝. 차단 9 · 위양성 19 · 발동조건 6 · 판독불가 5 · 탈출구 3 · 벽돌방지 2 · 순서 1 · 턴경계 3.
+   119	
+   120	**rc 만으로 판정하지 않는다.** 결정 게이트가 통과해도 뒤의 감사 게이트가 같은 rc=2 를 내므로, 어느 게이트가 말했는지는 **메시지로만** 갈린다. 그리고 통과를 기대하는 케이스는 감사 게이트가 **실제로 말했는지**를 함께 요구한다 — 안 하면 훅이 앞에서 죽어도 초록이 난다.
+   121	
+   122	`_workspace/mutate-decision-gate.sh` **변이 24건 전건 적색.** 방어 제거(위음성) · 좁히는 장치 제거(위양성) · 턴 경계 흐리기 · fail-open 침묵화 · 게이트 이동.
+   123	
+   124	### 변이가 잡은 것 둘 — 통과 개수로는 안 보였다
+   125	
+   126	1. **질문 신호 판정이 죽어 있었다.** 위양성 케이스들의 종결이 "…까요/…세요"라 **서술형 요구에서 이미 걸러져 질문 판정에 도달조차 하지 않았다.** 판정 *순서*가 케이스를 무력화한 것이라 어휘를 아무리 늘려도 안 잡힌다. 서술형으로 끝나면서 묻는 문장을 케이스로 넣어 살렸다.
+   127	2. **턴 경계의 두 판정이 서로를 가렸다.** 실제 기록은 상단 `toolUseResult` 와 `tool_result` 블록을 **항상 함께** 갖고 있다(실측 69/69). 그래서 한쪽을 지워도 다른 쪽이 막아 준다. 표식이 하나뿐인 픽스처를 만들어 각각을 독립적으로 지키게 했다.
+   128	
+   129	앞은 **판정 순서**가, 뒤는 **데이터의 중복**이 방어를 가린 사례다. 둘 다 "케이스가 통과한다"가 "그 방어가 지켜진다"를 뜻하지 않는 부류이고, 변이 없이는 원리적으로 안 보인다.
+   130	
+   131	## 관련
+   132	- [ADR-0011](2026-08-10-self-discipline-gates.md) — 이 게이트를 후속으로 남긴 곳
+   133	- [ADR-0008](2026-08-06-knowledge-gate-default-on.md) — 게이트 기본값과 판독 계약
+   134	- [ADR-0007](2026-08-06-gate-scope-by-file-identity.md) — 어느 편집이 게이트 대상인가
+
+exec
+/bin/zsh -lc 'nl -ba tests/decision-gate.test.sh' in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+     1	#!/usr/bin/env bash
+     2	# decision-gate.test.sh — Stop 훅의 **결정 게이트**(stop:decision) 회귀 방어.
+     3	#
+     4	#   "코드/결정이 바뀐 턴에 결정 표지 어휘가 있는데 AskUserQuestion 이 0회면 막는다"
+     5	#
+     6	# 이 게이트만 **에이전트 자신의 행동**을 본다(나머지 넷은 산출물을 본다). 그래서 실패
+     7	# 방향이 둘 다 비싸다:
+     8	#   위음성 — 혼자 정하고 한 줄 적는 것이 그대로 통과한다. 이 저장소가 반복해서 겪은 부류다
+     9	#   위양성 — 질문이 소음이 되고, 소음이 되면 진짜 질문도 무시된다. 게이트가 자기를 죽인다
+    10	# 그래서 **양쪽을 다 케이스로 붙든다.** 위양성 케이스가 이 파일의 절반인 이유다 —
+    11	# 나중에 누가 패턴을 넓히면 그 케이스들이 빨개져서 대가를 눈에 보이게 한다.
+    12	#
+    13	# **판정 규칙의 사본을 두지 않는다.** 어떤 어휘가 표지인지·무엇이 서술형인지를 여기서
+    14	# 다시 정의하면 그 사본이 언젠가 원본과 어긋나고, 그때 테스트는 틀린 기준으로 초록을 낸다.
+    15	# 대신 훅 **자신을 돌려** 차단 여부와 메시지로 잰다.
+    16	#
+    17	# **rc 만으로 판정하지 않는다.** 결정 게이트가 통과해도 뒤의 감사 게이트가 rc=2 를 내므로
+    18	# rc 는 두 경우에 **같다.** 어느 게이트가 말했는지는 메시지로만 갈린다(위음성 카탈로그 17번:
+    19	# 관례 코드에 도달하는 경로가 여럿이면 rc 일치가 의도한 경로를 뜻하지 않는다).
+    20	#
+    21	# 왜 set -e 가 없나: 비영 rc 를 assert 하는 테스트다.
+    22	# 셸 이식성: macOS 기본 bash 는 3.2 다. mapfile·연관배열·${var,,} 금지.
+    23	
+    24	set -uo pipefail
+    25	
+    26	TEST_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+    27	REPO_ROOT="$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)"
+    28	HOOKS="$REPO_ROOT/template/.claude/hooks"
+    29	
+    30	command -v python3 >/dev/null 2>&1 || { echo "✗ python3 이 필요합니다 (스캐너·픽스처 의존)" >&2; exit 1; }
+    31	for f in verify-before-stop.sh _common.sh; do
+    32	  [ -f "$HOOKS/$f" ] || { echo "✗ 훅을 찾지 못했습니다: $f" >&2; exit 1; }
+    33	done
+    34	
+    35	TMPROOT="$(mktemp -d)" || exit 1
+    36	if [ -z "$TMPROOT" ] || [ ! -d "$TMPROOT" ]; then
+    37	  echo "✗ 임시 디렉토리를 만들지 못했습니다" >&2; exit 1
+    38	fi
+    39	TMPROOT="$(CDPATH='' cd -- "$TMPROOT" && pwd -P)"
+    40	# chmod 000 픽스처가 있으므로 되돌린 뒤 지운다 — 안 그러면 정리가 실패한다.
+    41	trap 'chmod -R u+rwX "$TMPROOT" 2>/dev/null; rm -rf "$TMPROOT"' EXIT
+    42	
+    43	ran=0; pass=0; fail=0
+    44	RC=999; ERR=''; OUT=''; DID_RUN=0
+    45	PROJ_N=0
+    46	
+    47	# 판정 토큰. 훅 메시지의 **고유 문구**를 쓴다 — 어느 게이트가 말했는지는 이걸로만 갈린다.
+    48	TOK_DECISION='혼자 정한 것이 있는데'
+    49	TOK_NOTE='결정 게이트 생략'
+    50	TOK_AUDIT='completion-auditor 미실행'
+    51	TOK_BRICK='세션 벽돌 방지'
+    52	
+    53	report() {
+    54	  ran=$((ran + 1))
+    55	  if [ -z "$2" ]; then pass=$((pass + 1)); printf '  ✓ %s\n' "$1"
+    56	  else fail=$((fail + 1)); printf '  ✗ %s — %s\n' "$1" "$2"; fi
+    57	}
+    58	
+    59	contains() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
+    60	
+    61	# --- 픽스처 --------------------------------------------------------------
+    62	
+    63	# new_project <지식게이트값> — 케이스마다 독립 프로젝트. 경로를 stdout 에.
+    64	# 지식게이트값: 리터럴로 비면 꺼짐, 그 외 문자열이면 켜짐.
+    65	# 타입체크는 항상 리터럴로 비운다 — 이 파일이 재는 것은 결정 게이트뿐이고, 타입체크가
+    66	# 먼저 막으면 그 케이스는 결정 게이트에 **도달조차 못 한 채** 기대값이 우연히 맞는다.
+    67	new_project() {
+    68	  PROJ_N=$((PROJ_N + 1))
+    69	  local p="$TMPROOT/proj$PROJ_N"
+    70	  mkdir -p "$p/.claude/hooks" "$p/.claude/harness" || return 1
+    71	  cp "$HOOKS/_common.sh" "$HOOKS/verify-before-stop.sh" "$p/.claude/hooks/" || return 1
+    72	  printf 'HARNESS_TYPECHECK_CMD=""\nHARNESS_KNOWLEDGE_GATE="%s"\n' "$1" \
+    73	    > "$p/.claude/harness/harness.env" || return 1
+    74	  printf '%s\n' "$p"
+    75	}
+    76	
+    77	# mk_transcript <출력경로> <항목...> — 대화 기록 JSONL 을 만든다.
+    78	# 항목 문법:  text:<문장> · side:<문장>(서브에이전트) · think:<문장> · ask ·
+    79	#             tool:<내용>(도구 입력) · prompt(새 사용자 프롬프트=턴 경계) · toolresult:<내용>
+    80	# 첫 줄은 항상 사용자 프롬프트다 — 그게 없는 경우는 판독 불가 케이스에서 따로 만든다.
+    81	mk_transcript() {
+    82	  python3 - "$@" <<'PY'
+    83	import json, sys
+    84	
+    85	out = sys.argv[1]
+    86	
+    87	
+    88	def prompt():
+    89	    return {"type": "user", "isSidechain": False,
+    90	            "message": {"role": "user", "content": "작업해줘"}}
+    91	
+    92	
+    93	rows = [prompt()]
+    94	for spec in sys.argv[2:]:
+    95	    kind, _, val = spec.partition(":")
+    96	    if kind == "prompt":
+    97	        rows.append(prompt())
+    98	        continue
+    99	    if kind == "toolresult":
+   100	        rows.append({"type": "user", "isSidechain": False,
+   101	                     "toolUseResult": {"stdout": val},
+   102	                     "message": {"role": "user",
+   103	                                 "content": [{"type": "tool_result", "content": val}]}})
+   104	        continue
+   105	    # 실제 기록에서는 두 표식이 **항상 함께** 온다(실측 69/69). 그래서 둘 다 보는 판정은
+   106	    # 서로를 가려, 한쪽을 지워도 아무 케이스가 안 빨개진다 — 변이 측정에서 실제로 드러났다.
+   107	    # 각각을 **독립적으로** 지키려면 표식이 하나뿐인 기록이 필요하다. 형식이 바뀌어 한쪽만
+   108	    # 남는 날, 남은 한쪽이 실제로 일하는지를 재는 것이 이 두 항목이다.
+   109	    if kind == "toolresult_top":       # 상단 toolUseResult 만 (content 는 평문)
+   110	        rows.append({"type": "user", "isSidechain": False,
+   111	                     "toolUseResult": {"stdout": val},
+   112	                     "message": {"role": "user", "content": val}})
+   113	        continue
+   114	    if kind == "toolresult_blk":       # tool_result 블록만 (상단 키 없음)
+   115	        rows.append({"type": "user", "isSidechain": False,
+   116	                     "message": {"role": "user",
+   117	                                 "content": [{"type": "tool_result", "content": val}]}})
+   118	        continue
+   119	    side = False
+   120	    if kind == "side":
+   121	        side, kind = True, "text"
+   122	    if kind == "text":
+   123	        block = {"type": "text", "text": val}
+   124	    elif kind == "think":
+   125	        block = {"type": "thinking", "thinking": val}
+   126	    elif kind == "ask":
+   127	        block = {"type": "tool_use", "name": "AskUserQuestion", "input": {}}
+   128	    elif kind == "tool":
+   129	        block = {"type": "tool_use", "name": "Write", "input": {"content": val}}
+   130	    else:
+   131	        raise SystemExit("알 수 없는 항목: " + spec)
+   132	    rows.append({"type": "assistant", "isSidechain": side,
+   133	                 "message": {"content": [block]}})
+   134	
+   135	with open(out, "w", encoding="utf-8") as fh:
+   136	    for row in rows:
+   137	        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+   138	PY
+   139	}
+   140	
+   141	# run_stop <프로젝트> <transcript경로|빈문자열> [env 인자...]
+   142	# 빈 문자열이면 payload 에서 transcript_path 키를 **아예 뺀다**(키 부재 케이스).
+   143	run_stop() {
+   144	  local p="$1" tp="$2"
+   145	  shift 2
+   146	  local errf="$TMPROOT/err.$$" outf="$TMPROOT/out.$$" payf="$TMPROOT/pay.$$"
+   147	  RC=999; ERR=''; OUT=''; DID_RUN=1
+   148	  # payload 를 **파일로** 넘긴다. 파이프로 주면 훅이 stdin 을 읽기 전에 종료하는 경로
+   149	  # (탈출구로 꺼진 경우 등)에서 생산자 python 이 SIGPIPE 를 맞아 BrokenPipeError 를
+   150	  # 출력에 흘린다 — 진짜 실패와 구별이 안 되는 잡음이다.
+   151	  python3 -c '
+   152	import json, sys
+   153	d = {"stop_hook_active": False}
+   154	if sys.argv[1]:
+   155	    d["transcript_path"] = sys.argv[1]
+   156	with open(sys.argv[2], "w", encoding="utf-8") as fh:
+   157	    fh.write(json.dumps(d))' "$tp" "$payf"
+   158	  env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS ${@+"$@"} CLAUDE_PROJECT_DIR="$p" \
+   159	      bash "$p/.claude/hooks/verify-before-stop.sh" <"$payf" >"$outf" 2>"$errf"
+   160	  RC=$?
+   161	  rm -f "$payf"
+   162	  ERR="$(cat "$errf" 2>/dev/null)"
+   163	  OUT="$(cat "$outf" 2>/dev/null)"
+   164	  rm -f "$errf" "$outf"
+   165	}
+   166	
+   167	# setup_flags <프로젝트> <플래그 이름...>  (audit|explain|knowledge|dualreview)
+   168	setup_flags() {
+   169	  local p="$1"; shift
+   170	  rm -f "$p/.claude/.needs-audit" "$p/.claude/.needs-explain" \
+   171	        "$p/.claude/.needs-knowledge" "$p/.claude/.needs-dualreview" \
+   172	        "$p/.claude/.stop-block-count" "$p/.claude/.stop-block-fp" 2>/dev/null
+   173	  local f
+   174	  for f in "$@"; do printf 'src/changed.ts\n' > "$p/.claude/.needs-$f"; done
+   175	}
+   176	
+   177	# --- 공통 케이스 형태 -----------------------------------------------------
+   178	#
+   179	# blocked = 결정 게이트가 **막아야** 한다
+   180	# silent  = 결정 게이트는 **아무 말도 하지 않아야** 한다 (뒤 게이트가 막는 것은 정상)
+   181	#
+   182	# silent 판정에 rc=0 을 쓰지 않는 이유: 플래그가 서 있으면 감사 게이트가 반드시 rc=2 를
+   183	# 낸다. 그래서 결정 게이트의 침묵만 요구하고, 동시에 **감사 게이트가 실제로 말했는지**를
+   184	# 함께 요구한다 — 안 그러면 훅이 앞에서 죽어 아무것도 안 재고도 통과한다(15번 부류).
+   185	
+   186	blocked_case() {   # $1=이름 $2=기대문장조각("" 이면 생략) $3..=기록 항목
+   187	  local name="$1" want_hit="$2" why=''
+   188	  shift 2
+   189	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   190	  local tp="$p/transcript.jsonl"
+   191	  mk_transcript "$tp" "$@" || { report "$name" '픽스처 실패: 기록 생성'; return 0; }
+   192	  [ -s "$tp" ] || { report "$name" '픽스처 실패: 기록이 비어 있다'; return 0; }
+   193	  setup_flags "$p" audit
+   194	  run_stop "$p" "$tp"
+   195	  if [ "$DID_RUN" -ne 1 ];                then why='훅을 실행하지 않았다'
+   196	  elif [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2) / $(printf '%s' "$ERR" | head -c 100)"
+   197	  elif ! contains "$ERR" "$TOK_DECISION"; then why="결정 게이트가 아닌 것이 막았다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   198	  elif [ -n "$want_hit" ] && ! contains "$ERR" "$want_hit"; then
+   199	    why="걸린 문장이 메시지에 없다 (기대 조각: $want_hit)"
+   200	  fi
+   201	  report "$name" "$why"
+   202	}
+   203	
+   204	silent_case() {   # $1=이름 $2..=기록 항목
+   205	  local name="$1" why=''
+   206	  shift
+   207	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   208	  local tp="$p/transcript.jsonl"
+   209	  mk_transcript "$tp" "$@" || { report "$name" '픽스처 실패: 기록 생성'; return 0; }
+   210	  [ -s "$tp" ] || { report "$name" '픽스처 실패: 기록이 비어 있다'; return 0; }
+   211	  setup_flags "$p" audit
+   212	  run_stop "$p" "$tp"
+   213	  if [ "$DID_RUN" -ne 1 ];              then why='훅을 실행하지 않았다'
+   214	  elif contains "$ERR" "$TOK_DECISION"; then why='위양성 — 결정 게이트가 막았다'
+   215	  elif [ "$RC" -ne 2 ];                 then why="rc=$RC (기대 2 — 감사 게이트가 막아야 한다)"
+   216	  elif ! contains "$ERR" "$TOK_AUDIT";  then why="감사 게이트에 도달하지 못했다 = 아무것도 안 쟀다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   217	  elif contains "$ERR" "$TOK_NOTE";     then why='판독 불가로 빠졌다 — 스캔이 실제로 돌지 않았다'
+   218	  fi
+   219	  report "$name" "$why"
+   220	}
+   221	
+   222	# ── 1. 막아야 하는 것 ─────────────────────────────────────────────────
+   223	# 문장 형태는 전부 지난 세션에서 실제로 쓴 것이다(ADR-0011 Context 절).
+   224	d01() { blocked_case '표지 + 서술형 + 질문 0회 를 막는다' '범위 밖' \
+   225	          'text:이건 이번 PR 범위 밖이라 그대로 뒀습니다.'; }
+   226	d02() { blocked_case '제 판단으로 형태를 막는다' '제 판단으로' \
+   227	          'text:제 판단으로 끄지 않고 그대로 진행했습니다.'; }
+   228	d03() { blocked_case '공시 형태를 막는다' '공시' \
+   229	          'text:남은 것은 공시하고 넘어갑니다.'; }
+   230	d04() { blocked_case '트레이드오프 단정을 막는다' '트레이드오프' \
+   231	          'text:이건 버그가 아니라 의도된 트레이드오프다.'; }
+   232	d05() { blocked_case '수용된 한계 형태를 막는다' '수용된 한계' \
+   233	          'text:이 좁은 창은 수용된 한계로 남겼음.'; }
+   234	d06() { blocked_case '가정하고 형태를 막는다' '가정하고' \
+   235	          'text:기본값이 켜짐이라고 가정하고 구현했습니다.'; }
+   236	d07() { blocked_case '안 했습니다 형태를 막는다' '안 했습니다' \
+   237	          'text:그 부분은 시간이 없어 안 했습니다.'; }
+   238	# **걸린 문장을 메시지에 싣는 것이 계약이다.** 안 실으면 무엇을 물어야 할지 알 수 없어
+   239	# 에이전트가 "일단 아무거나 물어서 풀자"로 간다 — 게이트가 의식(儀式)이 되는 경로다.
+   240	d08() { blocked_case '걸린 문장 여러 개를 함께 싣는다' '별도로' \
+   241	          'text:이건 범위 밖이라 뺐습니다.' 'text:나머지는 별도로 처리했습니다.'; }
+   242	d09() { blocked_case '표지가 마지막 발화에만 있어도 막는다' '그대로 뒀' \
+   243	          'text:작업을 시작합니다.' 'text:충돌 나는 부분은 그대로 뒀습니다.'; }
+   244	
+   245	# ── 2. 위양성 — 막으면 안 되는 것 ─────────────────────────────────────
+   246	# 이 절이 파일의 절반인 이유: 어휘만 보면 이 게이트를 **유지보수하는 작업 자체가** 매번
+   247	# 걸린다(훅·테스트·결정 문서가 그 어휘를 데이터로 품는다). 그러면 사람이 게이트를 끄고,
+   248	# 꺼진 게이트는 없는 게이트다. 패턴을 넓히려는 다음 사람은 여기서 대가를 본다.
+   249	d10() { silent_case '질문을 한 번 했으면 풀린다' \
+   250	          'text:이건 범위 밖이라 그대로 뒀습니다.' 'ask'; }
+   251	d11() { silent_case '질문이 표지보다 앞에 와도 풀린다' \
+   252	          'ask' 'text:여쭌 대로 범위 밖으로 뒀습니다.'; }
+   253	d12() { silent_case '백틱으로 인용한 어휘는 결정이 아니다' \
+   254	          'text:결정 표지 어휘는 `범위 밖` 과 `그대로 뒀` 이다.'; }
+   255	d13() { silent_case '따옴표로 인용한 어휘는 결정이 아니다' \
+   256	          'text:사용자가 "범위 밖"이라고 하셨으므로 그렇게 했습니다.'; }
+   257	d14() { silent_case '인용줄로 시작하는 줄은 스캔하지 않는다' \
+   258	          'text:> 이건 범위 밖이라 그대로 뒀습니다.'; }
+   259	d15() { silent_case '코드펜스 안은 스캔하지 않는다' \
+   260	          'text:예시:
+   261	```
+   262	이건 범위 밖이라 그대로 뒀습니다.
+   263	```
+   264	위가 걸리는 형태다.'; }
+   265	# 펜스가 안 닫힌 채 기록이 잘렸으면 **남은 전부를 코드로 친다.** 반대로 두면 잘린 기록의
+   266	# 코드 블록이 산문으로 새어 위양성이 터진다.
+   267	d16() { silent_case '닫히지 않은 코드펜스 뒤는 전부 코드로 친다' \
+   268	          'text:예시:
+   269	```
+   270	이건 범위 밖이라 그대로 뒀습니다.'; }
+   271	d17() { silent_case '질문형 문장은 표지로 세지 않는다' \
+   272	          'text:이건 범위 밖으로 둘까요?'; }
+   273	d18() { silent_case '선택을 요청하는 문장도 세지 않는다' \
+   274	          'text:범위 밖으로 뺄지 어느 쪽이 좋은지 말씀해 주세요.'; }
+   275	# **묻겠다는 말이 서술형으로 끝나는 경우가 질문 신호 판정의 진짜 시험대다.** d17·d18 은
+   276	# 종결이 "…까요/…세요"라 서술형 요구에서 이미 걸러져 질문 판정에 도달조차 하지 않는다 —
+   277	# 그래서 질문 판정을 지워도 아무것도 안 빨개졌다(변이 측정에서 드러났다).
+   278	d18b() { silent_case '묻겠다는 말이 서술형으로 끝나도 세지 않는다' \
+   279	          'text:이게 범위 밖인지 여쭙겠습니다.'; }
+   280	d18c() { silent_case '물어보겠다는 말도 세지 않는다' \
+   281	          'text:이걸 별도로 뺄지 사용자에게 물어보겠습니다.'; }
+   282	d19() { silent_case 'thinking 블록은 스캔하지 않는다' \
+   283	          'think:이건 범위 밖이라 그대로 뒀습니다.'; }
+   284	d20() { silent_case '서브에이전트 발화는 스캔하지 않는다' \
+   285	          'side:이건 범위 밖이라 그대로 뒀습니다.'; }
+   286	# **도구 입력을 안 보는 것이 자기참조 폭발을 막는 장치다.** 이 패턴이 적힌 파일을
+   287	# Write/Edit 로 쓰는 것 자체는 결정이 아니다.
+   288	d21() { silent_case '도구 입력(파일 내용)은 스캔하지 않는다' \
+   289	          'tool:이건 범위 밖이라 그대로 뒀습니다.'; }
+   290	d22() { silent_case '서술형이 아니면(명사 종결) 세지 않는다' \
+   291	          'text:- 범위 밖'; }
+   292	d23() { silent_case '표지가 없으면 아무리 길어도 안 잡는다' \
+   293	          'text:구현을 마쳤고 테스트 12건이 전부 통과했습니다.'; }
+   294	# 턴 경계. 지난 턴의 자백까지 세면 이미 해소된 것으로 영원히 막힌다.
+   295	d24() { silent_case '지난 턴의 문장은 보지 않는다' \
+   296	          'text:이건 범위 밖이라 그대로 뒀습니다.' 'prompt' 'text:이번에는 전부 처리했습니다.'; }
+   297	# 도구 결과는 사용자 발화가 아니다. 이걸 턴 경계로 세면 창이 도구 호출 하나로 좁아져
+   298	# 게이트가 사실상 사라진다. 두 방향으로 잰다 — 놓치지 않는가(d25b)와 오탐하지 않는가(d25).
+   299	d25() { silent_case '도구 결과 뒤라도 표지가 없으면 안 막는다' \
+   300	          'text:작업을 시작합니다.' 'toolresult:ok' 'text:테스트가 전부 통과했습니다.'; }
+   301	d25b() { blocked_case '도구 결과 뒤의 자백도 같은 턴으로 본다' '범위 밖' \
+   302	          'text:작업을 시작합니다.' 'toolresult:ok' 'text:나머지는 범위 밖이라 뒀습니다.'; }
+   303	# **자백이 도구 결과보다 앞에 있는 경우가 판정의 진짜 시험대다.** 도구 결과를 턴 경계로
+   304	# 오인하면 그 앞의 발화가 통째로 창 밖으로 밀려 사라지는데, d25b 는 자백이 뒤에 있어서
+   305	# 그 오인을 못 잡는다(경계가 밀려도 뒤 문장은 여전히 창 안이다).
+   306	d25c() { blocked_case '도구 결과 앞의 자백도 놓치지 않는다' '범위 밖' \
+   307	          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult:ok' 'text:작업을 마쳤습니다.'; }
+   308	# 표식이 하나뿐인 도구 결과. 두 판정(상단 키 / 블록)을 **각각** 지킨다 — 실제 기록은 둘 다
+   309	# 갖고 있어서 서로를 가리고, 그러면 한쪽을 지워도 아무 케이스가 안 빨개진다.
+   310	d25d() { blocked_case '상단 키만 있는 도구 결과도 턴 경계가 아니다' '범위 밖' \
+   311	          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult_top:ok' 'text:작업을 마쳤습니다.'; }
+   312	d25e() { blocked_case '블록만 있는 도구 결과도 턴 경계가 아니다' '범위 밖' \
+   313	          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult_blk:ok' 'text:작업을 마쳤습니다.'; }
+   314	
+   315	# ── 3. 발동 조건 — 어느 플래그에서 도나 ──────────────────────────────
+   316	# 사용자 확정(2026-08-10): 코드뿐 아니라 **결정 문서·설계 산출물** 턴에서도 돈다.
+   317	# 표지 어휘가 가장 자주 나오는 자리가 결정 문서를 쓰는 턴이기 때문이다.
+   318	flag_case() {   # $1=이름 $2=지식게이트값 $3=플래그(none 가능) $4=기대(block|exit0)
+   319	  local name="$1" kg="$2" flag="$3" want="$4" why=''
+   320	  local p; p="$(new_project "$kg")" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   321	  local tp="$p/transcript.jsonl"
+   322	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.' || { report "$name" '픽스처 실패'; return 0; }
+   323	  if [ "$flag" = 'none' ]; then setup_flags "$p"; else setup_flags "$p" "$flag"; fi
+   324	  run_stop "$p" "$tp"
+   325	  case "$want" in
+   326	    block)
+   327	      if   [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2)"
+   328	      elif ! contains "$ERR" "$TOK_DECISION"; then why="결정 게이트가 아닌 것이 막았다: $(printf '%s' "$ERR" | head -1 | head -c 80)"
+   329	      fi ;;
+   330	    exit0)
+   331	      if   [ "$RC" -ne 0 ];                 then why="rc=$RC (기대 0 — 할 일이 없으면 조기 종료)"
+   332	      elif contains "$ERR" "$TOK_DECISION"; then why='할 일이 없는 턴인데 결정 게이트가 막았다'
+   333	      fi ;;
+   334	    *) why="알 수 없는 기대값: $want" ;;
+   335	  esac
+   336	  report "$name" "$why"
+   337	}
+   338	d26() { flag_case '코드 변경 턴에서 돈다'        ''   audit      block; }
+   339	d27() { flag_case '설계 산출물 턴에서 돈다'      ''   dualreview block; }
+   340	d28() { flag_case '결정 문서 턴에서 돈다'        'on' knowledge  block; }
+   341	d29() { flag_case '변경설명 턴에서 돈다'         ''   explain    block; }
+   342	# **아무것도 안 바꾼 턴은 막지 않는다.** 순수 질의응답에서 어휘를 썼다고 막으면 게이트가
+   343	# 대화를 방해한다(사용자 확정: "항상 검사" 보기 기각).
+   344	d30() { flag_case '플래그가 하나도 없으면 돌지 않는다' '' none exit0; }
+   345	# 공시된 한계를 케이스로 붙든다: 지식 게이트를 끈 환경에서 **결정 문서만** 고친 턴은
+   346	# 조기 종료에 걸려 결정 게이트까지 못 간다. 조기 종료를 고치면 "게이트를 껐는데 남은
+   347	# 플래그가 읽기 전용 턴을 막는" 알려진 버그가 되살아난다. 기본값이 켜짐이라 기본 구성에서는
+   348	# d28 처럼 정상 발동한다. **이 한계가 바뀌면 이 케이스가 빨개져서 알려준다.**
+   349	d30b() { flag_case '지식 게이트를 끄면 결정 문서 턴은 조기 종료된다(공시된 한계)' '' knowledge exit0; }
+   350	
+   351	# ── 4. fail-open — 판독 불가는 **통과 + 경고**다 ─────────────────────
+   352	# 대화 기록 형식은 하네스가 소유하지 않는다. 형식이 바뀌었다고 차단하면 그 세션 안에
+   353	# 고칠 방법이 없어 **세션이 통째로 벽돌이 된다.** 이 게이트의 유일한 fail-open 지점이고,
+   354	# 조건은 **경고를 삼키지 않는 것**이다 — 조용히 통과하면 게이트가 죽은 걸 아무도 모른다.
+   355	openq_case() {   # $1=이름 $2=기록준비함수
+   356	  local name="$1" prep="$2" why=''
+   357	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   358	  local tp; tp="$("$prep" "$p")"
+   359	  setup_flags "$p" audit
+   360	  run_stop "$p" "$tp"
+   361	  if   [ "$DID_RUN" -ne 1 ];            then why='훅을 실행하지 않았다'
+   362	  elif contains "$ERR" "$TOK_DECISION"; then why='판독 불가인데 차단했다 (세션이 벽돌이 된다)'
+   363	  elif [ "$RC" -ne 2 ];                 then why="rc=$RC (기대 2 — 감사 게이트가 막아야 한다)"
+   364	  elif ! contains "$ERR" "$TOK_NOTE";   then why='경고를 삼켰다 — 게이트가 조용히 죽은 것을 아무도 모른다'
+   365	  fi
+   366	  report "$name" "$why"
+   367	}
+   368	prep_nokey()   { printf '%s\n' ''; }
+   369	prep_missing() { printf '%s\n' "$1/does-not-exist.jsonl"; }
+   370	prep_garbage() { local f="$1/garbage.jsonl"; printf 'not json at all\n{{{\n' > "$f"; printf '%s\n' "$f"; }
+   371	# 사용자 프롬프트가 없는 기록 = 턴 경계를 못 찾은 것. 전체를 훑으면 지난 턴까지 걸리므로
+   372	# 판독 불가로 떨어뜨린다. 표지를 일부러 넣어 "그래도 안 막는가"를 잰다.
+   373	prep_noprompt() {
+   374	  local f="$1/noprompt.jsonl"
+   375	  python3 -c '
+   376	import json, sys
+   377	with open(sys.argv[1], "w", encoding="utf-8") as fh:
+   378	    fh.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"content": [
+   379	        {"type": "text", "text": "이건 범위 밖이라 그대로 뒀습니다."}]}}, ensure_ascii=False) + "\n")
+   380	' "$f"
+   381	  printf '%s\n' "$f"
+   382	}
+   383	prep_unreadable() { local f="$1/unreadable.jsonl"; printf '{}\n' > "$f"; chmod 000 "$f" 2>/dev/null; printf '%s\n' "$f"; }
+   384	d31() { openq_case 'transcript_path 키가 없으면 통과 + 경고' prep_nokey; }
+   385	d32() { openq_case '기록 파일이 없으면 통과 + 경고'          prep_missing; }
+   386	d33() { openq_case '전부 깨진 JSON 이면 통과 + 경고'         prep_garbage; }
+   387	d34() { openq_case '턴 시작점을 못 찾으면 통과 + 경고'       prep_noprompt; }
+   388	d35() {
+   389	  # root 로 도는 CI 에서는 chmod 000 이 읽기를 막지 못한다 — 그 환경에서 이 케이스는
+   390	  # 아무것도 재지 못하므로 **조용히 통과시키지 않고** 픽스처 무효로 빨갛게 만든다.
+   391	  # 조용한 skip 은 커버리지가 사라진 것을 초록으로 위장한다.
+   392	  if [ "$(id -u)" = '0' ]; then
+   393	    report '읽기 실패하면 통과 + 경고' 'root 라 chmod 000 이 읽기를 막지 못한다 — 이 환경에서는 측정 불가'
+   394	    return 0
+   395	  fi
+   396	  openq_case '읽기 실패하면 통과 + 경고' prep_unreadable
+   397	}
+   398	
+   399	# ── 5. 탈출구 (사용자 확정: 형제 Stop 게이트와 동일하게 제공) ────────
+   400	# 이 게이트는 위양성이 **구조적으로** 난다 — 자기 어휘를 문서·설명에서 다뤄야 하기
+   401	# 때문이다. 그래서 사용자가 즉시 뺄 수 있어야 한다. 끄는 대입 자체는 guard-hook-disable
+   402	# 이 한 번 세운다(과속방지턱이지 방벽은 아니다).
+   403	escape_case() {   # $1=이름 $2..=env 인자
+   404	  local name="$1" why=''
+   405	  shift
+   406	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   407	  local tp="$p/transcript.jsonl"
+   408	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.' || { report "$name" '픽스처 실패'; return 0; }
+   409	  setup_flags "$p" audit
+   410	  run_stop "$p" "$tp" "$@"
+   411	  if   [ "$DID_RUN" -ne 1 ];            then why='훅을 실행하지 않았다'
+   412	  elif contains "$ERR" "$TOK_DECISION"; then why='껐는데도 결정 게이트가 막았다'
+   413	  fi
+   414	  report "$name" "$why"
+   415	}
+   416	d36() { escape_case '개별 비활성으로 끌 수 있다' ECC_DISABLED_HOOKS=stop:decision; }
+   417	d37() { escape_case '전체 비활성으로도 꺼진다'   HARNESS_HOOKS=off; }
+   418	d38() {
+   419	  # **다른 게이트 이름으로는 안 꺼진다.** 접두사·부분 일치로 꺼지면 하나를 끌 때 옆의
+   420	  # 게이트가 같이 사라지고 아무도 모른다.
+   421	  local name='다른 게이트 이름으로는 안 꺼진다' why=''
+   422	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   423	  local tp="$p/transcript.jsonl"
+   424	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   425	  setup_flags "$p" audit
+   426	  run_stop "$p" "$tp" ECC_DISABLED_HOOKS=stop:explain
+   427	  contains "$ERR" "$TOK_DECISION" || why='다른 게이트를 껐는데 결정 게이트까지 꺼졌다'
+   428	  report "$name" "$why"
+   429	}
+   430	
+   431	# ── 6. 벽돌 방지 — 같은 지점 MAX_BLOCKS 회면 통과시킨다 ──────────────
+   432	# 질문 한 번이면 풀리지만, 어떤 이유로도 못 푸는 상황에서 세션이 영영 안 끝나면 안 된다.
+   433	d39() {
+   434	  local name='같은 지점에서 MAX_BLOCKS 회 뒤에는 통과시킨다 (벽돌 방지)' why=''
+   435	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   436	  local tp="$p/transcript.jsonl"
+   437	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   438	  setup_flags "$p" audit
+   439	  local i seen_block=0
+   440	  for i in 1 2 3; do
+   441	    run_stop "$p" "$tp"
+   442	    if [ "$RC" -eq 2 ] && contains "$ERR" "$TOK_DECISION"; then seen_block=$((seen_block + 1)); fi
+   443	  done
+   444	  run_stop "$p" "$tp"
+   445	  if   [ "$seen_block" -ne 3 ];        then why="3회 연속 차단이 아니었다 (실제 ${seen_block}회)"
+   446	  elif [ "$RC" -ne 0 ];                then why="소진 후 rc=$RC (기대 0)"
+   447	  elif ! contains "$OUT" "$TOK_BRICK"; then why="소진 통과인데 경고가 없다: $(printf '%s' "$OUT" | head -c 100)"
+   448	  fi
+   449	  report "$name" "$why"
+   450	}
+   451	d40() {
+   452	  # **진전하면 예산이 리셋된다.** 질문해서 결정 게이트를 푼 뒤 감사 게이트로 넘어가는 것은
+   453	  # 진전이므로, 앞서 쓴 차단 횟수가 뒤 게이트의 예산을 갉아먹으면 안 된다.
+   454	  local name='질문해서 풀면 뒤 게이트의 예산이 리셋된다' why=''
+   455	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   456	  local blocked="$p/blocked.jsonl" asked="$p/asked.jsonl"
+   457	  mk_transcript "$blocked" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   458	  mk_transcript "$asked"   'text:이건 범위 밖이라 그대로 뒀습니다.' 'ask'
+   459	  setup_flags "$p" audit
+   460	  local i
+   461	  for i in 1 2 3; do run_stop "$p" "$blocked"; done
+   462	  run_stop "$p" "$asked"
+   463	  if   [ "$RC" -ne 2 ];                then why="rc=$RC (기대 2 — 감사 게이트가 살아 있어야 한다)"
+   464	  elif ! contains "$ERR" "$TOK_AUDIT"; then why="감사 게이트가 예산 소진으로 사라졌다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   465	  fi
+   466	  report "$name" "$why"
+   467	}
+   468	
+   469	# ── 7. 순서 계약 — 결정 게이트가 다른 게이트보다 앞이다 ──────────────
+   470	# 질문의 답이 코드를 바꿀 수 있으므로 리뷰·설명·감사에 노력을 쓰기 전에 물어야 한다.
+   471	d41() {
+   472	  local name='듀얼리뷰·설명·감사보다 먼저 말한다' why=''
+   473	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   474	  local tp="$p/transcript.jsonl"
+   475	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   476	  setup_flags "$p" audit explain dualreview
+   477	  run_stop "$p" "$tp"
+   478	  if   [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2)"
+   479	  elif ! contains "$ERR" "$TOK_DECISION"; then why="다른 게이트가 먼저 말했다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   480	  fi
+   481	  report "$name" "$why"
+   482	}
+   483	
+   484	# --- 실행 ----------------------------------------------------------------
+   485	# 목록을 **명시적으로** 센다. 실행 수만 세면 중복 1건 + 누락 1건이 상쇄돼 초록이 된다.
+   486	CASES='d01 d02 d03 d04 d05 d06 d07 d08 d09
+   487	d10 d11 d12 d13 d14 d15 d16 d17 d18 d18b d18c d19 d20 d21 d22 d23 d24
+   488	d25 d25b d25c d25d d25e
+   489	d26 d27 d28 d29 d30 d30b
+   490	d31 d32 d33 d34 d35
+   491	d36 d37 d38
+   492	d39 d40 d41'
+   493	
+   494	echo "결정 게이트 회귀 테스트"
+   495	expected=0
+   496	for c in $CASES; do expected=$((expected + 1)); done
+   497	dupes="$(printf '%s\n' $CASES | sort | uniq -d)"
+   498	if [ -n "$dupes" ]; then
+   499	  echo "✗ 케이스 목록에 중복이 있습니다: $dupes" >&2; exit 1
+   500	fi
+   501	for c in $CASES; do
+   502	  if ! type "$c" >/dev/null 2>&1; then echo "✗ 케이스 함수가 없습니다: $c" >&2; exit 1; fi
+   503	  "$c"
+   504	done
+   505	
+   506	echo
+   507	if [ "$ran" -ne "$expected" ]; then
+   508	  echo "✗ 실행된 케이스 수가 목록과 다릅니다: $ran (기대 $expected)" >&2
+   509	  exit 1
+   510	fi
+   511	printf '%s개 중 %s개 통과, %s개 실패\n' "$ran" "$pass" "$fail"
+   512	[ "$fail" -eq 0 ] || exit 1
+   513	echo "✓ 결정 게이트 회귀 방어 유지"
+
+exec
+/bin/zsh -lc "wc -l template/.claude/hooks/verify-before-stop.sh tests/decision-gate.test.sh _workspace/mutate-decision-gate.sh _workspace/08_decision-gate.diff && nl -ba template/.claude/hooks/verify-before-stop.sh | sed -n '60,280p'" in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+     346 template/.claude/hooks/verify-before-stop.sh
+     513 tests/decision-gate.test.sh
+     273 _workspace/mutate-decision-gate.sh
+    1325 _workspace/08_decision-gate.diff
+    2457 total
+    60	# (1) 코드 변경이 없는 턴 → 검사 전부 생략. 읽기 전용 질문에 타입체크를 돌리지 않는다.
+    61	#     두 게이트 플래그(감사·설명)가 모두 비어야 "할 일 없음"이다.
+    62	#     지식 플래그는 **게이트가 켜져 있을 때만** 할 일로 센다 — 껐는데 예전에 남은
+    63	#     플래그 파일이 읽기 전용 턴의 조기 종료를 막으면 안 된다.
+    64	if [ -z "$push_unsent" ] && [ ! -s "$AUDIT_FLAG" ] && [ ! -s "$EXPLAIN_FLAG" ] && ! knowledge_gate_active && [ ! -s "$DUALREVIEW_FLAG" ]; then
+    65	  rm -f "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+    66	  exit 0
+    67	fi
+    68	
+    69	# (2) 카운터 확인 — 벽돌 방지, 진전 인지 리셋 (2026-08-03 [cx] 지적 반영)
+    70	# 카운터의 목적은 "갇힘 감지"이지 노력 예산이 아니다. 게이트가 4종으로 늘며 공유 카운터
+    71	# 3회로는 게이트를 순서대로 성실히 처리해도 마지막 감사 게이트 전에 소진되는 역설이 있었다.
+    72	# → 차단 지문(어느 게이트에서, 어떤 플래그 상태로 막혔나)이 지난 차단과 다르면 = 진전이면
+    73	#   카운터를 리셋한다. 같은 지문으로 MAX_BLOCKS회 = 진짜 갇힘일 때만 경고와 통과.
+    74	count=0
+    75	if [ -f "$BLOCK_COUNT" ]; then
+    76	  count="$(tr -dc '0-9' < "$BLOCK_COUNT" 2>/dev/null)"
+    77	fi
+    78	[ -z "$count" ] && count=0
+    79	prev_fp="$(cat "$BLOCK_FP" 2>/dev/null)"
+    80	# 지문 = 서 있는 플래그의 집합(내용 아님). 내용을 넣으면 갇힌 채 새 파일만 편집해도
+    81	# 리셋되고(무한 차단), cksum 충돌로 실제 진전이 리셋 안 될 수도 있다([cx] 지적).
+    82	flags_fp=""
+    83	[ -s "$AUDIT_FLAG" ]      && flags_fp="${flags_fp}a"
+    84	[ -s "$EXPLAIN_FLAG" ]    && flags_fp="${flags_fp}e"
+    85	knowledge_gate_active     && flags_fp="${flags_fp}k"
+    86	[ -s "$DUALREVIEW_FLAG" ] && flags_fp="${flags_fp}d"
+    87	# push 는 "몇 개 남았나"가 곧 진전이다. 지문에 안 넣으면 한 커밋씩 올리는 실제 진전이
+    88	# 같은 지문으로 세어져 예산이 소진되고, 그때 감사 플래그까지 함께 지워진다([cx] 지적).
+    89	[ -n "$push_unsent" ] && flags_fp="${flags_fp}p:${push_branch}:${push_unsent}"
+    90	new_fp=""
+    91	
+    92	gate_budget() {  # $1 = 게이트 식별자. 각 차단 지점이 메시지 출력 전에 호출한다.
+    93	  new_fp="$1|$flags_fp"
+    94	  # 지문을 기록할 수 있을 때만 리셋한다 — 지문 파일을 못 쓰는 환경에서 리셋하면
+    95	  # prev_fp가 영원히 비어 매번 1/3로 무한 차단된다([cx] 지적). 그 경우 리셋 없는
+    96	  # 구식 누적으로 동작해 3회 후 통과가 보장된다.
+    97	  if printf '%s\n' "$new_fp" > "$BLOCK_FP" 2>/dev/null; then
+    98	    if [ "$new_fp" != "$prev_fp" ]; then
+    99	      count=0   # 지난 차단과 다른 게이트/플래그 집합 = 진전 — 예산 리셋
+   100	    fi
+   101	  fi
+   102	  if [ "$count" -ge "$MAX_BLOCKS" ]; then
+   103	    changed="$(cat "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" 2>/dev/null | tr -d '"\\' | sort -u | tr '\n' ' ')"
+   104	    rm -f "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG" "$BLOCK_COUNT" "$BLOCK_FP" 2>/dev/null
+   105	    printf '{"systemMessage":"[완료 게이트] 같은 지점(%s)에서 %s회 차단 후에도 진전이 없어 세션 벽돌 방지를 위해 통과시킵니다. 이 턴의 완료 주장(및 변경 설명)을 신뢰하지 마세요. 미처리 변경: %s"}\n' \
+   106	      "$1" "$MAX_BLOCKS" "$changed"
+   107	    exit 0
+   108	  fi
+   109	}
+   110	
+   111	bump_and_block() {
+   112	  if ! printf '%s\n' "$((count + 1))" > "$BLOCK_COUNT" 2>/dev/null; then
+   113	    # 카운터를 못 쓰면 무한루프 위험 → 표준 가드로 폴백
+   114	    case "$stop_active" in
+   115	      [Tt]rue) exit 0 ;;
+   116	    esac
+   117	  fi
+   118	  exit 2
+   119	}
+   120	
+   121	# (3) 타입체크 — 결정론적 바닥. 명령은 프로필에서 파생된 harness.env 에서 읽는다.
+   122	#     HARNESS_TYPECHECK_CMD 가 비어 있으면(타입 없는 언어/미설정) 생략한다.
+   123	#     이렇게 하면 이 훅이 특정 스택(pnpm/tsc)에 묶이지 않는다 — 도메인-무관 재사용.
+   124	#     **이 파일을 실행하지 않는다.** source 하면 사용자 소유 셸 파일이 훅의 제어 흐름을
+   125	#     가져간다 — `exit 0` 한 줄이면 이 훅이 조용히 끝나 **게이트 4종이 통째로 사라지고**
+   126	#     흔적도 안 남는다. 원문 판독으로 그 부류를 없앤다(harness_env_value 주석 참조).
+   127	typecheck_note=""
+   128	#     rc 를 함께 받는다. "리터럴로 비웠다"(rc=0 + 빈 값 = 의도한 생략)와 "값을 믿을 수
+   129	#     없다"(rc=1 = 미설정·선언 2개 이상·지원 문법 밖·읽기 실패)는 둘 다 생략으로 가지만
+   130	#     사용자에게 **다른 정보**다. 후자는 고칠 수 있는 실수라 그렇게 적어야 한다.
+   131	TYPECHECK_CMD="$(harness_env_value HARNESS_TYPECHECK_CMD)"; typecheck_rc=$?
+   132	
+   133	if [ "$typecheck_rc" -ne 0 ]; then
+   134	  typecheck_note="타입체크 생략 (harness.env 의 HARNESS_TYPECHECK_CMD 를 읽지 못함 — 미설정이거나, 선언이 2개 이상이거나, 지원 문법 밖입니다)"
+   135	elif [ -z "$TYPECHECK_CMD" ]; then
+   136	  typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 가 빈 값으로 설정됨)"
+   137	else
+   138	  timeout_bin=""
+   139	  if command -v timeout >/dev/null 2>&1; then
+   140	    timeout_bin="timeout"
+   141	  elif command -v gtimeout >/dev/null 2>&1; then
+   142	    timeout_bin="gtimeout"
+   143	  fi
+   144	  # macOS 기본에는 timeout 이 없다. 그 경우 settings.json 의 "timeout": 120 이 최종 안전망.
+   145	
+   146	  if [ -n "$timeout_bin" ]; then
+   147	    tc_out="$(cd "$PROJECT_DIR" && "$timeout_bin" 90 sh -c "$TYPECHECK_CMD" 2>&1)"; tc_rc=$?
+   148	  else
+   149	    tc_out="$(cd "$PROJECT_DIR" && sh -c "$TYPECHECK_CMD" 2>&1)"; tc_rc=$?
+   150	  fi
+   151	
+   152	  if [ "$tc_rc" -eq 124 ] || [ "$tc_rc" -eq 137 ]; then
+   153	    # 타임아웃은 "타입 오류"가 아니라 "모름". 차단하지 않고 감사자에게 넘긴다.
+   154	    typecheck_note="타입체크 타임아웃 → 생략 (감사자가 재확인할 것)"
+   155	  elif [ "$tc_rc" -eq 127 ]; then
+   156	    # 명령/도구 없음(rc=127)은 "타입 오류"가 아니다. 오탐 차단 방지 위해 생략.
+   157	    typecheck_note="타입체크 생략 (명령 실행 불가 rc=127): $TYPECHECK_CMD"
+   158	  elif [ "$tc_rc" -ne 0 ]; then
+   159	    gate_budget "typecheck"
+   160	    {
+   161	      echo "[완료 차단] 타입체크 실패 — 지금은 '완료'가 아닙니다."
+   162	      echo
+   163	      echo "명령: $TYPECHECK_CMD"
+   164	      echo
+   165	      printf '%s\n' "$tc_out" | head -n 15
+   166	      echo
+   167	      echo "고친 뒤 다시 종료하세요.  (차단 $((count + 1))/${MAX_BLOCKS})"
+   168	      echo "탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+   169	    } >&2
+   170	    bump_and_block
+   171	  fi
+   172	fi
+   173	
+   174	# (3.2) **결정 게이트** — "물어봤어야 할 것을 혼자 정했나".
+   175	#      나머지 게이트가 전부 **산출물**을 볼 때 이것만 **에이전트 자신의 행동**을 본다.
+   176	#      판정 규칙·좁히는 장치 셋·fail-open 사유는 _common.sh 의 decision_scan 주석이 정본이다.
+   177	#
+   178	#      **다른 게이트보다 앞에 둔다.** 질문의 답이 코드를 바꿀 수 있으므로, 리뷰·설명·감사에
+   179	#      노력을 쓰기 전에 묻는 편이 싸다. (push 탐지와 달리 순서가 정확성을 바꾸지는 않는다 —
+   180	#      대화 기록은 이미 다 쓰였고 게이트 순서가 그 내용을 바꾸지 않기 때문이다.)
+   181	decision_note=""
+   182	if ! hook_disabled "stop:decision"; then
+   183	  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?
+   184	  if [ "$decision_rc" -eq 2 ]; then
+   185	    # **이 게이트의 유일한 fail-open.** 통과시키되 사유를 (6) 의 메시지에 실어 보낸다.
+   186	    # 대화 기록 형식은 하네스 소유가 아니라, 여기서 차단하면 그 세션 안에 고칠 방법이 없다.
+   187	    decision_note="결정 게이트 생략 ($decision_hits)"
+   188	  elif [ "$decision_rc" -eq 0 ]; then
+   189	    gate_budget "decision"
+   190	    {
+   191	      echo "[완료 차단] 혼자 정한 것이 있는데 이 턴에 사용자에게 한 번도 묻지 않았습니다."
+   192	      echo
+   193	      echo "걸린 문장:"
+   194	      printf '%s\n' "$decision_hits" | sed 's/^/  - /'
+   195	      echo
+   196	      echo "이 게이트가 겨누는 것:"
+   197	      echo "  게이트가 막을 때는 따르면서, 게이트가 없는 자리에서는 혼자 정하고 보고서에"
+   198	      echo "  한 줄 적는 부류입니다. 그 '한 줄'은 도구 호출이 아니라 문장이라 승인창이"
+   199	      echo "  안 뜨고, 그래서 이 저장소가 겪은 실패 대부분이 이 축에서 났습니다."
+   200	      echo
+   201	      echo "해야 할 일:"
+   202	      echo "  1. 위 문장들이 정말 **사용자가 정할 일**이었는지 본다."
+   203	      echo "     '범위 밖'·'별도로'·'그대로 뒀'는 대개 선택지를 줬어야 하는 자리입니다."
+   204	      echo "  2. AskUserQuestion 으로 **실제로 묻는다.** 보고서에 적는 것은 묻는 것이 아닙니다."
+   205	      echo "  3. 질문을 한 번이라도 하면 이 게이트는 풀립니다."
+   206	      echo
+   207	      echo "위양성이라면(그 어휘를 설명·인용한 것이지 결정이 아니라면):"
+   208	      echo "  - 백틱이나 따옴표로 감싸면 스캔에서 빠집니다 — 인용은 결정이 아니니까요."
+   209	      echo "  - 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받으세요."
+   210	      echo
+   211	      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+   212	    } >&2
+   213	    bump_and_block
+   214	  fi
+   215	fi
+   216	
+   217	# (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
+   218	#      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
+   219	#      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
+   220	if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
+   221	  gate_budget "dualreview"
+   222	  {
+   223	    echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
+   224	    echo
+   225	    echo "이 턴의 듀얼 리뷰 대상:"
+   226	    sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+   227	    echo
+   228	    echo "해야 할 일:"
+   229	    echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
+   230	    echo "  2. 결과를 _workspace/ 에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
+   231	    echo "  3. 그 뒤에만:  rm -f .claude/.needs-dualreview"
+   232	    echo "     codex 미설치·호출 실패면 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을 명시한 뒤에 지운다."
+   233	    echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+   234	    echo
+   235	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
+   236	  } >&2
+   237	  bump_and_block
+   238	fi
+   239	
+   240	# (4) change-explainer 게이트 (Phase 5) — 감사자보다 먼저 강제한다.
+   241	#     코드가 바뀐 턴은 변경 설명 없이 끝낼 수 없다. change-explainer 가 실제로
+   242	#     사용자용 설명을 낸 뒤에만 .needs-explain 을 지운다.
+   243	#     (완료 감사와 별개로 이 게이트만 끄려면 ECC_DISABLED_HOOKS=stop:explain)
+   244	if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
+   245	  gate_budget "explain"
+   246	  {
+   247	    echo "[완료 차단] change-explainer 미실행 — 변경 설명 없이 끝낼 수 없습니다."
+   248	    echo
+   249	    echo "이 턴에서 바뀐 코드/설정:"
+   250	    sed 's/^/  - /' "$EXPLAIN_FLAG" 2>/dev/null
+   251	    echo
+   252	    echo "해야 할 일:"
+   253	    echo "  1. change-explainer 에이전트로 실제 diff 기반 사용자용 변경 설명을 낸다."
+   254	    echo "  2. 설명을 낸 뒤에만:  rm -f .claude/.needs-explain"
+   255	    echo "     설명 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+   256	    echo
+   257	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:explain"
+   258	  } >&2
+   259	  bump_and_block
+   260	fi
+   261	
+   262	# (5) 지식 저장소 반영 게이트 — 감사보다 먼저 강제한다 (감사자가 반영 결과를 검증하도록).
+   263	#     (2026-08-02 kty — 산문 규칙이 세션 내내 0회 이행된 실사고의 기계화)
+   264	#
+   265	#     **이 훅이 아는 것은 계약 하나뿐이다**: "지식 저장소가 설정돼 있으면, 결정·설계가
+   266	#     나온 턴은 반영 없이 끝낼 수 없다." 저장소가 어디인지·어떤 구조인지·무엇을 어느
+   267	#     파일에 나눠 담는지는 **상위 층의 구현**이고 이 파일은 모른다. 알게 되면 그 저장소를
+   268	#     안 쓰는 환경에서 하네스가 없는 구조를 요구하게 된다(제0원칙 4 — 구체가 아닌 계약).
+   269	#     어디에 어떻게 저장했는지의 검증은 그 저장소 자신의 규약이 한다.
+   270	if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
+   271	  gate_budget "knowledge"
+   272	  {
+   273	    echo "[완료 차단] 지식 저장소 반영 미확인 — 이 턴의 결정·설계를 남기지 않고 끝낼 수 없습니다."
+   274	    echo
+   275	    echo "이 턴에서 바뀐 코드/설정:"
+   276	    sed 's/^/  - /' "$KNOWLEDGE_FLAG" 2>/dev/null
+   277	    echo
+   278	    echo "해야 할 일:"
+   279	    echo "  1. 이 머신의 지식 저장소가 **어디이고 어떤 형식인지는 사용자 층 설정**(전역"
+   280	    echo "     CLAUDE.md 등)이 답한다. 그 규약을 **전문** 읽는다 — 부분 독해 금지."
+
+2026-08-10T07:21:25.686206Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 93 column 5
+exec
+/bin/zsh -lc "nl -ba template/.claude/hooks/verify-before-stop.sh | sed -n '280,370p'
+nl -ba tests/decision-gate.test.sh | sed -n '1,220p'" in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+   280	    echo "     CLAUDE.md 등)이 답한다. 그 규약을 **전문** 읽는다 — 부분 독해 금지."
+   281	    echo "  2. 이번 턴에 결정·설계·개발작업이 있으면 그 규약대로 반영하고, 반영됐다는"
+   282	    echo "     확인 가능한 증거(커밋 해시·파일 경로 등)를 확보한다."
+   283	    echo "     판단을 만든 **근거(raw)** 도 규약이 정한 자리에 함께 남긴다 — 요약만 남기면"
+   284	    echo "     \"왜 그렇게 정했나\"가 복원 불가능해진다."
+   285	    echo "  3. 반영할 지식이 없으면(순수 버그픽스·기계적 수정) 불요 사유를 _workspace/progress.md 에 기록한다."
+   286	    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f .claude/.needs-knowledge"
+   287	    echo "     completion-auditor 가 그 증거(또는 불요 사유의 타당성)를 검증한다."
+   288	    echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
+   289	    echo
+   290	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:knowledge"
+   291	  } >&2
+   292	  bump_and_block
+   293	fi
+   294	
+   295	# (5.5) **커밋했는데 원격에 없다** — 이 저장소가 커밋 29개를 잃은 바로 그 상태다.
+   296	#      그때는 "아직 PR 전이니까"라며 라운드 6개를 미뤘고, 임시 폴더째 사라졌다.
+   297	#      탐지는 (0) 에서 이미 했다 — 조기 종료보다 앞이어야 하기 때문이다.
+   298	if [ -n "$push_unsent" ]; then
+   299	  gate_budget "push"
+   300	  {
+   301	    echo "[완료 차단] 커밋이 원격에 없습니다 — $push_unsent"
+   302	    echo
+   303	    echo "이 저장소는 이 상태로 **커밋 29개를 잃은 적이 있습니다.** 그때도 코드는"
+   304	    echo "다 짜여 있었고, \"아직 PR 전이니까\"라며 push 를 미뤘습니다."
+   305	    echo
+   306	    echo "해야 할 일:"
+   307	    echo "  git push -u origin $push_branch"
+   308	    echo "  그리고 실제로 올라갔는지 확인하세요:"
+   309	    echo "  git rev-list --left-right --count HEAD...origin/$push_branch   → 0 0"
+   310	    echo
+   311	    echo "  원격에는 있는데 위 명령이 실패한다면 refspec 이 좁혀진 것입니다:"
+   312	    echo "  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' && git fetch origin"
+   313	    echo "  push 여부가 로컬에서 안 보이는 것 자체가 위험합니다 — 29개를 잃을 때 그랬습니다."
+   314	    echo
+   315	    echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:push"
+   316	  } >&2
+   317	  bump_and_block
+   318	fi
+   319	
+   320	# (6) 타입체크는 통과했지만 감사자가 아직 안 돌았다.
+   321	gate_budget "audit"
+   322	{
+   323	  echo "[완료 차단] completion-auditor 미실행 — '완료'라고 말할 수 없습니다."
+   324	  echo
+   325	  echo "이 턴에서 바뀐 코드/설정:"
+   326	  sed 's/^/  - /' "$AUDIT_FLAG" 2>/dev/null
+   327	  if [ -n "$typecheck_note" ]; then
+   328	    echo
+   329	    echo "참고: $typecheck_note"
+   330	  fi
+   331	  # 결정 게이트가 대화 기록을 못 읽었으면 **여기서 소리를 낸다.** 그 게이트만 조용히
+   332	  # 사라지면 "물어봤나"를 아무도 안 보게 되고, 그게 정확히 이 게이트를 만든 이유다.
+   333	  if [ -n "$decision_note" ]; then
+   334	    echo
+   335	    echo "참고: $decision_note"
+   336	    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
+   337	  fi
+   338	  echo
+   339	  echo "해야 할 일:"
+   340	  echo "  1. completion-auditor 에이전트로 완료 주장을 1차 증거로 검증한다."
+   341	  echo "  2. 검증을 통과했을 때만:  rm -f .claude/.needs-audit"
+   342	  echo "     감사 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+   343	  echo
+   344	  echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+   345	} >&2
+   346	bump_and_block
+     1	#!/usr/bin/env bash
+     2	# decision-gate.test.sh — Stop 훅의 **결정 게이트**(stop:decision) 회귀 방어.
+     3	#
+     4	#   "코드/결정이 바뀐 턴에 결정 표지 어휘가 있는데 AskUserQuestion 이 0회면 막는다"
+     5	#
+     6	# 이 게이트만 **에이전트 자신의 행동**을 본다(나머지 넷은 산출물을 본다). 그래서 실패
+     7	# 방향이 둘 다 비싸다:
+     8	#   위음성 — 혼자 정하고 한 줄 적는 것이 그대로 통과한다. 이 저장소가 반복해서 겪은 부류다
+     9	#   위양성 — 질문이 소음이 되고, 소음이 되면 진짜 질문도 무시된다. 게이트가 자기를 죽인다
+    10	# 그래서 **양쪽을 다 케이스로 붙든다.** 위양성 케이스가 이 파일의 절반인 이유다 —
+    11	# 나중에 누가 패턴을 넓히면 그 케이스들이 빨개져서 대가를 눈에 보이게 한다.
+    12	#
+    13	# **판정 규칙의 사본을 두지 않는다.** 어떤 어휘가 표지인지·무엇이 서술형인지를 여기서
+    14	# 다시 정의하면 그 사본이 언젠가 원본과 어긋나고, 그때 테스트는 틀린 기준으로 초록을 낸다.
+    15	# 대신 훅 **자신을 돌려** 차단 여부와 메시지로 잰다.
+    16	#
+    17	# **rc 만으로 판정하지 않는다.** 결정 게이트가 통과해도 뒤의 감사 게이트가 rc=2 를 내므로
+    18	# rc 는 두 경우에 **같다.** 어느 게이트가 말했는지는 메시지로만 갈린다(위음성 카탈로그 17번:
+    19	# 관례 코드에 도달하는 경로가 여럿이면 rc 일치가 의도한 경로를 뜻하지 않는다).
+    20	#
+    21	# 왜 set -e 가 없나: 비영 rc 를 assert 하는 테스트다.
+    22	# 셸 이식성: macOS 기본 bash 는 3.2 다. mapfile·연관배열·${var,,} 금지.
+    23	
+    24	set -uo pipefail
+    25	
+    26	TEST_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+    27	REPO_ROOT="$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)"
+    28	HOOKS="$REPO_ROOT/template/.claude/hooks"
+    29	
+    30	command -v python3 >/dev/null 2>&1 || { echo "✗ python3 이 필요합니다 (스캐너·픽스처 의존)" >&2; exit 1; }
+    31	for f in verify-before-stop.sh _common.sh; do
+    32	  [ -f "$HOOKS/$f" ] || { echo "✗ 훅을 찾지 못했습니다: $f" >&2; exit 1; }
+    33	done
+    34	
+    35	TMPROOT="$(mktemp -d)" || exit 1
+    36	if [ -z "$TMPROOT" ] || [ ! -d "$TMPROOT" ]; then
+    37	  echo "✗ 임시 디렉토리를 만들지 못했습니다" >&2; exit 1
+    38	fi
+    39	TMPROOT="$(CDPATH='' cd -- "$TMPROOT" && pwd -P)"
+    40	# chmod 000 픽스처가 있으므로 되돌린 뒤 지운다 — 안 그러면 정리가 실패한다.
+    41	trap 'chmod -R u+rwX "$TMPROOT" 2>/dev/null; rm -rf "$TMPROOT"' EXIT
+    42	
+    43	ran=0; pass=0; fail=0
+    44	RC=999; ERR=''; OUT=''; DID_RUN=0
+    45	PROJ_N=0
+    46	
+    47	# 판정 토큰. 훅 메시지의 **고유 문구**를 쓴다 — 어느 게이트가 말했는지는 이걸로만 갈린다.
+    48	TOK_DECISION='혼자 정한 것이 있는데'
+    49	TOK_NOTE='결정 게이트 생략'
+    50	TOK_AUDIT='completion-auditor 미실행'
+    51	TOK_BRICK='세션 벽돌 방지'
+    52	
+    53	report() {
+    54	  ran=$((ran + 1))
+    55	  if [ -z "$2" ]; then pass=$((pass + 1)); printf '  ✓ %s\n' "$1"
+    56	  else fail=$((fail + 1)); printf '  ✗ %s — %s\n' "$1" "$2"; fi
+    57	}
+    58	
+    59	contains() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
+    60	
+    61	# --- 픽스처 --------------------------------------------------------------
+    62	
+    63	# new_project <지식게이트값> — 케이스마다 독립 프로젝트. 경로를 stdout 에.
+    64	# 지식게이트값: 리터럴로 비면 꺼짐, 그 외 문자열이면 켜짐.
+    65	# 타입체크는 항상 리터럴로 비운다 — 이 파일이 재는 것은 결정 게이트뿐이고, 타입체크가
+    66	# 먼저 막으면 그 케이스는 결정 게이트에 **도달조차 못 한 채** 기대값이 우연히 맞는다.
+    67	new_project() {
+    68	  PROJ_N=$((PROJ_N + 1))
+    69	  local p="$TMPROOT/proj$PROJ_N"
+    70	  mkdir -p "$p/.claude/hooks" "$p/.claude/harness" || return 1
+    71	  cp "$HOOKS/_common.sh" "$HOOKS/verify-before-stop.sh" "$p/.claude/hooks/" || return 1
+    72	  printf 'HARNESS_TYPECHECK_CMD=""\nHARNESS_KNOWLEDGE_GATE="%s"\n' "$1" \
+    73	    > "$p/.claude/harness/harness.env" || return 1
+    74	  printf '%s\n' "$p"
+    75	}
+    76	
+    77	# mk_transcript <출력경로> <항목...> — 대화 기록 JSONL 을 만든다.
+    78	# 항목 문법:  text:<문장> · side:<문장>(서브에이전트) · think:<문장> · ask ·
+    79	#             tool:<내용>(도구 입력) · prompt(새 사용자 프롬프트=턴 경계) · toolresult:<내용>
+    80	# 첫 줄은 항상 사용자 프롬프트다 — 그게 없는 경우는 판독 불가 케이스에서 따로 만든다.
+    81	mk_transcript() {
+    82	  python3 - "$@" <<'PY'
+    83	import json, sys
+    84	
+    85	out = sys.argv[1]
+    86	
+    87	
+    88	def prompt():
+    89	    return {"type": "user", "isSidechain": False,
+    90	            "message": {"role": "user", "content": "작업해줘"}}
+    91	
+    92	
+    93	rows = [prompt()]
+    94	for spec in sys.argv[2:]:
+    95	    kind, _, val = spec.partition(":")
+    96	    if kind == "prompt":
+    97	        rows.append(prompt())
+    98	        continue
+    99	    if kind == "toolresult":
+   100	        rows.append({"type": "user", "isSidechain": False,
+   101	                     "toolUseResult": {"stdout": val},
+   102	                     "message": {"role": "user",
+   103	                                 "content": [{"type": "tool_result", "content": val}]}})
+   104	        continue
+   105	    # 실제 기록에서는 두 표식이 **항상 함께** 온다(실측 69/69). 그래서 둘 다 보는 판정은
+   106	    # 서로를 가려, 한쪽을 지워도 아무 케이스가 안 빨개진다 — 변이 측정에서 실제로 드러났다.
+   107	    # 각각을 **독립적으로** 지키려면 표식이 하나뿐인 기록이 필요하다. 형식이 바뀌어 한쪽만
+   108	    # 남는 날, 남은 한쪽이 실제로 일하는지를 재는 것이 이 두 항목이다.
+   109	    if kind == "toolresult_top":       # 상단 toolUseResult 만 (content 는 평문)
+   110	        rows.append({"type": "user", "isSidechain": False,
+   111	                     "toolUseResult": {"stdout": val},
+   112	                     "message": {"role": "user", "content": val}})
+   113	        continue
+   114	    if kind == "toolresult_blk":       # tool_result 블록만 (상단 키 없음)
+   115	        rows.append({"type": "user", "isSidechain": False,
+   116	                     "message": {"role": "user",
+   117	                                 "content": [{"type": "tool_result", "content": val}]}})
+   118	        continue
+   119	    side = False
+   120	    if kind == "side":
+   121	        side, kind = True, "text"
+   122	    if kind == "text":
+   123	        block = {"type": "text", "text": val}
+   124	    elif kind == "think":
+   125	        block = {"type": "thinking", "thinking": val}
+   126	    elif kind == "ask":
+   127	        block = {"type": "tool_use", "name": "AskUserQuestion", "input": {}}
+   128	    elif kind == "tool":
+   129	        block = {"type": "tool_use", "name": "Write", "input": {"content": val}}
+   130	    else:
+   131	        raise SystemExit("알 수 없는 항목: " + spec)
+   132	    rows.append({"type": "assistant", "isSidechain": side,
+   133	                 "message": {"content": [block]}})
+   134	
+   135	with open(out, "w", encoding="utf-8") as fh:
+   136	    for row in rows:
+   137	        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+   138	PY
+   139	}
+   140	
+   141	# run_stop <프로젝트> <transcript경로|빈문자열> [env 인자...]
+   142	# 빈 문자열이면 payload 에서 transcript_path 키를 **아예 뺀다**(키 부재 케이스).
+   143	run_stop() {
+   144	  local p="$1" tp="$2"
+   145	  shift 2
+   146	  local errf="$TMPROOT/err.$$" outf="$TMPROOT/out.$$" payf="$TMPROOT/pay.$$"
+   147	  RC=999; ERR=''; OUT=''; DID_RUN=1
+   148	  # payload 를 **파일로** 넘긴다. 파이프로 주면 훅이 stdin 을 읽기 전에 종료하는 경로
+   149	  # (탈출구로 꺼진 경우 등)에서 생산자 python 이 SIGPIPE 를 맞아 BrokenPipeError 를
+   150	  # 출력에 흘린다 — 진짜 실패와 구별이 안 되는 잡음이다.
+   151	  python3 -c '
+   152	import json, sys
+   153	d = {"stop_hook_active": False}
+   154	if sys.argv[1]:
+   155	    d["transcript_path"] = sys.argv[1]
+   156	with open(sys.argv[2], "w", encoding="utf-8") as fh:
+   157	    fh.write(json.dumps(d))' "$tp" "$payf"
+   158	  env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS ${@+"$@"} CLAUDE_PROJECT_DIR="$p" \
+   159	      bash "$p/.claude/hooks/verify-before-stop.sh" <"$payf" >"$outf" 2>"$errf"
+   160	  RC=$?
+   161	  rm -f "$payf"
+   162	  ERR="$(cat "$errf" 2>/dev/null)"
+   163	  OUT="$(cat "$outf" 2>/dev/null)"
+   164	  rm -f "$errf" "$outf"
+   165	}
+   166	
+   167	# setup_flags <프로젝트> <플래그 이름...>  (audit|explain|knowledge|dualreview)
+   168	setup_flags() {
+   169	  local p="$1"; shift
+   170	  rm -f "$p/.claude/.needs-audit" "$p/.claude/.needs-explain" \
+   171	        "$p/.claude/.needs-knowledge" "$p/.claude/.needs-dualreview" \
+   172	        "$p/.claude/.stop-block-count" "$p/.claude/.stop-block-fp" 2>/dev/null
+   173	  local f
+   174	  for f in "$@"; do printf 'src/changed.ts\n' > "$p/.claude/.needs-$f"; done
+   175	}
+   176	
+   177	# --- 공통 케이스 형태 -----------------------------------------------------
+   178	#
+   179	# blocked = 결정 게이트가 **막아야** 한다
+   180	# silent  = 결정 게이트는 **아무 말도 하지 않아야** 한다 (뒤 게이트가 막는 것은 정상)
+   181	#
+   182	# silent 판정에 rc=0 을 쓰지 않는 이유: 플래그가 서 있으면 감사 게이트가 반드시 rc=2 를
+   183	# 낸다. 그래서 결정 게이트의 침묵만 요구하고, 동시에 **감사 게이트가 실제로 말했는지**를
+   184	# 함께 요구한다 — 안 그러면 훅이 앞에서 죽어 아무것도 안 재고도 통과한다(15번 부류).
+   185	
+   186	blocked_case() {   # $1=이름 $2=기대문장조각("" 이면 생략) $3..=기록 항목
+   187	  local name="$1" want_hit="$2" why=''
+   188	  shift 2
+   189	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   190	  local tp="$p/transcript.jsonl"
+   191	  mk_transcript "$tp" "$@" || { report "$name" '픽스처 실패: 기록 생성'; return 0; }
+   192	  [ -s "$tp" ] || { report "$name" '픽스처 실패: 기록이 비어 있다'; return 0; }
+   193	  setup_flags "$p" audit
+   194	  run_stop "$p" "$tp"
+   195	  if [ "$DID_RUN" -ne 1 ];                then why='훅을 실행하지 않았다'
+   196	  elif [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2) / $(printf '%s' "$ERR" | head -c 100)"
+   197	  elif ! contains "$ERR" "$TOK_DECISION"; then why="결정 게이트가 아닌 것이 막았다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   198	  elif [ -n "$want_hit" ] && ! contains "$ERR" "$want_hit"; then
+   199	    why="걸린 문장이 메시지에 없다 (기대 조각: $want_hit)"
+   200	  fi
+   201	  report "$name" "$why"
+   202	}
+   203	
+   204	silent_case() {   # $1=이름 $2..=기록 항목
+   205	  local name="$1" why=''
+   206	  shift
+   207	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   208	  local tp="$p/transcript.jsonl"
+   209	  mk_transcript "$tp" "$@" || { report "$name" '픽스처 실패: 기록 생성'; return 0; }
+   210	  [ -s "$tp" ] || { report "$name" '픽스처 실패: 기록이 비어 있다'; return 0; }
+   211	  setup_flags "$p" audit
+   212	  run_stop "$p" "$tp"
+   213	  if [ "$DID_RUN" -ne 1 ];              then why='훅을 실행하지 않았다'
+   214	  elif contains "$ERR" "$TOK_DECISION"; then why='위양성 — 결정 게이트가 막았다'
+   215	  elif [ "$RC" -ne 2 ];                 then why="rc=$RC (기대 2 — 감사 게이트가 막아야 한다)"
+   216	  elif ! contains "$ERR" "$TOK_AUDIT";  then why="감사 게이트에 도달하지 못했다 = 아무것도 안 쟀다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   217	  elif contains "$ERR" "$TOK_NOTE";     then why='판독 불가로 빠졌다 — 스캔이 실제로 돌지 않았다'
+   218	  fi
+   219	  report "$name" "$why"
+   220	}
+
+2026-08-10T07:21:32.782120Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 93 column 5
+exec
+/bin/zsh -lc "nl -ba tests/decision-gate.test.sh | sed -n '220,430p'
+nl -ba tests/decision-gate.test.sh | sed -n '430,530p'" in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+   220	}
+   221	
+   222	# ── 1. 막아야 하는 것 ─────────────────────────────────────────────────
+   223	# 문장 형태는 전부 지난 세션에서 실제로 쓴 것이다(ADR-0011 Context 절).
+   224	d01() { blocked_case '표지 + 서술형 + 질문 0회 를 막는다' '범위 밖' \
+   225	          'text:이건 이번 PR 범위 밖이라 그대로 뒀습니다.'; }
+   226	d02() { blocked_case '제 판단으로 형태를 막는다' '제 판단으로' \
+   227	          'text:제 판단으로 끄지 않고 그대로 진행했습니다.'; }
+   228	d03() { blocked_case '공시 형태를 막는다' '공시' \
+   229	          'text:남은 것은 공시하고 넘어갑니다.'; }
+   230	d04() { blocked_case '트레이드오프 단정을 막는다' '트레이드오프' \
+   231	          'text:이건 버그가 아니라 의도된 트레이드오프다.'; }
+   232	d05() { blocked_case '수용된 한계 형태를 막는다' '수용된 한계' \
+   233	          'text:이 좁은 창은 수용된 한계로 남겼음.'; }
+   234	d06() { blocked_case '가정하고 형태를 막는다' '가정하고' \
+   235	          'text:기본값이 켜짐이라고 가정하고 구현했습니다.'; }
+   236	d07() { blocked_case '안 했습니다 형태를 막는다' '안 했습니다' \
+   237	          'text:그 부분은 시간이 없어 안 했습니다.'; }
+   238	# **걸린 문장을 메시지에 싣는 것이 계약이다.** 안 실으면 무엇을 물어야 할지 알 수 없어
+   239	# 에이전트가 "일단 아무거나 물어서 풀자"로 간다 — 게이트가 의식(儀式)이 되는 경로다.
+   240	d08() { blocked_case '걸린 문장 여러 개를 함께 싣는다' '별도로' \
+   241	          'text:이건 범위 밖이라 뺐습니다.' 'text:나머지는 별도로 처리했습니다.'; }
+   242	d09() { blocked_case '표지가 마지막 발화에만 있어도 막는다' '그대로 뒀' \
+   243	          'text:작업을 시작합니다.' 'text:충돌 나는 부분은 그대로 뒀습니다.'; }
+   244	
+   245	# ── 2. 위양성 — 막으면 안 되는 것 ─────────────────────────────────────
+   246	# 이 절이 파일의 절반인 이유: 어휘만 보면 이 게이트를 **유지보수하는 작업 자체가** 매번
+   247	# 걸린다(훅·테스트·결정 문서가 그 어휘를 데이터로 품는다). 그러면 사람이 게이트를 끄고,
+   248	# 꺼진 게이트는 없는 게이트다. 패턴을 넓히려는 다음 사람은 여기서 대가를 본다.
+   249	d10() { silent_case '질문을 한 번 했으면 풀린다' \
+   250	          'text:이건 범위 밖이라 그대로 뒀습니다.' 'ask'; }
+   251	d11() { silent_case '질문이 표지보다 앞에 와도 풀린다' \
+   252	          'ask' 'text:여쭌 대로 범위 밖으로 뒀습니다.'; }
+   253	d12() { silent_case '백틱으로 인용한 어휘는 결정이 아니다' \
+   254	          'text:결정 표지 어휘는 `범위 밖` 과 `그대로 뒀` 이다.'; }
+   255	d13() { silent_case '따옴표로 인용한 어휘는 결정이 아니다' \
+   256	          'text:사용자가 "범위 밖"이라고 하셨으므로 그렇게 했습니다.'; }
+   257	d14() { silent_case '인용줄로 시작하는 줄은 스캔하지 않는다' \
+   258	          'text:> 이건 범위 밖이라 그대로 뒀습니다.'; }
+   259	d15() { silent_case '코드펜스 안은 스캔하지 않는다' \
+   260	          'text:예시:
+   261	```
+   262	이건 범위 밖이라 그대로 뒀습니다.
+   263	```
+   264	위가 걸리는 형태다.'; }
+   265	# 펜스가 안 닫힌 채 기록이 잘렸으면 **남은 전부를 코드로 친다.** 반대로 두면 잘린 기록의
+   266	# 코드 블록이 산문으로 새어 위양성이 터진다.
+   267	d16() { silent_case '닫히지 않은 코드펜스 뒤는 전부 코드로 친다' \
+   268	          'text:예시:
+   269	```
+   270	이건 범위 밖이라 그대로 뒀습니다.'; }
+   271	d17() { silent_case '질문형 문장은 표지로 세지 않는다' \
+   272	          'text:이건 범위 밖으로 둘까요?'; }
+   273	d18() { silent_case '선택을 요청하는 문장도 세지 않는다' \
+   274	          'text:범위 밖으로 뺄지 어느 쪽이 좋은지 말씀해 주세요.'; }
+   275	# **묻겠다는 말이 서술형으로 끝나는 경우가 질문 신호 판정의 진짜 시험대다.** d17·d18 은
+   276	# 종결이 "…까요/…세요"라 서술형 요구에서 이미 걸러져 질문 판정에 도달조차 하지 않는다 —
+   277	# 그래서 질문 판정을 지워도 아무것도 안 빨개졌다(변이 측정에서 드러났다).
+   278	d18b() { silent_case '묻겠다는 말이 서술형으로 끝나도 세지 않는다' \
+   279	          'text:이게 범위 밖인지 여쭙겠습니다.'; }
+   280	d18c() { silent_case '물어보겠다는 말도 세지 않는다' \
+   281	          'text:이걸 별도로 뺄지 사용자에게 물어보겠습니다.'; }
+   282	d19() { silent_case 'thinking 블록은 스캔하지 않는다' \
+   283	          'think:이건 범위 밖이라 그대로 뒀습니다.'; }
+   284	d20() { silent_case '서브에이전트 발화는 스캔하지 않는다' \
+   285	          'side:이건 범위 밖이라 그대로 뒀습니다.'; }
+   286	# **도구 입력을 안 보는 것이 자기참조 폭발을 막는 장치다.** 이 패턴이 적힌 파일을
+   287	# Write/Edit 로 쓰는 것 자체는 결정이 아니다.
+   288	d21() { silent_case '도구 입력(파일 내용)은 스캔하지 않는다' \
+   289	          'tool:이건 범위 밖이라 그대로 뒀습니다.'; }
+   290	d22() { silent_case '서술형이 아니면(명사 종결) 세지 않는다' \
+   291	          'text:- 범위 밖'; }
+   292	d23() { silent_case '표지가 없으면 아무리 길어도 안 잡는다' \
+   293	          'text:구현을 마쳤고 테스트 12건이 전부 통과했습니다.'; }
+   294	# 턴 경계. 지난 턴의 자백까지 세면 이미 해소된 것으로 영원히 막힌다.
+   295	d24() { silent_case '지난 턴의 문장은 보지 않는다' \
+   296	          'text:이건 범위 밖이라 그대로 뒀습니다.' 'prompt' 'text:이번에는 전부 처리했습니다.'; }
+   297	# 도구 결과는 사용자 발화가 아니다. 이걸 턴 경계로 세면 창이 도구 호출 하나로 좁아져
+   298	# 게이트가 사실상 사라진다. 두 방향으로 잰다 — 놓치지 않는가(d25b)와 오탐하지 않는가(d25).
+   299	d25() { silent_case '도구 결과 뒤라도 표지가 없으면 안 막는다' \
+   300	          'text:작업을 시작합니다.' 'toolresult:ok' 'text:테스트가 전부 통과했습니다.'; }
+   301	d25b() { blocked_case '도구 결과 뒤의 자백도 같은 턴으로 본다' '범위 밖' \
+   302	          'text:작업을 시작합니다.' 'toolresult:ok' 'text:나머지는 범위 밖이라 뒀습니다.'; }
+   303	# **자백이 도구 결과보다 앞에 있는 경우가 판정의 진짜 시험대다.** 도구 결과를 턴 경계로
+   304	# 오인하면 그 앞의 발화가 통째로 창 밖으로 밀려 사라지는데, d25b 는 자백이 뒤에 있어서
+   305	# 그 오인을 못 잡는다(경계가 밀려도 뒤 문장은 여전히 창 안이다).
+   306	d25c() { blocked_case '도구 결과 앞의 자백도 놓치지 않는다' '범위 밖' \
+   307	          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult:ok' 'text:작업을 마쳤습니다.'; }
+   308	# 표식이 하나뿐인 도구 결과. 두 판정(상단 키 / 블록)을 **각각** 지킨다 — 실제 기록은 둘 다
+   309	# 갖고 있어서 서로를 가리고, 그러면 한쪽을 지워도 아무 케이스가 안 빨개진다.
+   310	d25d() { blocked_case '상단 키만 있는 도구 결과도 턴 경계가 아니다' '범위 밖' \
+   311	          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult_top:ok' 'text:작업을 마쳤습니다.'; }
+   312	d25e() { blocked_case '블록만 있는 도구 결과도 턴 경계가 아니다' '범위 밖' \
+   313	          'text:나머지는 범위 밖이라 뒀습니다.' 'toolresult_blk:ok' 'text:작업을 마쳤습니다.'; }
+   314	
+   315	# ── 3. 발동 조건 — 어느 플래그에서 도나 ──────────────────────────────
+   316	# 사용자 확정(2026-08-10): 코드뿐 아니라 **결정 문서·설계 산출물** 턴에서도 돈다.
+   317	# 표지 어휘가 가장 자주 나오는 자리가 결정 문서를 쓰는 턴이기 때문이다.
+   318	flag_case() {   # $1=이름 $2=지식게이트값 $3=플래그(none 가능) $4=기대(block|exit0)
+   319	  local name="$1" kg="$2" flag="$3" want="$4" why=''
+   320	  local p; p="$(new_project "$kg")" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   321	  local tp="$p/transcript.jsonl"
+   322	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.' || { report "$name" '픽스처 실패'; return 0; }
+   323	  if [ "$flag" = 'none' ]; then setup_flags "$p"; else setup_flags "$p" "$flag"; fi
+   324	  run_stop "$p" "$tp"
+   325	  case "$want" in
+   326	    block)
+   327	      if   [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2)"
+   328	      elif ! contains "$ERR" "$TOK_DECISION"; then why="결정 게이트가 아닌 것이 막았다: $(printf '%s' "$ERR" | head -1 | head -c 80)"
+   329	      fi ;;
+   330	    exit0)
+   331	      if   [ "$RC" -ne 0 ];                 then why="rc=$RC (기대 0 — 할 일이 없으면 조기 종료)"
+   332	      elif contains "$ERR" "$TOK_DECISION"; then why='할 일이 없는 턴인데 결정 게이트가 막았다'
+   333	      fi ;;
+   334	    *) why="알 수 없는 기대값: $want" ;;
+   335	  esac
+   336	  report "$name" "$why"
+   337	}
+   338	d26() { flag_case '코드 변경 턴에서 돈다'        ''   audit      block; }
+   339	d27() { flag_case '설계 산출물 턴에서 돈다'      ''   dualreview block; }
+   340	d28() { flag_case '결정 문서 턴에서 돈다'        'on' knowledge  block; }
+   341	d29() { flag_case '변경설명 턴에서 돈다'         ''   explain    block; }
+   342	# **아무것도 안 바꾼 턴은 막지 않는다.** 순수 질의응답에서 어휘를 썼다고 막으면 게이트가
+   343	# 대화를 방해한다(사용자 확정: "항상 검사" 보기 기각).
+   344	d30() { flag_case '플래그가 하나도 없으면 돌지 않는다' '' none exit0; }
+   345	# 공시된 한계를 케이스로 붙든다: 지식 게이트를 끈 환경에서 **결정 문서만** 고친 턴은
+   346	# 조기 종료에 걸려 결정 게이트까지 못 간다. 조기 종료를 고치면 "게이트를 껐는데 남은
+   347	# 플래그가 읽기 전용 턴을 막는" 알려진 버그가 되살아난다. 기본값이 켜짐이라 기본 구성에서는
+   348	# d28 처럼 정상 발동한다. **이 한계가 바뀌면 이 케이스가 빨개져서 알려준다.**
+   349	d30b() { flag_case '지식 게이트를 끄면 결정 문서 턴은 조기 종료된다(공시된 한계)' '' knowledge exit0; }
+   350	
+   351	# ── 4. fail-open — 판독 불가는 **통과 + 경고**다 ─────────────────────
+   352	# 대화 기록 형식은 하네스가 소유하지 않는다. 형식이 바뀌었다고 차단하면 그 세션 안에
+   353	# 고칠 방법이 없어 **세션이 통째로 벽돌이 된다.** 이 게이트의 유일한 fail-open 지점이고,
+   354	# 조건은 **경고를 삼키지 않는 것**이다 — 조용히 통과하면 게이트가 죽은 걸 아무도 모른다.
+   355	openq_case() {   # $1=이름 $2=기록준비함수
+   356	  local name="$1" prep="$2" why=''
+   357	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   358	  local tp; tp="$("$prep" "$p")"
+   359	  setup_flags "$p" audit
+   360	  run_stop "$p" "$tp"
+   361	  if   [ "$DID_RUN" -ne 1 ];            then why='훅을 실행하지 않았다'
+   362	  elif contains "$ERR" "$TOK_DECISION"; then why='판독 불가인데 차단했다 (세션이 벽돌이 된다)'
+   363	  elif [ "$RC" -ne 2 ];                 then why="rc=$RC (기대 2 — 감사 게이트가 막아야 한다)"
+   364	  elif ! contains "$ERR" "$TOK_NOTE";   then why='경고를 삼켰다 — 게이트가 조용히 죽은 것을 아무도 모른다'
+   365	  fi
+   366	  report "$name" "$why"
+   367	}
+   368	prep_nokey()   { printf '%s\n' ''; }
+   369	prep_missing() { printf '%s\n' "$1/does-not-exist.jsonl"; }
+   370	prep_garbage() { local f="$1/garbage.jsonl"; printf 'not json at all\n{{{\n' > "$f"; printf '%s\n' "$f"; }
+   371	# 사용자 프롬프트가 없는 기록 = 턴 경계를 못 찾은 것. 전체를 훑으면 지난 턴까지 걸리므로
+   372	# 판독 불가로 떨어뜨린다. 표지를 일부러 넣어 "그래도 안 막는가"를 잰다.
+   373	prep_noprompt() {
+   374	  local f="$1/noprompt.jsonl"
+   375	  python3 -c '
+   376	import json, sys
+   377	with open(sys.argv[1], "w", encoding="utf-8") as fh:
+   378	    fh.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"content": [
+   379	        {"type": "text", "text": "이건 범위 밖이라 그대로 뒀습니다."}]}}, ensure_ascii=False) + "\n")
+   380	' "$f"
+   381	  printf '%s\n' "$f"
+   382	}
+   383	prep_unreadable() { local f="$1/unreadable.jsonl"; printf '{}\n' > "$f"; chmod 000 "$f" 2>/dev/null; printf '%s\n' "$f"; }
+   384	d31() { openq_case 'transcript_path 키가 없으면 통과 + 경고' prep_nokey; }
+   385	d32() { openq_case '기록 파일이 없으면 통과 + 경고'          prep_missing; }
+   386	d33() { openq_case '전부 깨진 JSON 이면 통과 + 경고'         prep_garbage; }
+   387	d34() { openq_case '턴 시작점을 못 찾으면 통과 + 경고'       prep_noprompt; }
+   388	d35() {
+   389	  # root 로 도는 CI 에서는 chmod 000 이 읽기를 막지 못한다 — 그 환경에서 이 케이스는
+   390	  # 아무것도 재지 못하므로 **조용히 통과시키지 않고** 픽스처 무효로 빨갛게 만든다.
+   391	  # 조용한 skip 은 커버리지가 사라진 것을 초록으로 위장한다.
+   392	  if [ "$(id -u)" = '0' ]; then
+   393	    report '읽기 실패하면 통과 + 경고' 'root 라 chmod 000 이 읽기를 막지 못한다 — 이 환경에서는 측정 불가'
+   394	    return 0
+   395	  fi
+   396	  openq_case '읽기 실패하면 통과 + 경고' prep_unreadable
+   397	}
+   398	
+   399	# ── 5. 탈출구 (사용자 확정: 형제 Stop 게이트와 동일하게 제공) ────────
+   400	# 이 게이트는 위양성이 **구조적으로** 난다 — 자기 어휘를 문서·설명에서 다뤄야 하기
+   401	# 때문이다. 그래서 사용자가 즉시 뺄 수 있어야 한다. 끄는 대입 자체는 guard-hook-disable
+   402	# 이 한 번 세운다(과속방지턱이지 방벽은 아니다).
+   403	escape_case() {   # $1=이름 $2..=env 인자
+   404	  local name="$1" why=''
+   405	  shift
+   406	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패: 프로젝트 생성'; return 0; }
+   407	  local tp="$p/transcript.jsonl"
+   408	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.' || { report "$name" '픽스처 실패'; return 0; }
+   409	  setup_flags "$p" audit
+   410	  run_stop "$p" "$tp" "$@"
+   411	  if   [ "$DID_RUN" -ne 1 ];            then why='훅을 실행하지 않았다'
+   412	  elif contains "$ERR" "$TOK_DECISION"; then why='껐는데도 결정 게이트가 막았다'
+   413	  fi
+   414	  report "$name" "$why"
+   415	}
+   416	d36() { escape_case '개별 비활성으로 끌 수 있다' ECC_DISABLED_HOOKS=stop:decision; }
+   417	d37() { escape_case '전체 비활성으로도 꺼진다'   HARNESS_HOOKS=off; }
+   418	d38() {
+   419	  # **다른 게이트 이름으로는 안 꺼진다.** 접두사·부분 일치로 꺼지면 하나를 끌 때 옆의
+   420	  # 게이트가 같이 사라지고 아무도 모른다.
+   421	  local name='다른 게이트 이름으로는 안 꺼진다' why=''
+   422	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   423	  local tp="$p/transcript.jsonl"
+   424	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   425	  setup_flags "$p" audit
+   426	  run_stop "$p" "$tp" ECC_DISABLED_HOOKS=stop:explain
+   427	  contains "$ERR" "$TOK_DECISION" || why='다른 게이트를 껐는데 결정 게이트까지 꺼졌다'
+   428	  report "$name" "$why"
+   429	}
+   430	
+   430	
+   431	# ── 6. 벽돌 방지 — 같은 지점 MAX_BLOCKS 회면 통과시킨다 ──────────────
+   432	# 질문 한 번이면 풀리지만, 어떤 이유로도 못 푸는 상황에서 세션이 영영 안 끝나면 안 된다.
+   433	d39() {
+   434	  local name='같은 지점에서 MAX_BLOCKS 회 뒤에는 통과시킨다 (벽돌 방지)' why=''
+   435	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   436	  local tp="$p/transcript.jsonl"
+   437	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   438	  setup_flags "$p" audit
+   439	  local i seen_block=0
+   440	  for i in 1 2 3; do
+   441	    run_stop "$p" "$tp"
+   442	    if [ "$RC" -eq 2 ] && contains "$ERR" "$TOK_DECISION"; then seen_block=$((seen_block + 1)); fi
+   443	  done
+   444	  run_stop "$p" "$tp"
+   445	  if   [ "$seen_block" -ne 3 ];        then why="3회 연속 차단이 아니었다 (실제 ${seen_block}회)"
+   446	  elif [ "$RC" -ne 0 ];                then why="소진 후 rc=$RC (기대 0)"
+   447	  elif ! contains "$OUT" "$TOK_BRICK"; then why="소진 통과인데 경고가 없다: $(printf '%s' "$OUT" | head -c 100)"
+   448	  fi
+   449	  report "$name" "$why"
+   450	}
+   451	d40() {
+   452	  # **진전하면 예산이 리셋된다.** 질문해서 결정 게이트를 푼 뒤 감사 게이트로 넘어가는 것은
+   453	  # 진전이므로, 앞서 쓴 차단 횟수가 뒤 게이트의 예산을 갉아먹으면 안 된다.
+   454	  local name='질문해서 풀면 뒤 게이트의 예산이 리셋된다' why=''
+   455	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   456	  local blocked="$p/blocked.jsonl" asked="$p/asked.jsonl"
+   457	  mk_transcript "$blocked" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   458	  mk_transcript "$asked"   'text:이건 범위 밖이라 그대로 뒀습니다.' 'ask'
+   459	  setup_flags "$p" audit
+   460	  local i
+   461	  for i in 1 2 3; do run_stop "$p" "$blocked"; done
+   462	  run_stop "$p" "$asked"
+   463	  if   [ "$RC" -ne 2 ];                then why="rc=$RC (기대 2 — 감사 게이트가 살아 있어야 한다)"
+   464	  elif ! contains "$ERR" "$TOK_AUDIT"; then why="감사 게이트가 예산 소진으로 사라졌다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   465	  fi
+   466	  report "$name" "$why"
+   467	}
+   468	
+   469	# ── 7. 순서 계약 — 결정 게이트가 다른 게이트보다 앞이다 ──────────────
+   470	# 질문의 답이 코드를 바꿀 수 있으므로 리뷰·설명·감사에 노력을 쓰기 전에 물어야 한다.
+   471	d41() {
+   472	  local name='듀얼리뷰·설명·감사보다 먼저 말한다' why=''
+   473	  local p; p="$(new_project '')" || { report "$name" '픽스처 실패'; return 0; }
+   474	  local tp="$p/transcript.jsonl"
+   475	  mk_transcript "$tp" 'text:이건 범위 밖이라 그대로 뒀습니다.'
+   476	  setup_flags "$p" audit explain dualreview
+   477	  run_stop "$p" "$tp"
+   478	  if   [ "$RC" -ne 2 ];                   then why="rc=$RC (기대 2)"
+   479	  elif ! contains "$ERR" "$TOK_DECISION"; then why="다른 게이트가 먼저 말했다: $(printf '%s' "$ERR" | head -1 | head -c 90)"
+   480	  fi
+   481	  report "$name" "$why"
+   482	}
+   483	
+   484	# --- 실행 ----------------------------------------------------------------
+   485	# 목록을 **명시적으로** 센다. 실행 수만 세면 중복 1건 + 누락 1건이 상쇄돼 초록이 된다.
+   486	CASES='d01 d02 d03 d04 d05 d06 d07 d08 d09
+   487	d10 d11 d12 d13 d14 d15 d16 d17 d18 d18b d18c d19 d20 d21 d22 d23 d24
+   488	d25 d25b d25c d25d d25e
+   489	d26 d27 d28 d29 d30 d30b
+   490	d31 d32 d33 d34 d35
+   491	d36 d37 d38
+   492	d39 d40 d41'
+   493	
+   494	echo "결정 게이트 회귀 테스트"
+   495	expected=0
+   496	for c in $CASES; do expected=$((expected + 1)); done
+   497	dupes="$(printf '%s\n' $CASES | sort | uniq -d)"
+   498	if [ -n "$dupes" ]; then
+   499	  echo "✗ 케이스 목록에 중복이 있습니다: $dupes" >&2; exit 1
+   500	fi
+   501	for c in $CASES; do
+   502	  if ! type "$c" >/dev/null 2>&1; then echo "✗ 케이스 함수가 없습니다: $c" >&2; exit 1; fi
+   503	  "$c"
+   504	done
+   505	
+   506	echo
+   507	if [ "$ran" -ne "$expected" ]; then
+   508	  echo "✗ 실행된 케이스 수가 목록과 다릅니다: $ran (기대 $expected)" >&2
+   509	  exit 1
+   510	fi
+   511	printf '%s개 중 %s개 통과, %s개 실패\n' "$ran" "$pass" "$fail"
+   512	[ "$fail" -eq 0 ] || exit 1
+   513	echo "✓ 결정 게이트 회귀 방어 유지"
+
+2026-08-10T07:21:38.470948Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 93 column 5
+codex
+구현의 핵심 흐름은 확인했습니다. 이제 테스트가 선언한 48개 계약과 변이 스크립트가 실제 결함 지점을 독립적으로 붙드는지, 그리고 diff에서 추가된 CI/주변 게이트 변경까지 줄 단위로 대조하고 있습니다.
+exec
+/bin/zsh -lc 'nl -ba _workspace/mutate-decision-gate.sh
+rg -n "decision-gate|decision_scan|transcript_path|stop:decision|decision_note|ADR-0012" _workspace/08_decision-gate.diff' in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+     1	#!/usr/bin/env bash
+     2	# 변이 주입 하네스 — tests/decision-gate.test.sh 가 **실제로 무엇을 붙드는지** 잰다.
+     3	#
+     4	# "44건 통과"는 아무것도 증명하지 않는다. 방어를 하나씩 지우고 그 케이스가 빨개지는지
+     5	# 봐야 한다. 형제 하네스(mutate-harness-env.sh)와 같은 계약을 쓴다:
+     6	#   · 대상 파일에 미커밋 변경이 있으면 **거부**한다 (restore 가 그것을 지운다)
+     7	#   · 동시 실행을 락으로 막는다 (돌리는 중 커밋하면 변이가 커밋된다 — 실제로 당했다)
+     8	#   · 치환이 **정확히 1회** 매치할 때만 진행한다 (앵커가 밀리면 빈 변이 = 거짓 초록)
+     9	#   · 복원 뒤 **해시를 대조**한다 (git status 는 stat 캐시 때문에 못 믿는다)
+    10	#
+    11	# 이 게이트는 위양성도 치명적이라 **양방향으로** 잰다:
+    12	#   A·C·D 방어를 지우면 → 막아야 할 것을 놓친다 (위음성 검출)
+    13	#   B    좁히는 장치를 지우면 → 막으면 안 될 것을 막는다 (위양성 검출)
+    14	#
+    15	# CI 에 넣지 않는다. 검수·감사 때 손으로 돌리는 계측 도구다.
+    16	# 사용법: ./_workspace/mutate-decision-gate.sh
+    17	
+    18	set -uo pipefail
+    19	cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+    20	
+    21	COMMON='template/.claude/hooks/_common.sh'
+    22	STOP='template/.claude/hooks/verify-before-stop.sh'
+    23	TESTS='./tests/decision-gate.test.sh'
+    24	
+    25	for f in "$COMMON" "$STOP"; do
+    26	  if ! git diff --quiet -- "$f" || ! git diff --cached --quiet -- "$f"; then
+    27	    echo "✗ $f 에 미커밋 변경이 있습니다." >&2
+    28	    echo "  이 하네스는 HEAD 로 restore 하므로 그 변경을 **지웁니다**. 먼저 커밋한 뒤 다시 재세요." >&2
+    29	    exit 1
+    30	  fi
+    31	done
+    32	
+    33	LOCK="$(git rev-parse --git-dir)/mutate-decision-gate.lock"
+    34	if ! mkdir "$LOCK" 2>/dev/null; then
+    35	  echo "✗ 이미 다른 변이 측정이 돌고 있습니다: $LOCK" >&2
+    36	  echo "  겹쳐 돌리면 주입된 변이가 커밋될 수 있습니다. 끝난 뒤 다시 재세요." >&2
+    37	  echo "  (그 프로세스가 죽었다면: rmdir '$LOCK')" >&2
+    38	  exit 1
+    39	fi
+    40	trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+    41	
+    42	restore_and_verify() {   # $1 = 파일
+    43	  git restore --source=HEAD --worktree -- "$1" || { echo "✗ restore 실패: $1" >&2; exit 1; }
+    44	  local have want
+    45	  have="$(git hash-object "$1")"
+    46	  want="$(git rev-parse "HEAD:$1")"
+    47	  if [ "$have" != "$want" ]; then
+    48	    echo "✗ 복원 검증 실패: $1 ($have ≠ $want) — 이후 측정은 전부 거짓입니다" >&2
+    49	    exit 1
+    50	  fi
+    51	}
+    52	
+    53	# mutate <파일> <찾을 문자열> <바꿀 문자열> — 정확히 1번 매치할 때만 바꾼다.
+    54	mutate() {
+    55	  python3 - "$1" "$2" "$3" <<'PY'
+    56	import sys, io
+    57	path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+    58	s = io.open(path, encoding='utf-8').read()
+    59	if s.count(old) != 1:
+    60	    sys.stderr.write("  ! 변이 앵커가 %d 번 매치 (1 이어야 함): %r\n" % (s.count(old), old[:70]))
+    61	    sys.exit(1)
+    62	io.open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+    63	PY
+    64	}
+    65	
+    66	total=0; caught=0; missed=0
+    67	
+    68	measure() {   # $1=이름 $2=파일 — 변이가 주입된 상태에서 재고 복원한다
+    69	  local out rc nfail
+    70	  out="$($TESTS 2>&1)"; rc=$?
+    71	  nfail="$(printf '%s\n' "$out" | grep -c '^  ✗')"
+    72	  restore_and_verify "$2"
+    73	  if [ "$rc" -ne 0 ] && [ "$nfail" -gt 0 ]; then
+    74	    caught=$((caught + 1))
+    75	    # cut -c 를 쓰지 않는다: BSD cut 은 **바이트**로 잘라 한글 중간을 끊고, 그러면 이 로그가
+    76	    # 유효한 UTF-8 이 아니게 되어 grep 이 바이너리로 취급하고 조용히 0건을 낸다(실측 적발).
+    77	    printf '  ✓ %-44s 적색 %2s건 · %s\n' "$1" "$nfail" \
+    78	      "$(printf '%s\n' "$out" | grep '^  ✗' | sed 's/^  ✗ //; s/ —.*//' | tr '\n' '/')"
+    79	  else
+    80	    missed=$((missed + 1))
+    81	    printf '  ✗ %-44s **초록** — 이 방어를 지켜주는 케이스가 없다\n' "$1"
+    82	  fi
+    83	}
+    84	
+    85	run_mutation() {   # $1=이름 $2=파일 $3=찾을것 $4=바꿀것
+    86	  total=$((total + 1))
+    87	  if ! mutate "$2" "$3" "$4"; then
+    88	    printf '  ! %-44s 변이 주입 실패 (앵커 불일치)\n' "$1"
+    89	    restore_and_verify "$2"
+    90	    missed=$((missed + 1))
+    91	    return
+    92	  fi
+    93	  measure "$1" "$2"
+    94	}
+    95	
+    96	echo '기준선 (변이 없음)'
+    97	if ! $TESTS >/dev/null 2>&1; then
+    98	  echo '✗ 기준선이 이미 빨간불입니다. 변이 측정 이전에 고쳐야 합니다.' >&2
+    99	  $TESTS 2>&1 | grep '^  ✗'
+   100	  exit 1
+   101	fi
+   102	echo '  ✓ 전건 초록'
+   103	echo
+   104	echo '── A. 판정의 핵심을 지운다 (지우면 위음성 = 자백이 통과한다) ────────'
+   105	
+   106	run_mutation '게이트 자체를 무력화한다' "$STOP" \
+   107	  '  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?' \
+   108	  '  decision_hits=""; decision_rc=1'
+   109	
+   110	run_mutation '질문 0회 조건을 지운다 (질문해도 안 풀린다)' "$COMMON" \
+   111	  'if asked > 0:
+   112	    raise SystemExit(1)' \
+   113	  '# (변이) 질문 판정 삭제'
+   114	
+   115	run_mutation '표지 판정을 지운다 (아무 문장이나 걸린다)' "$COMMON" \
+   116	  '            if not core or not MARKER.search(core) or not DECLARATIVE.search(core):' \
+   117	  '            if not core:'
+   118	
+   119	run_mutation '걸린 문장을 메시지에 안 싣는다' "$STOP" \
+   120	  "      printf '%s\\n' \"\$decision_hits\" | sed 's/^/  - /'" \
+   121	  '      :'
+   122	
+   123	run_mutation '예산 호출을 지운다 (영원히 막힌다)' "$STOP" \
+   124	  '    gate_budget "decision"' \
+   125	  '    # (변이) gate_budget 호출 삭제'
+   126	
+   127	run_mutation '탈출구 판정을 지운다 (꺼도 안 꺼진다)' "$STOP" \
+   128	  'if ! hook_disabled "stop:decision"; then' \
+   129	  'if true; then'
+   130	
+   131	echo
+   132	echo '── B. 좁히는 장치를 지운다 (지우면 위양성 = 정상 발화가 막힌다) ─────'
+   133	
+   134	run_mutation '인라인 코드 제외를 지운다' "$COMMON" \
+   135	  '        line = QUOTED.sub(" ", INLINE.sub(" ", line))' \
+   136	  '        line = QUOTED.sub(" ", line)'
+   137	
+   138	run_mutation '따옴표 인용 제외를 지운다' "$COMMON" \
+   139	  '        line = QUOTED.sub(" ", INLINE.sub(" ", line))' \
+   140	  '        line = INLINE.sub(" ", line)'
+   141	
+   142	run_mutation '인용줄 제외를 지운다' "$COMMON" \
+   143	  '        if BLOCKQUOTE.match(line):
+   144	            continue' \
+   145	  '        pass'
+   146	
+   147	run_mutation '코드펜스 제외를 지운다' "$COMMON" \
+   148	  '    return "\n".join(p for i, p in enumerate(s.split("```")) if i % 2 == 0)' \
+   149	  '    return s'
+   150	
+   151	run_mutation '질문 신호 제외를 지운다' "$COMMON" \
+   152	  '            if QUESTION.search(whole):
+   153	                continue' \
+   154	  '            pass'
+   155	
+   156	run_mutation '서술형 종결 요구를 지운다' "$COMMON" \
+   157	  '            if not core or not MARKER.search(core) or not DECLARATIVE.search(core):' \
+   158	  '            if not core or not MARKER.search(core):'
+   159	
+   160	run_mutation 'thinking 블록까지 스캔한다' "$COMMON" \
+   161	  '        elif b.get("type") == "text":
+   162	            t = b.get("text")
+   163	            if isinstance(t, str):
+   164	                texts.append(t)' \
+   165	  '        elif b.get("type") in ("text", "thinking"):
+   166	            t = b.get("text") or b.get("thinking")
+   167	            if isinstance(t, str):
+   168	                texts.append(t)'
+   169	
+   170	run_mutation '서브에이전트 발화까지 스캔한다' "$COMMON" \
+   171	  '    if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):' \
+   172	  '    if not isinstance(e, dict) or e.get("type") != "assistant":'
+   173	
+   174	# 자기참조 폭발을 막는 핵심 장치다 — 이게 없으면 이 패턴이 적힌 파일을 쓰는 것만으로 막힌다.
+   175	run_mutation '도구 입력까지 스캔한다 (자기참조 폭발)' "$COMMON" \
+   176	  '        if b.get("type") == "tool_use":
+   177	            if b.get("name") == "AskUserQuestion":
+   178	                asked += 1' \
+   179	  '        if b.get("type") == "tool_use":
+   180	            if b.get("name") == "AskUserQuestion":
+   181	                asked += 1
+   182	            else:
+   183	                for _v in (b.get("input") or {}).values():
+   184	                    if isinstance(_v, str):
+   185	                        texts.append(_v)'
+   186	
+   187	echo
+   188	echo '── C. 턴 경계를 흐린다 ─────────────────────────────────────────────'
+   189	
+   190	run_mutation '마지막이 아니라 첫 프롬프트를 경계로 삼는다' "$COMMON" \
+   191	  '    if isinstance(e, dict) and is_user_prompt(e):
+   192	        start = i' \
+   193	  '    if isinstance(e, dict) and is_user_prompt(e) and start < 0:
+   194	        start = i'
+   195	
+   196	# 두 판정을 **따로** 잰다. 실제 기록은 두 표식을 함께 갖고 있어서 한쪽만 지우면 다른 쪽이
+   197	# 가려 준다 — 표식이 하나뿐인 픽스처(d25d·d25e)가 있어야 각각이 일하는지 보인다.
+   198	run_mutation '상단 toolUseResult 판정을 지운다' "$COMMON" \
+   199	  '    if "toolUseResult" in e:            # 도구 결과는 사용자 발화가 아니다
+   200	        return False' \
+   201	  '    pass'
+   202	
+   203	run_mutation 'tool_result 블록 판정을 지운다' "$COMMON" \
+   204	  '    content = msg.get("content")
+   205	    if isinstance(content, list):
+   206	        for b in content:
+   207	            if isinstance(b, dict) and b.get("type") == "tool_result":
+   208	                return False
+   209	    return True' \
+   210	  '    return True'
+   211	
+   212	echo
+   213	echo '── D. fail-open 이 조용해지게 만든다 ───────────────────────────────'
+   214	# 판독 불가를 **통과시키는 것 자체는 설계**다. 문제는 그때 소리를 안 내는 것 —
+   215	# 그러면 게이트가 죽은 것을 아무도 모르고, 그게 이 저장소가 부르는 조용한 실패다.
+   216	
+   217	run_mutation '판독 불가를 통과로 위장한다 (사유 소실)' "$COMMON" \
+   218	  'def fail(reason):
+   219	    sys.stdout.write(reason + "\n")
+   220	    raise SystemExit(2)' \
+   221	  'def fail(reason):
+   222	    raise SystemExit(1)'
+   223	
+   224	run_mutation '판독 불가 사유를 안 실어 보낸다' "$STOP" \
+   225	  '    decision_note="결정 게이트 생략 ($decision_hits)"' \
+   226	  '    decision_note=""'
+   227	
+   228	run_mutation '판독 불가 사유를 안 출력한다' "$STOP" \
+   229	  '  if [ -n "$decision_note" ]; then
+   230	    echo
+   231	    echo "참고: $decision_note"
+   232	    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
+   233	  fi' \
+   234	  '  :'
+   235	
+   236	run_mutation '기록을 못 읽어도 조용히 넘어간다' "$COMMON" \
+   237	  "  [ -r \"\$path\" ] || { printf '%s\\n' \"대화 기록을 읽을 수 없습니다: \$path\"; return 2; }" \
+   238	  '  [ -r "$path" ] || return 1'
+   239	
+   240	run_mutation '턴 시작점을 못 찾으면 전체를 훑는다' "$COMMON" \
+   241	  '    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")' \
+   242	  '    start = -1'
+   243	
+   244	echo
+   245	echo '── E. 순서 계약 — 게이트를 뒤로 옮긴다 ─────────────────────────────'
+   246	# 지우는 것과 옮기는 것은 다른 측정이다. 지우면 "게이트 없음"을 재고, 옮겨야
+   247	# "순서가 틀림"을 잰다. 질문의 답이 코드를 바꿀 수 있으므로 앞이어야 한다.
+   248	total=$((total + 1))
+   249	if python3 - "$STOP" <<'PY'
+   250	import io, sys
+   251	path = sys.argv[1]
+   252	s = io.open(path, encoding='utf-8').read()
+   253	head, mid, after = '# (3.2) **결정 게이트**', '# (3.5) 듀얼 리뷰', '# (6) 타입체크는 통과했지만'
+   254	for tok in (head, mid, after):
+   255	    if s.count(tok) != 1:
+   256	        sys.stderr.write('  ! 이동 앵커 매치 수 이상: %r=%d\n' % (tok, s.count(tok)))
+   257	        sys.exit(1)
+   258	start, end = s.index(head), s.index(mid)
+   259	block = s[start:end]
+   260	s = s[:start] + s[end:]
+   261	io.open(path, 'w', encoding='utf-8').write(s.replace(after, block + after))
+   262	PY
+   263	then
+   264	  measure '게이트를 감사 직전으로 옮긴다' "$STOP"
+   265	else
+   266	  printf '  ! %-44s 변이 주입 실패 (앵커 불일치)\n' '게이트를 감사 직전으로 옮긴다'
+   267	  restore_and_verify "$STOP"
+   268	  missed=$((missed + 1))
+   269	fi
+   270	
+   271	echo
+   272	echo "— 변이 ${total}건 중 ${caught}건 적색 / ${missed}건 초록(미방어)"
+   273	[ "$missed" -eq 0 ] || exit 1
+12:+        run: ./tests/decision-gate.test.sh
+34:+대안: 승인 모드에 맡긴다. → **승인창은 *한 일*에만 뜬다.** 안 한 일(묻지 않은 것·push 하지 않은 것)은 원리적으로 안 잡힌다 — 실측에서 다른 훅이 26번 승인을 요구하는 동안 혼자 결정하는 것은 **한 번도** 못 막았다. 완료 게이트 넷이 전부 산출물을 볼 때, 실패는 게이트가 없는 축(물어야 할 결정·push·기록된 선호)에서만 났다. 그래서 Stop 훅이 **이 턴의 대화 기록을 직접 읽어** 판정한다: 코드·결정이 바뀐 턴에 결정 표지 어휘를 담은 서술형 문장이 있는데 `AskUserQuestion` 이 0회면 차단하고 걸린 문장을 보여준다. 질문 한 번이면 풀린다. **여기서만 위양성이 위음성만큼 비싸다** — 불필요한 질문이 반복되면 소음이 되고, 소음이 되면 진짜 질문도 무시되며, 무엇보다 이 게이트의 훅·테스트·ADR 이 그 어휘를 데이터로 품어 **게이트를 유지보수하는 작업 자체가 걸린다.** 그래서 구조적 제외(코드펜스·인용·따옴표)와 서술형 종결 요구로 좁히고, **도구 입력은 아예 안 본다.** 그리고 대화 기록을 못 읽으면 **막지 않고 통과시킨다** — 이 하네스의 유일한 fail-open 이다(형식은 하네스 소유가 아니고, 차단하면 그 세션 안에 고칠 방법이 없다). 대신 사유를 마지막 게이트 메시지에 싣는다. 상세: [ADR-0012](docs/decisions/2026-08-10-decision-gate.md).
+43:+| 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에 한 줄 적음 — 그 "한 줄"은 도구 호출이 아니라 문장이라 승인창도 안 뜬다 (2026-08-10 실측) | Stop 훅이 **대화 기록을 직접 읽는** 결정 게이트 — "자백은 있는데 질문이 0회"면 차단하고 걸린 문장을 보여준다. 게이트가 처음으로 산출물이 아니라 **행동**을 본다 ([ADR-0012](docs/decisions/2026-08-10-decision-gate.md)) |
+56:diff --git a/_workspace/mutate-decision-gate.sh b/_workspace/mutate-decision-gate.sh
+60:+++ b/_workspace/mutate-decision-gate.sh
+63:+# 변이 주입 하네스 — tests/decision-gate.test.sh 가 **실제로 무엇을 붙드는지** 잰다.
+77:+# 사용법: ./_workspace/mutate-decision-gate.sh
+84:+TESTS='./tests/decision-gate.test.sh'
+94:+LOCK="$(git rev-parse --git-dir)/mutate-decision-gate.lock"
+168:+  '  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?' \
+189:+  'if ! hook_disabled "stop:decision"; then' \
+286:+  '    decision_note="결정 게이트 생략 ($decision_hits)"' \
+287:+  '    decision_note=""'
+290:+  '  if [ -n "$decision_note" ]; then
+292:+    echo "참고: $decision_note"
+335:diff --git a/docs/decisions/2026-08-10-decision-gate.md b/docs/decisions/2026-08-10-decision-gate.md
+339:+++ b/docs/decisions/2026-08-10-decision-gate.md
+341:+# ADR-0012: 게이트가 대화를 읽는다 — 자백은 있는데 질문이 없으면 막는다
+404:+| 탈출구를 둘까 | **둔다** (`ECC_DISABLED_HOOKS=stop:decision`) | 위양성이 구조적으로 나므로 사용자가 즉시 뺄 수 있어야 한다. 끄는 대입 자체는 `guard-hook-disable` 이 한 번 세운다 |
+458:+`tests/decision-gate.test.sh` **48건** + CI 스텝. 차단 9 · 위양성 19 · 발동조건 6 · 판독불가 5 · 탈출구 3 · 벽돌방지 2 · 순서 1 · 턴경계 3.
+462:+`_workspace/mutate-decision-gate.sh` **변이 24건 전건 적색.** 방어 제거(위음성) · 좁히는 장치 제거(위양성) · 턴 경계 흐리기 · fail-open 침묵화 · 게이트 이동.
+489:+**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:decision`(결정 게이트만) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
+502:+**대화 기록을 못 읽으면 막지 않고 통과시킨다 — 이 하네스에서 유일한 fail-open 이다.** 기록 형식은 하네스가 소유하지 않아 예고 없이 바뀔 수 있는데, 그때 차단하면 **그 세션 안에 고칠 방법이 없어 통째로 벽돌이 된다**(기록을 고칠 수 없으므로 어떤 행동으로도 안 풀린다). 대신 사유가 마지막 게이트 메시지에 실린다 — 조용히 통과하면 게이트가 죽은 것을 아무도 모른다. **공시된 한계:** `HARNESS_KNOWLEDGE_GATE` 를 비운 환경에서는 결정 문서만 고친 턴이 조기 종료에 걸려 이 게이트까지 오지 않는다(기본값이 켜짐이라 기본 구성에서는 정상 발동). 자세한 근거는 [ADR-0012](decisions/2026-08-10-decision-gate.md).
+567:+decision_scan() {   # $1 = 대화 기록(JSONL) 경로
+719:+# 것이 이 fail-open 의 조건이다(decision_scan 주석 참조).
+720:+transcript_path="$(printf '%s' "$payload" | json_get transcript_path)"
+730:+#      판정 규칙·좁히는 장치 셋·fail-open 사유는 _common.sh 의 decision_scan 주석이 정본이다.
+735:+decision_note=""
+736:+if ! hook_disabled "stop:decision"; then
+737:+  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?
+741:+    decision_note="결정 게이트 생략 ($decision_hits)"
+765:+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+780:+  if [ -n "$decision_note" ]; then
+782:+    echo "참고: $decision_note"
+807:diff --git a/tests/decision-gate.test.sh b/tests/decision-gate.test.sh
+811:+++ b/tests/decision-gate.test.sh
+814:+# decision-gate.test.sh — Stop 훅의 **결정 게이트**(stop:decision) 회귀 방어.
+954:+# 빈 문자열이면 payload 에서 transcript_path 키를 **아예 뺀다**(키 부재 케이스).
+967:+    d["transcript_path"] = sys.argv[1]
+1196:+d31() { openq_case 'transcript_path 키가 없으면 통과 + 경고' prep_nokey; }
+1228:+d36() { escape_case '개별 비활성으로 끌 수 있다' ECC_DISABLED_HOOKS=stop:decision; }
+
+2026-08-10T07:21:45.951419Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 93 column 5
+exec
+/bin/zsh -lc "rg -n 'transcript_path|AskUserQuestion|isSidechain|toolUseResult|tool_result|\"type\": \"assistant\"|\"type\":\"assistant\"' template tests docs README.md CLAUDE.md 2>/dev/null | head -n 300" in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+README.md:96:대안: 승인 모드에 맡긴다. → **승인창은 *한 일*에만 뜬다.** 안 한 일(묻지 않은 것·push 하지 않은 것)은 원리적으로 안 잡힌다 — 실측에서 다른 훅이 26번 승인을 요구하는 동안 혼자 결정하는 것은 **한 번도** 못 막았다. 완료 게이트 넷이 전부 산출물을 볼 때, 실패는 게이트가 없는 축(물어야 할 결정·push·기록된 선호)에서만 났다. 그래서 Stop 훅이 **이 턴의 대화 기록을 직접 읽어** 판정한다: 코드·결정이 바뀐 턴에 결정 표지 어휘를 담은 서술형 문장이 있는데 `AskUserQuestion` 이 0회면 차단하고 걸린 문장을 보여준다. 질문 한 번이면 풀린다. **여기서만 위양성이 위음성만큼 비싸다** — 불필요한 질문이 반복되면 소음이 되고, 소음이 되면 진짜 질문도 무시되며, 무엇보다 이 게이트의 훅·테스트·ADR 이 그 어휘를 데이터로 품어 **게이트를 유지보수하는 작업 자체가 걸린다.** 그래서 구조적 제외(코드펜스·인용·따옴표)와 서술형 종결 요구로 좁히고, **도구 입력은 아예 안 본다.** 그리고 대화 기록을 못 읽으면 **막지 않고 통과시킨다** — 이 하네스의 유일한 fail-open 이다(형식은 하네스 소유가 아니고, 차단하면 그 세션 안에 고칠 방법이 없다). 대신 사유를 마지막 게이트 메시지에 싣는다. 상세: [ADR-0012](docs/decisions/2026-08-10-decision-gate.md).
+docs/usage.md:78:**결정 게이트가 있는 이유:** 나머지 게이트는 전부 **산출물**을 본다("코드가 검증됐나", "설명이 나왔나"). 그런데 실측된 실패의 대부분은 산출물이 아니라 **행동**이었다 — 게이트가 막을 때는 세 번 다 따랐으면서, 게이트가 없는 자리에서는 전부 혼자 정하고 보고서에 한 줄 적었다. 그 "한 줄"은 도구 호출이 아니라 문장이라 승인창도 안 뜬다. 그래서 이 게이트만 **대화 기록을 직접 읽는다**: 코드·결정이 바뀐 턴에 결정 표지 어휘를 담은 서술형 문장이 있는데 `AskUserQuestion` 이 0회면 막고, 걸린 문장을 목록으로 보여준다. **질문 한 번이면 풀린다.**
+docs/usage.md:107:- **Stop 훅이 계속 차단** → 차단 메시지의 게이트 순서대로 처리하라: 결정 게이트(`AskUserQuestion` 으로 실제로 묻는다 — 지울 플래그가 없다) → codex 듀얼리뷰(`.needs-dualreview`) → change-explainer(`.needs-explain`) → 지식 저장소 반영(`.needs-knowledge`) → completion-auditor(`.needs-audit`). 각 작업을 실제로 마친 뒤에만 해당 플래그를 지운다. 게이트를 하나 지울 때마다 차단 예산이 리셋되므로 순서대로 처리하면 소진되지 않는다. 급하면 탈출구 환경변수. 같은 지점에서 진전 없이 3회면 자동 통과(그 턴의 완료 주장은 신뢰 금지).
+docs/decisions/2026-08-10-decision-gate.md:25:  AND 이 턴에 AskUserQuestion 이 0회이고
+docs/decisions/2026-08-10-decision-gate.md:127:2. **턴 경계의 두 판정이 서로를 가렸다.** 실제 기록은 상단 `toolUseResult` 와 `tool_result` 블록을 **항상 함께** 갖고 있다(실측 69/69). 그래서 한쪽을 지워도 다른 쪽이 막아 준다. 표식이 하나뿐인 픽스처를 만들어 각각을 독립적으로 지키게 했다.
+tests/decision-gate.test.sh:4:#   "코드/결정이 바뀐 턴에 결정 표지 어휘가 있는데 AskUserQuestion 이 0회면 막는다"
+tests/decision-gate.test.sh:89:    return {"type": "user", "isSidechain": False,
+tests/decision-gate.test.sh:100:        rows.append({"type": "user", "isSidechain": False,
+tests/decision-gate.test.sh:101:                     "toolUseResult": {"stdout": val},
+tests/decision-gate.test.sh:103:                                 "content": [{"type": "tool_result", "content": val}]}})
+tests/decision-gate.test.sh:109:    if kind == "toolresult_top":       # 상단 toolUseResult 만 (content 는 평문)
+tests/decision-gate.test.sh:110:        rows.append({"type": "user", "isSidechain": False,
+tests/decision-gate.test.sh:111:                     "toolUseResult": {"stdout": val},
+tests/decision-gate.test.sh:114:    if kind == "toolresult_blk":       # tool_result 블록만 (상단 키 없음)
+tests/decision-gate.test.sh:115:        rows.append({"type": "user", "isSidechain": False,
+tests/decision-gate.test.sh:117:                                 "content": [{"type": "tool_result", "content": val}]}})
+tests/decision-gate.test.sh:127:        block = {"type": "tool_use", "name": "AskUserQuestion", "input": {}}
+tests/decision-gate.test.sh:132:    rows.append({"type": "assistant", "isSidechain": side,
+tests/decision-gate.test.sh:142:# 빈 문자열이면 payload 에서 transcript_path 키를 **아예 뺀다**(키 부재 케이스).
+tests/decision-gate.test.sh:155:    d["transcript_path"] = sys.argv[1]
+tests/decision-gate.test.sh:378:    fh.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"content": [
+tests/decision-gate.test.sh:384:d31() { openq_case 'transcript_path 키가 없으면 통과 + 경고' prep_nokey; }
+
+2026-08-10T07:22:17.889236Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 93 column 5
+exec
+/bin/zsh -lc "rg -n '"'^diff --git '"' _workspace/08_decision-gate.diff
+nl -ba _workspace/08_decision-gate.diff | sed -n '1,60p;470,540p;520,810p'" in /Users/kty/Downloads/kty-claude-harness-template
+ succeeded in 0ms:
+1:diff --git a/.github/workflows/check-rules.yml b/.github/workflows/check-rules.yml
+16:diff --git a/README.md b/README.md
+56:diff --git a/_workspace/mutate-decision-gate.sh b/_workspace/mutate-decision-gate.sh
+335:diff --git a/docs/decisions/2026-08-10-decision-gate.md b/docs/decisions/2026-08-10-decision-gate.md
+475:diff --git a/docs/usage.md b/docs/usage.md
+516:diff --git a/template/.claude/hooks/_common.sh b/template/.claude/hooks/_common.sh
+709:diff --git a/template/.claude/hooks/verify-before-stop.sh b/template/.claude/hooks/verify-before-stop.sh
+788:diff --git a/template/.claude/skills/harness-orchestrator/SKILL.md b/template/.claude/skills/harness-orchestrator/SKILL.md
+807:diff --git a/tests/decision-gate.test.sh b/tests/decision-gate.test.sh
+     1	diff --git a/.github/workflows/check-rules.yml b/.github/workflows/check-rules.yml
+     2	index b5c7447..95176c5 100644
+     3	--- a/.github/workflows/check-rules.yml
+     4	+++ b/.github/workflows/check-rules.yml
+     5	@@ -37,6 +37,10 @@ jobs:
+     6	       # 에이전트가 자기 규율을 우회하는 것을 막는 게이트들. 위음성이 유일한 치명 결함이다.
+     7	       - name: 자기 규율 게이트 회귀 테스트
+     8	         run: ./tests/self-discipline-gates.test.sh
+     9	+      # 결정 게이트. 여기서는 **위양성도 치명적**이다 — 질문이 소음이 되면 진짜 질문도
+    10	+      # 무시되고, 그러면 사람이 게이트를 끈다. 그래서 케이스 절반이 위양성 방어다.
+    11	+      - name: 결정 게이트 회귀 테스트
+    12	+        run: ./tests/decision-gate.test.sh
+    13	       - name: 규칙 사본 동기화 검사
+    14	         run: ./scripts/check-rule-copies.sh
+    15	       # 층 경계 검사는 사본 대조 **뒤**다. 앞선 단계가 세운 신뢰 전제(범위·심링크·NUL)를
+    16	diff --git a/README.md b/README.md
+    17	index 19eaa89..795850d 100644
+    18	--- a/README.md
+    19	+++ b/README.md
+    20	@@ -60,7 +60,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 
+    21	 대안: 유능한 에이전트 하나가 다 하기. → 결함은 늦게 잡을수록 비싸다. 계획 결함을 개발 후에 발견하면 코드·검수·PR 전부 재작업. 각 산출물마다 생성자와 다른 검증자를 붙여 가장 싼 지점에서 잡는다. 역할 분리는 컨텍스트 오염도 막는다.
+    22	 
+    23	 **② 강제력은 훅이 소유한다 — 이 하네스의 무기**
+    24	-대안: "검수해라, 설명해라"를 산문 지시로. → 실사고(§5)로 증명됐듯 산문은 생략된다. `PreToolUse`(기본 브랜치 커밋 차단 + codex 호출 규율)·`PostToolUse`(게이트 플래그 4종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview`)·`Stop`(타입체크→듀얼리뷰→설명→지식 저장소반영→감사 미이행 시 종료 차단)은 모델의 선의와 무관하게 발화한다. superpowers가 방법론을 주지만 강제력이 없다 — 훅이 그 빈자리를 채운다. 단 벽돌 방지(같은 지점에서 진전 없이 3회면 경고와 통과 — 게이트를 지울 때마다 카운터 리셋이라 순차 처리로는 소진 안 됨)와 탈출구(`HARNESS_HOOKS=off`, 게이트별 `ECC_DISABLED_HOOKS`)를 항상 남긴다: 강제 장치가 세션을 인질로 잡으면 안 된다. 예외: guard-codex-invocation에는 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만(⑪).
+    25	+대안: "검수해라, 설명해라"를 산문 지시로. → 실사고(§5)로 증명됐듯 산문은 생략된다. `PreToolUse`(기본 브랜치 커밋 차단 + codex 호출 규율)·`PostToolUse`(게이트 플래그 4종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview`)·`Stop`(타입체크→**혼자 정하지 않았나**→듀얼리뷰→설명→지식 저장소반영→push 미완→감사 미이행 시 종료 차단)은 모델의 선의와 무관하게 발화한다. 그 중 **결정 게이트만 산출물이 아니라 에이전트의 행동을 본다**(⑬). superpowers가 방법론을 주지만 강제력이 없다 — 훅이 그 빈자리를 채운다. 단 벽돌 방지(같은 지점에서 진전 없이 3회면 경고와 통과 — 게이트를 지울 때마다 카운터 리셋이라 순차 처리로는 소진 안 됨)와 탈출구(`HARNESS_HOOKS=off`, 게이트별 `ECC_DISABLED_HOOKS`)를 항상 남긴다: 강제 장치가 세션을 인질로 잡으면 안 된다. 예외: guard-codex-invocation에는 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만(⑪).
+    26	 
+    27	 **③ 단일 프로필 슬롯 + 런타임 주입**
+    28	 대안 1: 도메인을 각 에이전트에 인라인(원본 방식) → 같은 사실이 5+개 파일에 중복, 바뀌면 드리프트. 대안 2: 에이전트에게 "프로필을 읽어라" 지시만 → 안 읽으면 도메인이 컨텍스트에 아예 없음. → 채택: 도메인은 프로필 한 파일(디스크의 단일 원천), 오케스트레이터가 dispatch마다 해당 §전문을 프롬프트에 동봉(런타임 인라인). **에이전트의 순종에 안 맡긴다.** 읽을지 선택할 기회 자체를 없앴고, 그래도 어기면 같은 프로필을 근거로 한 reviewer가 잡는다.
+    29	@@ -92,6 +92,9 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 
+    30	 **⑫ 지식 반영도 완료 조건 — 지식 저장소 게이트 (2026-08-02 사용자 확정)**
+    31	 대안: "세션 끝나면 어디에든 정리해라" 산문 규칙. → 세션 내내 0회 이행된 실사고. 코드·설정이 바뀐 턴은 **지식 저장소 반영** 또는 불요 사유 기록 없이 종료 불가(`.needs-knowledge` + Stop 훅 `stop:knowledge`). 하네스가 아는 것은 계약 하나뿐이다 — 저장소가 **어디이고 어떤 구조인지는 사용자 층 설정이 답한다**(ADR-0006). completion-auditor가 반영 증거(커밋 해시·파일 실존)를 1차 증거로 검증한다 — 코드가 끝나도 지식이 안 남았으면 완료가 아니다. 게이트는 기본 켜짐이고 `harness.env` 의 `HARNESS_KNOWLEDGE_GATE` 를 비워서만 끈다(ADR-0008).
+    32	 
+    33	+**⑬ 게이트 하나는 산출물이 아니라 에이전트를 본다 — 결정 게이트 (2026-08-10 사용자 확정)**
+    34	+대안: 승인 모드에 맡긴다. → **승인창은 *한 일*에만 뜬다.** 안 한 일(묻지 않은 것·push 하지 않은 것)은 원리적으로 안 잡힌다 — 실측에서 다른 훅이 26번 승인을 요구하는 동안 혼자 결정하는 것은 **한 번도** 못 막았다. 완료 게이트 넷이 전부 산출물을 볼 때, 실패는 게이트가 없는 축(물어야 할 결정·push·기록된 선호)에서만 났다. 그래서 Stop 훅이 **이 턴의 대화 기록을 직접 읽어** 판정한다: 코드·결정이 바뀐 턴에 결정 표지 어휘를 담은 서술형 문장이 있는데 `AskUserQuestion` 이 0회면 차단하고 걸린 문장을 보여준다. 질문 한 번이면 풀린다. **여기서만 위양성이 위음성만큼 비싸다** — 불필요한 질문이 반복되면 소음이 되고, 소음이 되면 진짜 질문도 무시되며, 무엇보다 이 게이트의 훅·테스트·ADR 이 그 어휘를 데이터로 품어 **게이트를 유지보수하는 작업 자체가 걸린다.** 그래서 구조적 제외(코드펜스·인용·따옴표)와 서술형 종결 요구로 좁히고, **도구 입력은 아예 안 본다.** 그리고 대화 기록을 못 읽으면 **막지 않고 통과시킨다** — 이 하네스의 유일한 fail-open 이다(형식은 하네스 소유가 아니고, 차단하면 그 세션 안에 고칠 방법이 없다). 대신 사유를 마지막 게이트 메시지에 싣는다. 상세: [ADR-0012](docs/decisions/2026-08-10-decision-gate.md).
+    35	+
+    36	 ## 4. 에이전트 — 자체 8 + ECC 참조 5
+    37	 
+    38	 **자체 에이전트 8** (이 repo 소유 — 하네스 계약이 정의에 내장):
+    39	@@ -134,6 +137,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 
+    40	 | codex 리뷰를 "작업이 작다/비용"이라며 모델·effort 임의 하향 (2026-08-01) | 듀얼 리뷰 규칙에 모델·effort 하드코딩 + guard-codex-invocation 훅 — 미달 호출을 PreToolUse에서 차단 (환경변수 탈출구 없음) |
+    41	 | 지식 저장소 반영 산문 규칙이 세션 내내 0회 이행 (2026-08-02) | `.needs-knowledge` 플래그 + Stop 지식 저장소 게이트 — 지식 반영도 완료 조건으로 승격 |
+    42	 | sync 누락 → 구버전 스킬이 설계 듀얼 리뷰를 조용히 생략, Claude 단독이 놓친 CRITICAL을 codex가 뒤늦게 적발 (2026-08-03 POK-30) | `.needs-dualreview` 기계 게이트 + Stop 차단 + Phase 0 정본 드리프트 확인 (다르면 작업 전 sync 먼저) |
+    43	+| 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에 한 줄 적음 — 그 "한 줄"은 도구 호출이 아니라 문장이라 승인창도 안 뜬다 (2026-08-10 실측) | Stop 훅이 **대화 기록을 직접 읽는** 결정 게이트 — "자백은 있는데 질문이 0회"면 차단하고 걸린 문장을 보여준다. 게이트가 처음으로 산출물이 아니라 **행동**을 본다 ([ADR-0012](docs/decisions/2026-08-10-decision-gate.md)) |
+    44	 | 검사기 자신이 어긋난 사본을 통과시킴 — 마커를 꾸미거나 블록을 2개 두면 무사통과 (2026-08-04 실측) | 전체 줄 3상태 파서 + 미등록 사본 스캔 + NUL 바이트 거부 게이트(UTF-16·NUL 위장으로 스캔을 통째로 비켜가던 경로) + 회귀 테스트 (건수의 정본은 테스트 파일의 `EXPECTED_CASES`) |
+    45	 
+    46	 교훈의 패턴: **산문으로만 존재하는 절차는 언젠가 생략된다. 반복 실패는 훅·게이트·프로필로 승격하라.** (단, 선제 방어는 하지 않는다 — 실제로 겪은 뒤에 강제를 추가한다. YAGNI는 프로세스에도 적용된다.)
+    47	@@ -157,7 +161,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 
+    48	 │       ├── skills/
+    49	 │       │   ├── harness-orchestrator/           # 오케스트레이터 (프로필 주입·듀얼 리뷰·보고 블록·ADR 규약)
+    50	 │       │   └── readable-writing/               # 사용자 대면 글 가독성 원칙 (보고 블록 본문이 따름)
+    51	-│       ├── hooks/ + settings.json              # 강제 훅 4 + 배선 (커밋 가드·codex 규율·게이트 플래그·Stop 게이트)
+    52	+│       ├── hooks/ + settings.json              # 강제 훅 5 + 배선 (커밋 가드·codex 규율·게이트 끄기 가드·게이트 플래그·Stop 게이트)
+    53	 │       └── harness/
+    54	 │           ├── project-profile.template.md     # 슬롯 스키마 (9섹션)
+    55	 │           ├── harness.env.template            # 타입체크 명령 슬롯
+    56	diff --git a/_workspace/mutate-decision-gate.sh b/_workspace/mutate-decision-gate.sh
+    57	new file mode 100755
+    58	index 0000000..51e485c
+    59	--- /dev/null
+    60	+++ b/_workspace/mutate-decision-gate.sh
+   470	+
+   471	+## 관련
+   472	+- [ADR-0011](2026-08-10-self-discipline-gates.md) — 이 게이트를 후속으로 남긴 곳
+   473	+- [ADR-0008](2026-08-06-knowledge-gate-default-on.md) — 게이트 기본값과 판독 계약
+   474	+- [ADR-0007](2026-08-06-gate-scope-by-file-identity.md) — 어느 편집이 게이트 대상인가
+   475	diff --git a/docs/usage.md b/docs/usage.md
+   476	index 588ee33..2ccfc88 100644
+   477	--- a/docs/usage.md
+   478	+++ b/docs/usage.md
+   479	@@ -64,17 +64,25 @@ cd ~/.claude/harness-template
+   480	 | guard-hook-disable | Bash 실행 전 | 에이전트가 `HARNESS_HOOKS`·`ECC_DISABLED_HOOKS`·`ECC_GATEGUARD` 를 끄려 할 때 한 번 세운다. **과속방지턱이지 방벽이 아니다** — 아래 참조. 탈출구가 **없다** |
+   481	 | guard-codex-invocation | Bash 실행 전 | `codex exec` 호출의 모델(`gpt-5.6-sol`)·effort(`high`) 미달 차단 — 임의 하향 금지 (2026-08-01 사용자 지시) |
+   482	 | mark-needs-audit | 파일 편집 후 | 게이트 플래그 4종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview` (코드는 4종 전부 · 설계·계획 산출물은 듀얼리뷰+지식 · 결정 문서는 지식만). 검사 범위는 아래 "완료 게이트 검사 범위" 참조 |
+   483	-| verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → **push 미완** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
+   484	+| verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → **혼자 정하지 않았나** → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → **push 미완** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |
+   485	 
+   486	 **지식 저장소 게이트가 아는 것은 계약 하나뿐이다** — "지식 저장소가 설정돼 있으면, 결정·설계가 나온 턴은 반영 없이 끝낼 수 없다." **어디에 어떤 구조로 반영하는지는 하네스가 모른다.** 그건 사용자 층 설정(전역 `CLAUDE.md` 등)이 답하고, 하네스에는 켜짐/꺼짐 1비트만 있다. 그래서 지식 저장소를 바꿔도 하네스는 고치지 않고, 아예 안 쓰는 프로젝트에서도 그대로 돈다.
+   487	 
+   488	-**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
+   489	+**탈출구:** `HARNESS_HOOKS=off` (전체) 또는 `ECC_DISABLED_HOOKS`에 `pre:bash:master-guard` / `post:edit:needs-audit` / `stop:verify`(완료 게이트 전체) / `stop:decision`(결정 게이트만) / `stop:dualreview`(듀얼리뷰 게이트만) / `stop:explain`(설명 게이트만) / `stop:knowledge`(지식 게이트만) / `stop:push`(push 게이트만) 나열.
+   490	 **`guard-hook-disable` 은 과속방지턱이지 보안 경계가 아니다.** 판정이 정규식 하나라 셸을 해석하지 못한다 — `read`+`export`, 따옴표로 쪼갠 `env 'X''=off'`, 변수 조립, `eval`, 생성한 스크립트 실행은 전부 통과한다(실측). 그럼에도 값을 하는 이유는 막으려는 것이 적대적 공격자가 아니라 **막힌 에이전트의 직진 충동**이고, 그건 `HARNESS_HOOKS=off ...` 라는 직진형으로 나오기 때문이다. 제대로 막으려면 셸 파서가 필요한데, 반쯤 만든 셸 파서는 안 만든 것보다 나쁘다(막힌다고 믿게 하면서 안 막는다 — 이 저장소가 `harness.env` 판독기에서 겪은 늪).
+   491	 
+   492	 **그래서 위양성 쪽으로 기운다.** 실행 구문과 인용문을 구분하지 않아 `git grep 'HARNESS_HOOKS=off'` 같은 정당한 검색도 막힌다. 의도된 선택이다 — 따옴표 안을 건너뛰면 위양성은 사라지지만 `bash -c 'HARNESS_HOOKS=off ...'` 가 뚫린다. 둘은 문자열로 구별되지 않는 같은 모호성의 양면이고, 위양성은 메시지 한 번이 비용이지만 위음성은 **게이트가 꺼진 걸 아무도 모르는** 것이 비용이다. 차단 메시지가 위양성일 때의 대안(패턴 쪼개기·Write 도구 사용)을 함께 안내한다.
+   493	 
+   494	 **그리고 환경변수로 끌 수 없다.** 그 탈출구가 있으면 에이전트가 그것으로 이 훅을 끄고 나머지를 전부 끌 수 있어 존재 이유가 사라진다. 사용자가 정말 끄려면 셸에서 직접 `export` 하고 세션을 새로 띄우거나 `settings.json` 배선을 지운다 — 둘 다 사람이 하는 행위다.
+   495	 
+   496	+**결정 게이트가 있는 이유:** 나머지 게이트는 전부 **산출물**을 본다("코드가 검증됐나", "설명이 나왔나"). 그런데 실측된 실패의 대부분은 산출물이 아니라 **행동**이었다 — 게이트가 막을 때는 세 번 다 따랐으면서, 게이트가 없는 자리에서는 전부 혼자 정하고 보고서에 한 줄 적었다. 그 "한 줄"은 도구 호출이 아니라 문장이라 승인창도 안 뜬다. 그래서 이 게이트만 **대화 기록을 직접 읽는다**: 코드·결정이 바뀐 턴에 결정 표지 어휘를 담은 서술형 문장이 있는데 `AskUserQuestion` 이 0회면 막고, 걸린 문장을 목록으로 보여준다. **질문 한 번이면 풀린다.**
+   497	+
+   498	+**여기서는 위양성도 위음성만큼 비싸다.** 다른 검사기와 판단이 갈리는 유일한 자리다 — 위양성의 비용이 메시지 한 번이 아니라 사용자에게 가는 **불필요한 질문**이고, 그게 반복되면 질문이 소음이 되어 진짜 질문까지 무시된다. 게다가 이 게이트의 훅·테스트·ADR 이 그 어휘를 데이터로 품어서, 어휘만 보면 **게이트를 유지보수하는 작업 자체가 매번 걸린다.** 그래서 좁힌다: 코드펜스·인라인 코드·인용줄·따옴표 안은 안 보고, 같은 문장에 물음이 있으면 세지 않고, 서술형 단정으로 끝나야 센다. **도구 입력도 안 본다**(발화 텍스트만) — 그 어휘가 적힌 파일을 쓰는 것 자체는 결정이 아니다. 사고 블록과 서브에이전트 발화도 뺀다.
+   499	+
+   500	+*걸렸는데 결정이 아니라면* 백틱이나 따옴표로 감싸면 빠진다. 그래도 걸리면 사용자에게 알리고 지시를 받는다. **대가는 위음성이다** — 표현을 바꾸면 빠져나간다. 겨누는 것이 적대적 회피가 아니라 무의식적 습관이라 그래도 실효가 남는다.
+   501	+
+   502	+**대화 기록을 못 읽으면 막지 않고 통과시킨다 — 이 하네스에서 유일한 fail-open 이다.** 기록 형식은 하네스가 소유하지 않아 예고 없이 바뀔 수 있는데, 그때 차단하면 **그 세션 안에 고칠 방법이 없어 통째로 벽돌이 된다**(기록을 고칠 수 없으므로 어떤 행동으로도 안 풀린다). 대신 사유가 마지막 게이트 메시지에 실린다 — 조용히 통과하면 게이트가 죽은 것을 아무도 모른다. **공시된 한계:** `HARNESS_KNOWLEDGE_GATE` 를 비운 환경에서는 결정 문서만 고친 턴이 조기 종료에 걸려 이 게이트까지 오지 않는다(기본값이 켜짐이라 기본 구성에서는 정상 발동). 자세한 근거는 [ADR-0012](decisions/2026-08-10-decision-gate.md).
+   503	+
+   504	 **push 게이트가 있는 이유:** 이 저장소는 커밋 29개를 잃은 적이 있다. 코드는 다 짜여 있었고 "아직 PR 전이니까"라며 push 를 미뤘다. 게이트는 **네트워크를 쓰지 않는다** — 로컬 remote-tracking ref 만 본다. 원격에 있는데도 ref 가 안 보이면(`remote.origin.fetch` 가 좁혀진 경우) 그 사실을 사유에 적는다. push 여부가 로컬에서 안 보이는 것 자체가 위험이기 때문이다. 예외: guard-codex-invocation은 환경변수 탈출구가 없다 — 변경은 사용자 승인 + 훅·SKILL.md 동시 갱신으로만.
+   505	 
+   506	 ### 완료 게이트 검사 범위 (mark-needs-audit)
+   507	@@ -96,7 +104,7 @@ cd ~/.claude/harness-template
+   508	 
+   509	 ## 6. 트러블슈팅
+   510	 
+   511	-- **Stop 훅이 계속 차단** → 차단 메시지의 게이트 순서대로 처리하라: codex 듀얼리뷰(`.needs-dualreview`) → change-explainer(`.needs-explain`) → 지식 저장소 반영(`.needs-knowledge`) → completion-auditor(`.needs-audit`). 각 작업을 실제로 마친 뒤에만 해당 플래그를 지운다. 게이트를 하나 지울 때마다 차단 예산이 리셋되므로 순서대로 처리하면 소진되지 않는다. 급하면 탈출구 환경변수. 같은 지점에서 진전 없이 3회면 자동 통과(그 턴의 완료 주장은 신뢰 금지).
+   512	+- **Stop 훅이 계속 차단** → 차단 메시지의 게이트 순서대로 처리하라: 결정 게이트(`AskUserQuestion` 으로 실제로 묻는다 — 지울 플래그가 없다) → codex 듀얼리뷰(`.needs-dualreview`) → change-explainer(`.needs-explain`) → 지식 저장소 반영(`.needs-knowledge`) → completion-auditor(`.needs-audit`). 각 작업을 실제로 마친 뒤에만 해당 플래그를 지운다. 게이트를 하나 지울 때마다 차단 예산이 리셋되므로 순서대로 처리하면 소진되지 않는다. 급하면 탈출구 환경변수. 같은 지점에서 진전 없이 3회면 자동 통과(그 턴의 완료 주장은 신뢰 금지).
+   513	 - **타입체크가 이상하게 실패** → `harness.env`의 명령을 셸에서 직접 실행해 확인. 도구 부재(rc=127)·타임아웃은 차단 안 하고 생략 처리된다.
+   514	 - **superpowers 스킬 호출 실패** → 플러그인 설치/이름 확인: `test-driven-development`·`writing-plans`·`brainstorming`·`requesting-code-review`·`verification-before-completion`·`systematic-debugging`.
+   515	 - **에이전트가 도메인을 무시** → 프로필 §가 비어 있지 않은지 확인. 오케스트레이터는 빈 §를 "검증 생략"으로 정직 보고한다.
+   516	diff --git a/template/.claude/hooks/_common.sh b/template/.claude/hooks/_common.sh
+   517	index e47dc87..3e8cadd 100644
+   518	--- a/template/.claude/hooks/_common.sh
+   519	+++ b/template/.claude/hooks/_common.sh
+   520	@@ -283,3 +283,188 @@ for key in sys.argv[1].split("."):
+   520	@@ -283,3 +283,188 @@ for key in sys.argv[1].split("."):
+   521	 print(data)
+   521	 print(data)
+   522	 ' "$1" 2>/dev/null
+   522	 ' "$1" 2>/dev/null
+   523	 }
+   523	 }
+   524	+
+   524	+
+   525	+# 이 턴의 대화 기록을 읽어 **"물어봤어야 할 것을 혼자 정했다"는 자백**을 찾는다.
+   525	+# 이 턴의 대화 기록을 읽어 **"물어봤어야 할 것을 혼자 정했다"는 자백**을 찾는다.
+   526	+#
+   526	+#
+   527	+# 왜 이런 게이트가 필요한가: 완료 게이트 넷(타입체크·듀얼리뷰·변경설명·지식반영)은 전부
+   527	+# 왜 이런 게이트가 필요한가: 완료 게이트 넷(타입체크·듀얼리뷰·변경설명·지식반영)은 전부
+   528	+# **산출물**을 본다. 에이전트 자신의 행동을 겨눈 것은 없었고, 그 비대칭이 실물로 드러났다 —
+   528	+# **산출물**을 본다. 에이전트 자신의 행동을 겨눈 것은 없었고, 그 비대칭이 실물로 드러났다 —
+   529	+# 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에
+   529	+# 게이트가 막을 때는 세 번 다 따랐는데, 게이트가 없는 축에서는 전부 혼자 정하고 보고서에
+   530	+# 한 줄 적었다. 그 "한 줄"은 **도구 호출이 아니라 문장**이라 어떤 PreToolUse 훅도 볼 수 없고
+   530	+# 한 줄 적었다. 그 "한 줄"은 **도구 호출이 아니라 문장**이라 어떤 PreToolUse 훅도 볼 수 없고
+   531	+# 승인창도 안 뜬다(승인창은 *한 일*에만 뜬다). 그래서 Stop 이 대화 기록을 직접 읽는다.
+   531	+# 승인창도 안 뜬다(승인창은 *한 일*에만 뜬다). 그래서 Stop 이 대화 기록을 직접 읽는다.
+   532	+#
+   532	+#
+   533	+# ── 판정 ─────────────────────────────────────────────────────────────
+   533	+# ── 판정 ─────────────────────────────────────────────────────────────
+   534	+#   결정 표지 어휘를 담은 **서술형** 문장이 있는데  AND  이 턴에 AskUserQuestion 이 0회
+   534	+#   결정 표지 어휘를 담은 **서술형** 문장이 있는데  AND  이 턴에 AskUserQuestion 이 0회
+   535	+#   → 차단. 질문을 한 번 하면 풀리므로 세션이 벽돌이 되지 않는다.
+   535	+#   → 차단. 질문을 한 번 하면 풀리므로 세션이 벽돌이 되지 않는다.
+   536	+#
+   536	+#
+   537	+# 표지 어휘를 이렇게 고른 이유: 저 말들은 "물어봤어야 할 것을 혼자 정했다"를 **자백**할
+   537	+# 표지 어휘를 이렇게 고른 이유: 저 말들은 "물어봤어야 할 것을 혼자 정했다"를 **자백**할
+   538	+# 때만 나온다. 자백은 있는데 질문이 0회면 그 자체가 위반이다.
+   538	+# 때만 나온다. 자백은 있는데 질문이 0회면 그 자체가 위반이다.
+   539	+#
+   539	+#
+   540	+# ── 좁히는 장치 셋 (위양성 억제) ─────────────────────────────────────
+   540	+# ── 좁히는 장치 셋 (위양성 억제) ─────────────────────────────────────
+   541	+# 어휘만 보면 이 게이트를 **유지보수하는 작업 자체가 매번 걸린다** — 훅·테스트·결정 문서가
+   542	+# 그 어휘를 데이터로 품기 때문이다. 그러면 사람이 게이트를 끄게 되고 그게 최악이다.
+   543	+#   1) 구조적 제외 — 코드펜스 · 인라인 코드 · 인용줄(>) · 따옴표로 감싼 부분은 안 본다.
+   544	+#      그래서 어휘를 **인용부호로 감싸 언급하는 것**은 안 걸린다(문서·설명의 정상 형태다).
+   545	+#   2) 질문 신호 제외 — 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+   546	+#   3) 서술형 종결 요구 — "…했다/…습니다" 같은 단정으로 끝나야 "내가 그렇게 했다"이다.
+   547	+# 대가는 위음성 증가다. 표현을 바꾸면 빠져나간다 — 겨누는 것이 적대적 회피가 아니라
+   548	+# **무의식적 습관**이라 그래도 실효가 남는다. guard-hook-disable 과 같은 판단 구조다.
+   549	+#
+   550	+# **도구 입력은 보지 않는다(text 블록만 본다).** 그래서 이 패턴이 적힌 파일을 Write/Edit
+   551	+# 로 쓰는 것은 안 걸린다 — 자기참조 폭발을 원천에서 없애는 장치다.
+   552	+# thinking 블록도 안 본다: 거기서 선택지를 저울질하는 것은 결정 통보가 아니다.
+   553	+# 서브에이전트 발화(isSidechain)도 뺀다: 서브에이전트는 사용자에게 물을 수 없다.
+   554	+#
+   555	+# ── 반환 계약 ─────────────────────────────────────────────────────────
+   556	+#   rc=0 : 차단해야 한다. stdout = 걸린 문장들(줄당 하나)
+   557	+#   rc=1 : 차단 불필요 (표지 없음 · 또는 이 턴에 질문을 했음)
+   558	+#   rc=2 : **판독 불가.** stdout = 사유 한 줄
+   559	+#
+   560	+# ── rc=2 가 이 게이트의 유일한 fail-open 지점이다 ────────────────────
+   561	+# 대화 기록의 형식은 하네스가 소유하지 않는다 — 도구 제공자가 정하고 예고 없이 바뀐다.
+   562	+# 형식이 바뀌었다고 차단하면 **세션이 통째로 벽돌이 되는데 그 세션 안에 고칠 방법이 없다**
+   563	+# (기록을 고칠 수는 없으므로 어떤 행동으로도 게이트가 안 풀린다). 그래서 여기서만 통과로
+   564	+# 간다. 나머지 판정은 전부 fail-closed 다.
+   565	+# **조건은 경고를 삼키지 않는 것이다** — 호출부가 이 사유를 마지막 게이트 메시지에 싣는다.
+   566	+# 조용히 통과하면 게이트가 죽은 것을 아무도 모르고, 그것이 이 저장소가 부르는 조용한 실패다.
+   567	+decision_scan() {   # $1 = 대화 기록(JSONL) 경로
+   568	+  local path="$1"
+   569	+  [ -n "$path" ] || { printf '%s\n' '대화 기록 경로가 훅 입력에 없습니다'; return 2; }
+   570	+  [ -r "$path" ] || { printf '%s\n' "대화 기록을 읽을 수 없습니다: $path"; return 2; }
+   571	+  python3 - "$path" <<'PY'
+   572	+import json, re, sys
+   573	+
+   574	+# 결정 표지. 굴절 변형만 최소로 넓혔고 그 이상 넓히지 않는다 — 넓히면 위양성이 늘고,
+   575	+# 위양성이 늘면 질문이 소음이 되고, 소음이 되면 진짜 질문도 무시된다.
+   576	+MARKER = re.compile(
+   577	+    "공시하|공시했|공시함"
+   578	+    "|범위 ?밖"
+   579	+    "|별도로"
+   580	+    "|그대로 (?:뒀|두었|남겼|남겨)"
+   581	+    "|(?:제|내) 판단으로"
+   582	+    "|가정하(?:고|여|였|겠)|가정했"
+   583	+    "|수용(?:된|한) 한계"
+   584	+    "|트레이드오프"
+   585	+    "|안 했(?:습니다|다|음)"
+   586	+)
+   587	+# 같은 문장에 물음이 있으면 자백이 아니라 묻는 중이다.
+   588	+QUESTION = re.compile(
+   589	+    "\\?|까요|나요|ㄹ까|을까|할까|여쭤|여쭈|여쭙|물어|어떠신|어느 쪽"
+   590	+    "|골라|선택해|정해 ?주|알려 ?주|괜찮으신|의견"
+   591	+)
+   592	+# 서술형 종결. "내가 그렇게 했다"는 단정만 잡는다.
+   593	+DECLARATIVE = re.compile("(?:다|음|함|됨|임|옴)$")
+   594	+
+   595	+INLINE     = re.compile("`[^`\n]*`")
+   596	+QUOTED     = re.compile("\"[^\"\n]*\"|'[^'\n]*'|“[^”\n]*”"
+   597	+                        "|‘[^’\n]*’|「[^」\n]*」"
+   598	+                        "|『[^』\n]*』")
+   599	+BLOCKQUOTE = re.compile("^\\s{0,3}>")
+   600	+SENT       = re.compile("([\n.!?…。！？]+)")
+   601	+LEAD       = re.compile("^[\\s*_>#\\-–—•·]+")
+   602	+TRAIL      = re.compile("[\\s*_`~\\[\\](){}<>:;,·…\\-—–]+$")
+   603	+
+   604	+MAX_HITS, MAX_LEN = 8, 140
+   605	+
+   606	+
+   607	+def fail(reason):
+   608	+    sys.stdout.write(reason + "\n")
+   609	+    raise SystemExit(2)
+   610	+
+   611	+
+   612	+def drop_fences(s):
+   613	+    # 짝수 조각만 코드 **밖**이다. 펜스가 안 닫혔으면 마지막 조각은 코드 안으로 친다 —
+   614	+    # 스트리밍 중 잘린 기록에서 코드가 산문으로 새는 것을 막는다.
+   615	+    return "\n".join(p for i, p in enumerate(s.split("```")) if i % 2 == 0)
+   616	+
+   617	+
+   618	+def is_user_prompt(e):
+   619	+    if e.get("type") != "user" or e.get("isSidechain"):
+   620	+        return False
+   621	+    if "toolUseResult" in e:            # 도구 결과는 사용자 발화가 아니다
+   622	+        return False
+   623	+    msg = e.get("message")
+   624	+    if not isinstance(msg, dict):
+   625	+        return False
+   626	+    content = msg.get("content")
+   627	+    if isinstance(content, list):
+   628	+        for b in content:
+   629	+            if isinstance(b, dict) and b.get("type") == "tool_result":
+   630	+                return False
+   631	+    return True
+   632	+
+   633	+
+   634	+try:
+   635	+    with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as fh:
+   636	+        raw = fh.read()
+   637	+except Exception as exc:
+   638	+    fail("대화 기록을 열지 못했습니다: %s" % exc.__class__.__name__)
+   639	+
+   640	+lines = [ln for ln in raw.splitlines() if ln.strip()]
+   641	+entries = []
+   642	+for ln in lines:
+   643	+    try:
+   644	+        entries.append(json.loads(ln))
+   645	+    except Exception:
+   646	+        pass                # 개별 줄 손상은 건너뛴다. 전멸이면 바로 아래에서 걸린다
+   647	+if lines and not entries:
+   648	+    fail("대화 기록을 한 줄도 파싱하지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+   649	+
+   650	+start = -1
+   651	+for i, e in enumerate(entries):
+   652	+    if isinstance(e, dict) and is_user_prompt(e):
+   653	+        start = i
+   654	+if start < 0:
+   655	+    # 사용자 프롬프트가 없는 기록은 있을 수 없다 — 경계를 못 찾았다는 뜻이다.
+   656	+    # 전체를 훑으면 지난 턴의 문장까지 걸려 위양성이 폭주하므로 판독 불가로 떨어뜨린다.
+   657	+    fail("이 턴의 시작점(사용자 프롬프트)을 찾지 못했습니다 (형식이 바뀌었을 수 있습니다)")
+   658	+
+   659	+asked, texts = 0, []
+   660	+for e in entries[start + 1:]:
+   661	+    if not isinstance(e, dict) or e.get("type") != "assistant" or e.get("isSidechain"):
+   662	+        continue
+   663	+    content = (e.get("message") or {}).get("content")
+   664	+    if not isinstance(content, list):
+   665	+        continue
+   666	+    for b in content:
+   667	+        if not isinstance(b, dict):
+   668	+            continue
+   669	+        if b.get("type") == "tool_use":
+   670	+            if b.get("name") == "AskUserQuestion":
+   671	+                asked += 1
+   672	+        elif b.get("type") == "text":
+   673	+            t = b.get("text")
+   674	+            if isinstance(t, str):
+   675	+                texts.append(t)
+   676	+
+   677	+if asked > 0:
+   678	+    raise SystemExit(1)
+   679	+
+   680	+hits, seen = [], set()
+   681	+for text in texts:
+   682	+    for line in drop_fences(text).split("\n"):
+   683	+        if BLOCKQUOTE.match(line):
+   684	+            continue
+   685	+        line = QUOTED.sub(" ", INLINE.sub(" ", line))
+   686	+        chunks = SENT.split(line)
+   687	+        for i in range(0, len(chunks), 2):
+   688	+            body = chunks[i]
+   689	+            whole = body + (chunks[i + 1] if i + 1 < len(chunks) else "")
+   690	+            if QUESTION.search(whole):
+   691	+                continue
+   692	+            core = TRAIL.sub("", LEAD.sub("", body).strip())
+   693	+            if not core or not MARKER.search(core) or not DECLARATIVE.search(core):
+   694	+                continue
+   695	+            if core in seen:
+   696	+                continue
+   697	+            seen.add(core)
+   698	+            hits.append(core if len(core) <= MAX_LEN else core[:MAX_LEN] + "…")
+   699	+
+   700	+if not hits:
+   701	+    raise SystemExit(1)
+   702	+for h in hits[:MAX_HITS]:
+   703	+    sys.stdout.write(h + "\n")
+   704	+if len(hits) > MAX_HITS:
+   705	+    sys.stdout.write("... 그리고 %d개 더\n" % (len(hits) - MAX_HITS))
+   706	+raise SystemExit(0)
+   707	+PY
+   708	+}
+   709	diff --git a/template/.claude/hooks/verify-before-stop.sh b/template/.claude/hooks/verify-before-stop.sh
+   710	index 8f9dff9..970bba3 100644
+   711	--- a/template/.claude/hooks/verify-before-stop.sh
+   712	+++ b/template/.claude/hooks/verify-before-stop.sh
+   713	@@ -17,6 +17,10 @@ hook_disabled "$HOOK_ID" && exit 0
+   714	 
+   715	 payload="$(cat)"
+   716	 stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
+   717	+# 대화 기록 경로. 결정 게이트(3.2)가 이 턴의 발화를 읽는 데 쓴다. 비어 있거나 못 읽으면
+   718	+# 그 게이트만 생략되고 **사유가 마지막 게이트 메시지에 실린다** — 조용히 사라지지 않는
+   719	+# 것이 이 fail-open 의 조건이다(decision_scan 주석 참조).
+   720	+transcript_path="$(printf '%s' "$payload" | json_get transcript_path)"
+   721	 
+   722	 # (0) push 미완 **탐지** — 조기 종료보다 **먼저** 해야 한다.
+   723	 #     플래그를 다 처리해 지운 뒤가 바로 위험한 시점인데(29커밋을 잃은 그 상태),
+   724	@@ -167,6 +171,49 @@ else
+   725	   fi
+   726	 fi
+   727	 
+   728	+# (3.2) **결정 게이트** — "물어봤어야 할 것을 혼자 정했나".
+   729	+#      나머지 게이트가 전부 **산출물**을 볼 때 이것만 **에이전트 자신의 행동**을 본다.
+   730	+#      판정 규칙·좁히는 장치 셋·fail-open 사유는 _common.sh 의 decision_scan 주석이 정본이다.
+   731	+#
+   732	+#      **다른 게이트보다 앞에 둔다.** 질문의 답이 코드를 바꿀 수 있으므로, 리뷰·설명·감사에
+   733	+#      노력을 쓰기 전에 묻는 편이 싸다. (push 탐지와 달리 순서가 정확성을 바꾸지는 않는다 —
+   734	+#      대화 기록은 이미 다 쓰였고 게이트 순서가 그 내용을 바꾸지 않기 때문이다.)
+   735	+decision_note=""
+   736	+if ! hook_disabled "stop:decision"; then
+   737	+  decision_hits="$(decision_scan "$transcript_path")"; decision_rc=$?
+   738	+  if [ "$decision_rc" -eq 2 ]; then
+   739	+    # **이 게이트의 유일한 fail-open.** 통과시키되 사유를 (6) 의 메시지에 실어 보낸다.
+   740	+    # 대화 기록 형식은 하네스 소유가 아니라, 여기서 차단하면 그 세션 안에 고칠 방법이 없다.
+   741	+    decision_note="결정 게이트 생략 ($decision_hits)"
+   742	+  elif [ "$decision_rc" -eq 0 ]; then
+   743	+    gate_budget "decision"
+   744	+    {
+   745	+      echo "[완료 차단] 혼자 정한 것이 있는데 이 턴에 사용자에게 한 번도 묻지 않았습니다."
+   746	+      echo
+   747	+      echo "걸린 문장:"
+   748	+      printf '%s\n' "$decision_hits" | sed 's/^/  - /'
+   749	+      echo
+   750	+      echo "이 게이트가 겨누는 것:"
+   751	+      echo "  게이트가 막을 때는 따르면서, 게이트가 없는 자리에서는 혼자 정하고 보고서에"
+   752	+      echo "  한 줄 적는 부류입니다. 그 '한 줄'은 도구 호출이 아니라 문장이라 승인창이"
+   753	+      echo "  안 뜨고, 그래서 이 저장소가 겪은 실패 대부분이 이 축에서 났습니다."
+   754	+      echo
+   755	+      echo "해야 할 일:"
+   756	+      echo "  1. 위 문장들이 정말 **사용자가 정할 일**이었는지 본다."
+   757	+      echo "     '범위 밖'·'별도로'·'그대로 뒀'는 대개 선택지를 줬어야 하는 자리입니다."
+   758	+      echo "  2. AskUserQuestion 으로 **실제로 묻는다.** 보고서에 적는 것은 묻는 것이 아닙니다."
+   759	+      echo "  3. 질문을 한 번이라도 하면 이 게이트는 풀립니다."
+   760	+      echo
+   761	+      echo "위양성이라면(그 어휘를 설명·인용한 것이지 결정이 아니라면):"
+   762	+      echo "  - 백틱이나 따옴표로 감싸면 스캔에서 빠집니다 — 인용은 결정이 아니니까요."
+   763	+      echo "  - 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받으세요."
+   764	+      echo
+   765	+      echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구: HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:decision"
+   766	+    } >&2
+   767	+    bump_and_block
+   768	+  fi
+   769	+fi
+   770	+
+   771	 # (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
+   772	 #      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
+   773	 #      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
+   774	@@ -281,6 +328,13 @@ gate_budget "audit"
+   775	     echo
+   776	     echo "참고: $typecheck_note"
+   777	   fi
+   778	+  # 결정 게이트가 대화 기록을 못 읽었으면 **여기서 소리를 낸다.** 그 게이트만 조용히
+   779	+  # 사라지면 "물어봤나"를 아무도 안 보게 되고, 그게 정확히 이 게이트를 만든 이유다.
+   780	+  if [ -n "$decision_note" ]; then
+   781	+    echo
+   782	+    echo "참고: $decision_note"
+   783	+    echo "      → 이 턴에 사용자에게 물었어야 할 결정이 없었는지 스스로 확인하세요."
+   784	+  fi
+   785	   echo
+   786	   echo "해야 할 일:"
+   787	   echo "  1. completion-auditor 에이전트로 완료 주장을 1차 증거로 검증한다."
+   788	diff --git a/template/.claude/skills/harness-orchestrator/SKILL.md b/template/.claude/skills/harness-orchestrator/SKILL.md
+   789	index e96246b..de7f112 100644
+   790	--- a/template/.claude/skills/harness-orchestrator/SKILL.md
+   791	+++ b/template/.claude/skills/harness-orchestrator/SKILL.md
+   792	@@ -131,7 +131,13 @@ codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort="high" "
+   793	 
+   794	 사용자에게 "완료"라고 보고하기 **직전**, `completion-auditor`가 모든 완료 주장을 1차 증거로 재검증한다 — 파일 실존·커밋 존재(push≠커밋)·PR 상태·테스트 실제 실행·실제 동작 관찰·**운영 반영 여부(§6)**. 반증이 하나라도 나오면 "완료"라 말하지 않고, 무엇이 실제로 됐고 안 됐는지 정확히 보고한 뒤 해당 주체로 되돌린다.
+   795	 
+   796	-**이 게이트는 산문이 아니라 훅으로 강제된다** (`.claude/settings.json`). 코드/설정을 편집하면 `.claude/.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview` 플래그가 서고, Stop 훅이 타입체크(3절, `harness.env`) + 듀얼 리뷰 + 설명 + **지식 저장소 반영** + 감사 없이는 턴 종료를 막는다(rc=2). 감사자가 검증을 통과시킨 **뒤에만** `rm -f .claude/.needs-audit` — 감사 없이 플래그만 지우는 것은 게이트 무력화다. 같은 지점에서 진전 없이 3회 차단되면 벽돌 방지 통과되며(게이트를 지울 때마다 카운터 리셋), 그때는 완료 주장을 신뢰하지 말 것.
+   797	+**이 게이트는 산문이 아니라 훅으로 강제된다** (`.claude/settings.json`). 코드/설정을 편집하면 `.claude/.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview` 플래그가 서고, Stop 훅이 타입체크(3절, `harness.env`) + **혼자 정하지 않았나** + 듀얼 리뷰 + 설명 + **지식 저장소 반영** + push 미완 + 감사 없이는 턴 종료를 막는다(rc=2). 감사자가 검증을 통과시킨 **뒤에만** `rm -f .claude/.needs-audit` — 감사 없이 플래그만 지우는 것은 게이트 무력화다. 같은 지점에서 진전 없이 3회 차단되면 벽돌 방지 통과되며(게이트를 지울 때마다 카운터 리셋), 그때는 완료 주장을 신뢰하지 말 것.
+   798	+
+   799	+**결정 게이트 (2026-08-10 kty 확정 — 이 파이프라인이 겨누는 실패의 부류):** 다른 게이트가 전부 **산출물**을 볼 때 이것만 **네 행동**을 본다. 코드·결정이 바뀐 턴에 결정 표지 어휘를 담은 서술형 문장이 있는데 `AskUserQuestion` 이 0회면 Stop 훅이 막고, 걸린 문장을 목록으로 보여준다.
+   800	+
+   801	+**지울 플래그가 없다.** 다른 게이트는 일을 마치고 플래그를 지워 푸는데, 이건 **실제로 묻는 것**으로만 풀린다. 보고서에 "이건 이렇게 정했습니다"라고 적는 것은 묻는 것이 아니다 — 정확히 그 행동을 막으려고 만든 게이트다. Phase 1(명료화)이 착수 전에 묻게 한다면 이 게이트는 **작업 중에 새로 생긴 갈림길**을 잡는다. 둘은 같은 가치의 앞뒤다.
+   802	+
+   803	+걸렸을 때 할 일: ① 걸린 문장이 정말 사용자가 정할 일이었는지 본다 ② 맞으면 `AskUserQuestion` 으로 선택지를 준다 ③ 어휘를 설명·인용한 것뿐이면 백틱이나 따옴표로 감싸면 스캔에서 빠진다(인용은 결정이 아니다). 그래도 걸리면 사용자에게 위양성임을 알리고 지시를 받는다 — **끄지 마라.**
+   804	 
+   805	 **지식 저장소 반영 게이트 (2026-08-02 kty 확정 — 실사고 재발 방지):** 결정·설계·개발작업이 나온 턴은 종료 전에 지식 저장소에 반영한다.
+   806	 
+   807	diff --git a/tests/decision-gate.test.sh b/tests/decision-gate.test.sh
+   808	new file mode 100755
+   809	index 0000000..773344f
+   810	--- /dev/null
+
+codex
+보류입니다. 파일 변경이나 테스트 실행 없이 정적 독해만 했습니다.
+
+[HIGH] template/.claude/hooks/_common.sh:402 — 일부 JSONL 손상과 부분적인 기록 형식 변경이 판독 불가가 아니라 “표지 없음”으로 조용히 통과한다. 유효한 사용자 프롬프트 뒤의 assistant 행 하나만 파싱 실패하면 408행에서 버리고, `texts=[]`인 채 463행에서 rc=1로 끝난다. assistant `content`가 list가 아닌 새 형식이어도 426–427행에서 말없이 건너뛴다. 반대로 최신 사용자 프롬프트 행만 깨지면 이전 프롬프트를 턴 경계로 삼아 지난 턴까지 검사한다. d33·d34는 “전부 깨짐/프롬프트 전무”만 검사하므로 이 경로를 붙들지 못한다.
+
+[HIGH] template/.claude/hooks/verify-before-stop.sh:183 — 호출부가 rc=0과 rc=2만 처리하고 나머지는 전부 결정 게이트 통과로 오독한다. `python3` 부재의 rc=127, 신호 종료, 예상 밖 상태가 아무 `decision_note` 없이 진행된다. 또한 `_common.sh:425`의 `(e.get("message") or {}).get(...)`은 truthy 비-dict `message`에서 예외를 내 rc=1이 되는데, rc=1은 정상적인 “표지 없음”과 구별되지 않는다. ADR의 “rc=2가 유일한 fail-open” 약속은 성립하지 않는다.
+
+[HIGH] template/.claude/hooks/verify-before-stop.sh:187 — 판독 불가 경고는 감사 게이트인 331–337행에서만 출력된다. 듀얼리뷰·설명·지식·push 중 하나만 활성화된 경우 앞 게이트가 먼저 종료하므로 경고가 보이지 않는다. 예를 들어 dualreview 플래그만 서 있을 때 기록 판독 실패 → 듀얼리뷰 메시지만 출력 → 플래그 제거 후 64행 조기 종료가 되어 경고는 영원히 사라진다. fail-open 테스트는 항상 audit 플래그만 세워 이 결함을 가린다.
+
+[HIGH] template/.claude/hooks/_common.sh:350 — 질문 신호가 “현재 묻는 문장”인지 구분하지 않아 겨누는 자백 자체를 제외한다. `사용자에게 물어보지 않고 제 판단으로 진행했습니다.`는 `물어`와 `제 판단으로`를 모두 포함하는 정당한 자백이지만 452–453행에서 통과한다. `사용자 의견을 확인하지 않고 가정하여 구현했습니다.`도 `의견` 때문에 통과한다. d18b·d18c는 미래형 “묻겠습니다”만 검사하며 부정형 자백은 없다.
+
+[HIGH] template/.claude/hooks/_common.sh:338 — 표지 어휘가 자백에만 나온다는 전제가 맞지 않아 정상적인 기술 설명이 대량으로 차단될 수 있다. `기존 스캐너는 범위 밖 입력을 거부합니다.`, `변이 테스트는 별도로 실행됩니다.`, `이 트레이드오프는 ADR에 설명되어 있습니다.`는 모두 사용자 결정을 대신한 문장이 아니지만 현재 정규식상 차단된다. 테스트의 정상 발화는 사실상 “표지가 없는 문장” 또는 구조적으로 감싼 표지만 다루어 이 의미론적 위양성을 측정하지 않는다.
+
+[MEDIUM] template/.claude/hooks/verify-before-stop.sh:64 — push 미완만 있어도 조기 종료가 해제되고 182행의 결정 스캔이 실행된다. 즉 코드·결정 변경 플래그가 하나도 없는 읽기 전용 턴도 브랜치가 원격보다 앞서 있다는 이유만으로 결정 게이트 대상이 된다. 이는 ADR의 “코드/결정 변경 플래그가 서 있고”라는 발동 계약보다 넓으며 d30은 원격-ahead 상태를 만들지 않아 검증하지 않는다.
+
+[MEDIUM] template/.claude/hooks/_common.sh:362 — 문장 분할이 마침표를 무조건 종결자로 보고, 444행에서 먼저 줄 단위로 쪼개므로 하나의 정상 문장 안에서도 표지와 종결이 분리된다. `나머지는 별도로 README.md에 기록했습니다.`는 `별도로 README`와 `md에 기록했습니다`로 갈라져 어느 조각도 두 조건을 함께 만족하지 않는다. 줄바꿈된 `나머지는 범위 밖이라\n후속 작업으로 남겼습니다.`도 같은 위음성이다. 이는 단순한 어휘 변경이 아니라 계약상 표지를 가진 서술형 문장의 누락이다.
+
+[MEDIUM] template/.claude/hooks/_common.sh:357 — 공시된 구조적 제외가 일반적인 Markdown 구문 전체를 지원하지 않는다. `drop_fences()`는 백틱 3개만 인식해 `~~~` 코드 펜스의 예문을 산문으로 검사하며, `INLINE`은 단일 백틱 쌍만 처리해 유효한 이중 백틱 코드 span의 내용이 남는다. ADR은 한정 없이 “코드펜스·인라인 코드 안은 안 본다”고 약속하지만 d12·d15는 단일 백틱과 삼중 백틱만 붙든다.
+
+[LOW] _workspace/mutate-decision-gate.sh:40 — EXIT 트랩이 락만 제거하고 변이 대상은 복원하지 않는다. 테스트 실행 중 SIGINT 등으로 `measure()`가 72행에 도달하지 못하면 실제 훅 파일에 변이가 남는다. 다음 실행은 dirty 검사로 거부되겠지만, 변이가 작업 트리에 남아 후속 커밋에 섞일 위험은 이 도구가 주장하는 안전 계약과 어긋난다.
+
+판정: 보류
+tokens used
+83,067
+보류입니다. 파일 변경이나 테스트 실행 없이 정적 독해만 했습니다.
+
+[HIGH] template/.claude/hooks/_common.sh:402 — 일부 JSONL 손상과 부분적인 기록 형식 변경이 판독 불가가 아니라 “표지 없음”으로 조용히 통과한다. 유효한 사용자 프롬프트 뒤의 assistant 행 하나만 파싱 실패하면 408행에서 버리고, `texts=[]`인 채 463행에서 rc=1로 끝난다. assistant `content`가 list가 아닌 새 형식이어도 426–427행에서 말없이 건너뛴다. 반대로 최신 사용자 프롬프트 행만 깨지면 이전 프롬프트를 턴 경계로 삼아 지난 턴까지 검사한다. d33·d34는 “전부 깨짐/프롬프트 전무”만 검사하므로 이 경로를 붙들지 못한다.
+
+[HIGH] template/.claude/hooks/verify-before-stop.sh:183 — 호출부가 rc=0과 rc=2만 처리하고 나머지는 전부 결정 게이트 통과로 오독한다. `python3` 부재의 rc=127, 신호 종료, 예상 밖 상태가 아무 `decision_note` 없이 진행된다. 또한 `_common.sh:425`의 `(e.get("message") or {}).get(...)`은 truthy 비-dict `message`에서 예외를 내 rc=1이 되는데, rc=1은 정상적인 “표지 없음”과 구별되지 않는다. ADR의 “rc=2가 유일한 fail-open” 약속은 성립하지 않는다.
+
+[HIGH] template/.claude/hooks/verify-before-stop.sh:187 — 판독 불가 경고는 감사 게이트인 331–337행에서만 출력된다. 듀얼리뷰·설명·지식·push 중 하나만 활성화된 경우 앞 게이트가 먼저 종료하므로 경고가 보이지 않는다. 예를 들어 dualreview 플래그만 서 있을 때 기록 판독 실패 → 듀얼리뷰 메시지만 출력 → 플래그 제거 후 64행 조기 종료가 되어 경고는 영원히 사라진다. fail-open 테스트는 항상 audit 플래그만 세워 이 결함을 가린다.
+
+[HIGH] template/.claude/hooks/_common.sh:350 — 질문 신호가 “현재 묻는 문장”인지 구분하지 않아 겨누는 자백 자체를 제외한다. `사용자에게 물어보지 않고 제 판단으로 진행했습니다.`는 `물어`와 `제 판단으로`를 모두 포함하는 정당한 자백이지만 452–453행에서 통과한다. `사용자 의견을 확인하지 않고 가정하여 구현했습니다.`도 `의견` 때문에 통과한다. d18b·d18c는 미래형 “묻겠습니다”만 검사하며 부정형 자백은 없다.
+
+[HIGH] template/.claude/hooks/_common.sh:338 — 표지 어휘가 자백에만 나온다는 전제가 맞지 않아 정상적인 기술 설명이 대량으로 차단될 수 있다. `기존 스캐너는 범위 밖 입력을 거부합니다.`, `변이 테스트는 별도로 실행됩니다.`, `이 트레이드오프는 ADR에 설명되어 있습니다.`는 모두 사용자 결정을 대신한 문장이 아니지만 현재 정규식상 차단된다. 테스트의 정상 발화는 사실상 “표지가 없는 문장” 또는 구조적으로 감싼 표지만 다루어 이 의미론적 위양성을 측정하지 않는다.
+
+[MEDIUM] template/.claude/hooks/verify-before-stop.sh:64 — push 미완만 있어도 조기 종료가 해제되고 182행의 결정 스캔이 실행된다. 즉 코드·결정 변경 플래그가 하나도 없는 읽기 전용 턴도 브랜치가 원격보다 앞서 있다는 이유만으로 결정 게이트 대상이 된다. 이는 ADR의 “코드/결정 변경 플래그가 서 있고”라는 발동 계약보다 넓으며 d30은 원격-ahead 상태를 만들지 않아 검증하지 않는다.
+
+[MEDIUM] template/.claude/hooks/_common.sh:362 — 문장 분할이 마침표를 무조건 종결자로 보고, 444행에서 먼저 줄 단위로 쪼개므로 하나의 정상 문장 안에서도 표지와 종결이 분리된다. `나머지는 별도로 README.md에 기록했습니다.`는 `별도로 README`와 `md에 기록했습니다`로 갈라져 어느 조각도 두 조건을 함께 만족하지 않는다. 줄바꿈된 `나머지는 범위 밖이라\n후속 작업으로 남겼습니다.`도 같은 위음성이다. 이는 단순한 어휘 변경이 아니라 계약상 표지를 가진 서술형 문장의 누락이다.
+
+[MEDIUM] template/.claude/hooks/_common.sh:357 — 공시된 구조적 제외가 일반적인 Markdown 구문 전체를 지원하지 않는다. `drop_fences()`는 백틱 3개만 인식해 `~~~` 코드 펜스의 예문을 산문으로 검사하며, `INLINE`은 단일 백틱 쌍만 처리해 유효한 이중 백틱 코드 span의 내용이 남는다. ADR은 한정 없이 “코드펜스·인라인 코드 안은 안 본다”고 약속하지만 d12·d15는 단일 백틱과 삼중 백틱만 붙든다.
+
+[LOW] _workspace/mutate-decision-gate.sh:40 — EXIT 트랩이 락만 제거하고 변이 대상은 복원하지 않는다. 테스트 실행 중 SIGINT 등으로 `measure()`가 72행에 도달하지 못하면 실제 훅 파일에 변이가 남는다. 다음 실행은 dirty 검사로 거부되겠지만, 변이가 작업 트리에 남아 후속 커밋에 섞일 위험은 이 도구가 주장하는 안전 계약과 어긋난다.
+
+판정: 보류

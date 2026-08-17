@@ -1,0 +1,100 @@
+commit 33158e2c4cb95b2063e6ebb07cdb68ebad32597e
+Author: 김태윤 <xodbs9810@gmail.com>
+Date:   Mon Aug 10 11:04:33 2026 +0900
+
+    fix: harness.env 를 실행하지 않고 원문으로 읽는다
+    
+    harness.env 는 **사용자 소유 셸 파일**인데 Stop 훅이 그걸 source 해서 값을 읽었다.
+    그러면 파일 내용이 훅의 제어 흐름을 가져간다 — 그리고 막을 때마다 새 탈출 경로가
+    나온다. 실측된 것들:
+    
+      exit 1        훅이 rc=1 로 죽는다. 게이트 4종이 통째로 소멸
+      exit 0        훅이 조용히 rc=0. 게이트 소멸 + 아무 흔적 없음
+      서브셸+return 호출 셸로 정상 복귀해 판정을 통과
+      printf 재정의 진단 출력 자체를 위조
+    
+    서브셸로 감싸고 리다이렉트로 막는 식으로는 끝이 안 난다. 실행하지 않으면 이 부류가
+    **원리적으로** 소멸한다 — grep 결과를 바꾸는 유일한 방법은 그 키를 다르게 쓰는
+    것이고, 그게 정확히 의도적으로 값을 바꾸는 방법이다.
+    
+    _common.sh 에 harness_env_value() 신설. 판독 모델:
+    - 선행 공백 없는 최상위 대입만 선언으로 센다(조건문·함수 본문 안은 실행 여부를
+      원문만으로 알 수 없다)
+    - 선언이 2개 이상이면 어느 것이 이기는지 모르므로 빈 값을 돌려준다(미설정 취급)
+    - 감싼 따옴표 한 겹만 벗긴다
+    
+    대가(공시): 값 안의 $VAR·$(...) 가 확장되지 않는다. 확장이 필요하면 최종 문자열을
+    그 자리에 적어야 한다.
+    
+    실측: 정상=[pnpm tsc --noEmit] · exit 1 포함=[pnpm tsc] · exit 0 포함=[pnpm tsc] ·
+    들여쓴 위장 선언=[진짜](최상위만 셈) · 선언 2개=[](미설정)
+
+diff --git a/template/.claude/hooks/_common.sh b/template/.claude/hooks/_common.sh
+index d052cd3..aa96a4d 100644
+--- a/template/.claude/hooks/_common.sh
++++ b/template/.claude/hooks/_common.sh
+@@ -31,6 +31,43 @@ hook_disabled() {
+   return 1
+ }
+ 
++# harness.env 에서 값 하나를 **실행하지 않고** 읽는다.
++#
++# 왜 source 하지 않나: harness.env 는 **사용자 소유 셸 파일**이다. 실행해서 값을 읽으면
++# 파일 내용이 훅의 제어 흐름을 가져간다 — 그리고 막을 때마다 새 탈출 경로가 나온다.
++# 전부 실측된 것들이다:
++#   exit 1        → 훅이 rc=1 로 죽는다. 게이트 4종이 통째로 소멸
++#   exit 0        → 훅이 조용히 rc=0. 게이트 소멸 + 아무 흔적 없음
++#   서브셸+return → 호출 셸로 정상 복귀해 판정을 통과
++#   printf 재정의 → 진단 출력 자체를 위조
++# 서브셸로 감싸고 리다이렉트로 막는 식으로는 끝이 안 난다. **실행하지 않으면 이 부류가
++# 원리적으로 소멸한다** — grep 결과를 바꾸는 유일한 방법은 그 키를 다르게 쓰는 것이고,
++# 그게 정확히 의도적으로 값을 바꾸는 방법이다.
++#
++# 판독 모델: **선행 공백이 없는 최상위 대입만** 선언으로 센다. 조건문·함수 본문 안의
++# 대입은 실행되지 않을 수도 있어 원문만으로는 발효 여부를 알 수 없다.
++# 선언이 2개 이상이면 어느 것이 이기는지 원문으로 알 수 없으므로 **빈 값을 돌려준다**
++# (호출부가 "미설정"으로 안전하게 처리하도록).
++#
++# 알려진 한계: 값 안의 `$VAR`·`$(...)` 는 **확장되지 않는다.** 실행하지 않는 대가다.
++# 확장이 필요하면 그 자리에 최종 문자열을 적어야 한다.
++harness_env_value() {
++  local file="$STATE_DIR/harness/harness.env" key="$1" lines n val
++  [ -f "$file" ] || { printf '%s' ''; return 0; }
++  # 선행 공백 없는 `KEY=` 또는 `export KEY=` 만. grep rc 는 삼킨다(무매치·오류 모두 미설정).
++  lines="$(grep -E "^(export[[:space:]]+)?${key}=" "$file" 2>/dev/null)" || lines=''
++  [ -n "$lines" ] || { printf '%s' ''; return 0; }
++  n="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
++  [ "$n" = "1" ] || { printf '%s' ''; return 0; }
++  val="${lines#*=}"
++  # 감싼 따옴표 한 겹만 벗긴다(양쪽이 짝일 때만).
++  case "$val" in
++    \"*\") val="${val#\"}"; val="${val%\"}" ;;
++    \'*\') val="${val#\'}"; val="${val%\'}" ;;
++  esac
++  printf '%s' "$val"
++}
++
+ # stdin 의 JSON 에서 점 경로로 값 하나를 뽑는다. 없거나 파싱 실패면 빈 문자열.
+ # 훅 입력이 깨져도 절대 죽지 않는다 — 죽으면 오탐 차단이 된다.
+ json_get() {
+diff --git a/template/.claude/hooks/verify-before-stop.sh b/template/.claude/hooks/verify-before-stop.sh
+index 93c23e2..cbb4bf3 100644
+--- a/template/.claude/hooks/verify-before-stop.sh
++++ b/template/.claude/hooks/verify-before-stop.sh
+@@ -77,12 +77,11 @@ bump_and_block() {
+ # (3) 타입체크 — 결정론적 바닥. 명령은 프로필에서 파생된 harness.env 에서 읽는다.
+ #     HARNESS_TYPECHECK_CMD 가 비어 있으면(타입 없는 언어/미설정) 생략한다.
+ #     이렇게 하면 이 훅이 특정 스택(pnpm/tsc)에 묶이지 않는다 — 도메인-무관 재사용.
++#     **이 파일을 실행하지 않는다.** source 하면 사용자 소유 셸 파일이 훅의 제어 흐름을
++#     가져간다 — `exit 0` 한 줄이면 이 훅이 조용히 끝나 **게이트 4종이 통째로 사라지고**
++#     흔적도 안 남는다. 원문 판독으로 그 부류를 없앤다(harness_env_value 주석 참조).
+ typecheck_note=""
+-if [ -f "$STATE_DIR/harness/harness.env" ]; then
+-  # shellcheck disable=SC1091
+-  . "$STATE_DIR/harness/harness.env" 2>/dev/null
+-fi
+-TYPECHECK_CMD="${HARNESS_TYPECHECK_CMD:-}"
++TYPECHECK_CMD="$(harness_env_value HARNESS_TYPECHECK_CMD)"
+ 
+ if [ -z "$TYPECHECK_CMD" ]; then
+   typecheck_note="타입체크 생략 (harness.env 에 HARNESS_TYPECHECK_CMD 미설정)"

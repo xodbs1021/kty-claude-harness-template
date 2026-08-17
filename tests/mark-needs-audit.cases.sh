@@ -775,7 +775,23 @@ case_75() { # 프로젝트 **경로**에 codex 가 들어도 마찬가지다 —
 # 러너가 이 두 값으로 "케이스가 조용히 빠지거나 두 번 도는 것"을 잡는다.
 # 건수는 여기 말고 어디에도 숫자로 적지 않는다 — 케이스를 추가할 때마다 낡는다.
 
-EXPECTED_CASES=75
+EXPECTED_CASES=77
+
+case_76() { # 0?_ 앵커 순방향 — 조사 산출물이 00_·01_ 을 선점해 계획서가 02_plan_… 이 된
+  # 실사례(2026-08-17 감사, POK-79)에서 게이트가 통째로 안 섰다. 앵커 확장 후엔 서야 한다.
+  local p; p="$(new_project)"
+  mkfile "$p/_workspace/02_plan_pok79.md"
+  run_hook "$p" "$p/_workspace/02_plan_pok79.md"
+  check_case '76 번호 밀린 계획 문서(02_plan_*) → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/02_plan_pok79.md'
+}
+
+case_77() { # 0?_ 앵커 음성 행 — 리뷰 산출물(NN_codex_…·NN_cc_…)은 출처 토큰이 번호 바로
+  # 뒤에 와서 앵커에 걸리면 안 된다. 걸리면 "검수의 검수" 재귀가 열린다.
+  local p; p="$(new_project)"
+  mkfile "$p/_workspace/03_codex_plan_review.md"
+  run_hook "$p" "$p/_workspace/03_codex_plan_review.md"
+  check_case '77 리뷰 산출물(03_codex_plan_review) → 스킵(앵커 비적중)' 0 none ''
+}
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 case_10 case_11
        case_12 case_13 case_14 case_15 case_16 case_17 case_18 case_19 case_20 case_21 case_22
@@ -783,4 +799,5 @@ CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 c
        case_34 case_35 case_36 case_37 case_38 case_39 case_40 case_41 case_42 case_43 case_44
        case_45 case_46 case_47 case_48 case_49 case_50 case_51 case_52 case_53 case_54 case_55
        case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66
-       case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75'
+       case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75
+       case_76 case_77'

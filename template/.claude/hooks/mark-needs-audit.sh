@@ -64,7 +64,7 @@ emit_message() {
 # (실측: `cd -- /var/..` → `/`, `cd -P -- /var/..` → `/private`). 그 차이만큼 프로젝트
 # **밖** 파일이 프로젝트 **안** 상대경로로 기록돼, 게이트는 서는데 감사자가 엉뚱한 파일을
 # 본다(케이스 67). 반대 방향으로는 밖 하네스 파일의 게이트가 통째로 사라진다(케이스 68).
-# 형제 검사기 scripts/check-rule-copies.sh 의 physical_path 와 같은 방식이다(PR #13).
+# physical_path 는 형제 검사기였던 check-rule-copies(PR #13 검증, 2026-08-17 단일 정본화로 폐지)와 같은 방식이다.
 physical_dir() {
   local out
   out="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P)"

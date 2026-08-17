@@ -158,8 +158,6 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 ├── README.md                                  # 이 문서 (구성 + 왜)
 ├── install.sh                                 # 인스턴스화 (글루 복사 + 슬롯 스캐폴드 + 병합)
 ├── sync.sh                                    # 글루만 갱신 (pull + diff 미리보기, 슬롯 불변)
-├── scripts/check-rule-copies.sh               # 판정 기준 정본↔사본 대조 (어긋나면 exit 1)
-├── tests/check-rule-copies.test.sh            #   위 검사기의 회귀 테스트 (CI에서 검사보다 먼저 실행)
 ├── tests/mark-needs-audit.test.sh             # 완료 게이트 검사 범위 회귀 테스트 (러너)
 ├── tests/mark-needs-audit.cases.sh            #   위 테스트의 판정 계약 표 — 경로→판정 정본
 ├── .github/workflows/check-rules.yml          #   위 검사·테스트를 PR에서 강제

@@ -775,9 +775,9 @@ case_75() { # 프로젝트 **경로**에 codex 가 들어도 마찬가지다 —
 # 러너가 이 두 값으로 "케이스가 조용히 빠지거나 두 번 도는 것"을 잡는다.
 # 건수는 여기 말고 어디에도 숫자로 적지 않는다 — 케이스를 추가할 때마다 낡는다.
 
-EXPECTED_CASES=77
+EXPECTED_CASES=79
 
-case_76() { # 0?_ 앵커 순방향 — 조사 산출물이 00_·01_ 을 선점해 계획서가 02_plan_… 이 된
+case_76() { # NN_ 앵커 순방향 — 조사 산출물이 00_·01_ 을 선점해 계획서가 02_plan_… 이 된
   # 실사례(2026-08-17 감사, POK-79)에서 게이트가 통째로 안 섰다. 앵커 확장 후엔 서야 한다.
   local p; p="$(new_project)"
   mkfile "$p/_workspace/02_plan_pok79.md"
@@ -785,12 +785,28 @@ case_76() { # 0?_ 앵커 순방향 — 조사 산출물이 00_·01_ 을 선점�
   check_case '76 번호 밀린 계획 문서(02_plan_*) → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/02_plan_pok79.md'
 }
 
-case_77() { # 0?_ 앵커 음성 행 — 리뷰 산출물(NN_codex_…·NN_cc_…)은 출처 토큰이 번호 바로
+case_77() { # NN_ 앵커 음성 행 — 리뷰 산출물(NN_codex_…·NN_cc_…)은 출처 토큰이 번호 바로
   # 뒤에 와서 앵커에 걸리면 안 된다. 걸리면 "검수의 검수" 재귀가 열린다.
   local p; p="$(new_project)"
   mkfile "$p/_workspace/03_codex_plan_review.md"
   run_hook "$p" "$p/_workspace/03_codex_plan_review.md"
   check_case '77 리뷰 산출물(03_codex_plan_review) → 스킵(앵커 비적중)' 0 none ''
+}
+
+case_78() { # NN_ 앵커 = [0-9][0-9] — 두 자리째도 숫자면 잡힌다. 0?_ 로 쓰면 10_plan 이
+  # _workspace/* 스킵으로 조용히 새는 위음성([cx] 2026-08-17 실측).
+  local p; p="$(new_project)"
+  mkfile "$p/_workspace/10_plan_x.md"
+  run_hook "$p" "$p/_workspace/10_plan_x.md"
+  check_case '78 두 자리 번호 계획 문서(10_plan_*) → 듀얼리뷰+지식+회수' 0 designdoc '_workspace/10_plan_x.md'
+}
+
+case_79() { # NN_ 앵커 음성 — 둘째 자리가 숫자가 아니면 계획 문서가 아니다. 0?_ 로 쓰면
+  # 0a_plan 이 오탐돼 무관한 파일에 회수 표명을 요구하게 된다([cx] 2026-08-17 실측).
+  local p; p="$(new_project)"
+  mkfile "$p/_workspace/0a_plan_x.md"
+  run_hook "$p" "$p/_workspace/0a_plan_x.md"
+  check_case '79 숫자 아닌 둘째 자리(0a_plan_*) → 스킵(앵커 비적중)' 0 none ''
 }
 
 CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 case_10 case_11
@@ -800,4 +816,4 @@ CASES='case_01 case_02 case_03 case_04 case_05 case_06 case_07 case_08 case_09 c
        case_45 case_46 case_47 case_48 case_49 case_50 case_51 case_52 case_53 case_54 case_55
        case_56 case_57 case_58 case_59 case_60 case_61 case_62 case_63 case_64 case_65 case_66
        case_67 case_68 case_69 case_70 case_71 case_72 case_73 case_74 case_75
-       case_76 case_77'
+       case_76 case_77 case_78 case_79'

@@ -68,6 +68,10 @@ for d in "$SRC/skills/"*/; do
   while IFS= read -r f; do preview "$f" "$DST/skills/$(basename "$d")/${f#"$d"}"; done < <(find "$d" -type f)
 done
 for f in "$SRC/hooks/"*.sh; do preview "$f" "$DST/hooks/$(basename "$f")"; done
+# 실행 유틸도 미리보기에 넣는다 — 빠지면 scripts/ 만 바뀐 릴리스가 "변경 없음"으로
+# 조기 종료해 install 이 아예 안 돈다(2026-08-16 감사 발견 — rulecopy 게이트의 검사기가
+# 이 경로로 배포되므로, 누락은 게이트가 조용히 안 서는 부류다).
+for f in "$SRC/scripts/"*.sh; do [ -f "$f" ] && preview "$f" "$DST/scripts/$(basename "$f")"; done
 preview "$SRC/harness/principles.md" "$DST/harness/principles.md"
 for f in "$TPL_ROOT/global-agents/"*.md; do [ -f "$f" ] && preview "$f" "$HOME/.claude/agents/$(basename "$f")"; done
 

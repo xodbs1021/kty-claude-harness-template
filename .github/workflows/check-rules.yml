@@ -12,8 +12,8 @@ on:
   pull_request:
 
 jobs:
-  rule-copies:
-    # 검사기를 신뢰할 근거를 먼저 만든다 — 회귀 테스트가 먼저, 사본 대조가 뒤.
+  gate-regressions:
+    # 게이트·검사기의 회귀 테스트 묶음 — 위음성(게이트의 조용한 실패)이 유일한 치명 결함이다.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

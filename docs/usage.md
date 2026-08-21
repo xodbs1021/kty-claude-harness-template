@@ -63,6 +63,7 @@ cd ~/.claude/harness-template
 | guard-master-commit | Bash 실행 전 | master/main 직접 `git commit` 차단 |
 | guard-hook-disable | Bash 실행 전 | 에이전트가 `HARNESS_HOOKS`·`ECC_DISABLED_HOOKS`·`ECC_GATEGUARD` 를 끄려 할 때 한 번 세운다. **과속방지턱이지 방벽이 아니다** — 아래 참조. 탈출구가 **없다** |
 | guard-codex-invocation | Bash 실행 전 | `codex exec` 호출의 모델(`gpt-5.6-sol`)·effort(`high`) 미달 차단 — 임의 하향 금지 (2026-08-01 사용자 지시) |
+| guard-harness-drift | Bash 실행 전 | 워크트리의 `.claude/harness/` 가 본 저장소와 다르면 차단. 프로필은 planner·architect·reviewer 가 '사실'로 읽는 정본이라, 낡은 사본을 읽으면 **계획·설계가 틀린 전제 위에 짜인다** — PR 게이트로는 못 잡는다(2026-08-21 실사고: 폐기된 계약 위치가 회부 권고안으로 올라감). 캐시 없음. 하네스를 다루는 명령은 통과(데드락 방지) |
 | check-harness-env | 파일 편집 후 | `harness.env` 편집 직후 알려진 키를 실제 판독기로 읽어, 문법 실수로 **값을 믿을 수 없게 된 키**를 그 자리에서 알린다(안 그러면 해당 검사가 조용히 생략된 채 턴 종료 때에야 드러난다 — ADR-0016). 안 쓰는 키(부재)는 침묵 — 판독기의 rc=1/rc=3 구분이 위양성을 막는다 |
 | mark-needs-audit | 파일 편집 후 | 게이트 플래그 5종: `.needs-audit`·`.needs-explain`·`.needs-knowledge`·`.needs-dualreview`·`.needs-retrieval` (코드는 앞 4종 · 설계·계획 산출물은 듀얼리뷰+지식+**머리 표명** · 결정 문서는 지식만). 검사 범위는 아래 "완료 게이트 검사 범위" 참조 |
 | verify-before-stop | 턴 종료 시 | 타입체크(`harness.env`) → **혼자 정하지 않았나** → **머리 표명**(설계·계획 산출물 1줄 회수·2줄 레퍼런스 조사 — 형식을 지키면 스스로 풀린다) → codex 듀얼리뷰 → change-explainer → **지식 저장소 반영** → **push 미완** → completion-auditor 순서로 미이행 시 종료 차단 (rc=2. 같은 지점에서 진전 없이 3회면 경고와 함께 통과 — 게이트를 하나 지울 때마다 카운터 리셋) |

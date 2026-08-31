@@ -128,17 +128,33 @@ fi
 # 유니코드 정규화(NFC) — macOS 는 파일명을 NFD(자모 분해형)로 돌려주기도 해서, NFC 로
 # 저장된 아래 한글 글롭이 같은 이름을 놓친다(cc r4 [H-2]: NFD 설계서가 rc=0 실측).
 # python3 존재는 위 타입 검증이 이미 보증한다(없으면 그 단계에서 rc=2).
-file_path="$(printf '%s' "$file_path" | python3 -c 'import sys,unicodedata; sys.stdout.write(unicodedata.normalize("NFC", sys.stdin.read()))')"
+norm="$(printf '%s' "$file_path" | python3 -c 'import sys,unicodedata; sys.stdout.write(unicodedata.normalize("NFC", sys.stdin.read()))')"
+if [ $? -ne 0 ] || [ -z "$norm" ]; then
+  # 이 호출 하나만 실패해도 잠그는 쪽으로 — 빈 치환이 basename 판정을 그냥 지나가
+  # rc=0 이 되던 fail-open 실측(cc r5 [M-1] · cx r5 프로브 → 오케스트레이터 재현).
+  echo "[설계 경로 강제] 경로 NFC 정규화에 실패했습니다 — 안전하게 차단합니다." >&2
+  exit 2
+fi
+file_path="$norm"
 
 lower="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
 base="$(basename "$lower")"
 
-# 하네스 정의 경로는 산출물이 아니다 — **구조(디렉터리 계약) 기반 면제**라 r1 의 이름
-# 부분문자열 면제([cx H-4] 로 제거된 그것)와 다르다. 실제 오탐 실증: 에이전트 정의
-# `plan-reviewer.md`(cc r4 [H-1]) · 명령 정의 `gan-design.md`·`multi-plan.md`(cx r4 [M-1]).
+# 하네스 정의 경로는 산출물이 아니다 — 단, **실제 설치 루트(프로젝트/.claude · 홈/.claude)에
+# anchor 한** 구조 면제다. r4 초판은 anchor 없는 `*/commands/*.md` 글롭이라
+# `_workspace/commands/` 폴더 하나로 게이트 전체가 뚫렸다(cc r5 [H-1] — 7변종 실측,
+# r1 의 이름 부분문자열 구멍[cx H-4]과 같은 클래스를 경로 축에서 재현한 것).
+# 상대 경로·다른 루트는 anchor 에 안 걸려 설계 판정으로 떨어진다(보수적 방향).
+proj_lower="$(printf '%s' "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]')"
+home_lower="$(printf '%s' "${HOME:-}" | tr '[:upper:]' '[:lower:]')"
 case "$lower" in
-  */.claude/agents/*.md|*/.claude/commands/*.md|*/.claude/skills/*|*/commands/*.md) exit 0 ;;
+  "$proj_lower"/.claude/agents/*|"$proj_lower"/.claude/commands/*|"$proj_lower"/.claude/skills/*) exit 0 ;;
 esac
+if [ -n "$home_lower" ]; then
+  case "$lower" in
+    "$home_lower"/.claude/agents/*|"$home_lower"/.claude/commands/*|"$home_lower"/.claude/skills/*|"$home_lower"/.claude/plugins/*) exit 0 ;;
+  esac
+fi
 
 # 일반 문서 이름과의 충돌은 **공시된 결정**이다: `migration-plan.md`·`test-plan.md` 같은
 # 범용 이름은 `media-plan.md`(산출물) 과 이름만으로 구분할 수 없어 **차단 쪽으로 기운다**

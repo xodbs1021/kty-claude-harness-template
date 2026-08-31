@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=51   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=55   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -146,11 +146,30 @@ NFD_PAYLOAD="$(python3 -c 'import unicodedata,json;n=unicodedata.normalize("NFD"
 run_hook "$P" "$NFD_PAYLOAD";                                          check "[cc r4 H-2] NFD 한글 설계서·무도장 → 차단" 2 "$BLOCK"
 
 # [cc r4 H-1 · cx r4 M-1] 하네스 정의 경로 — 구조 기반 면제.
-run_hook "$P" "$(W SESS-Z /repo/.claude/agents/plan-reviewer.md)";     check "[cc r4 H-1] 에이전트 정의(plan-reviewer) → 통과" 0
-run_hook "$P" "$(W SESS-Z "$HOME/.claude/commands/gan-design.md")";    check "[cx r4 M-1] 명령 정의(gan-design) → 통과" 0
-run_hook "$P" "$(W SESS-Z /plug/cache/x/commands/multi-plan.md)";      check "[cx r4 M-1] 플러그인 명령 정의(multi-plan) → 통과" 0
+run_hook "$P" "$(W SESS-Z "$P/.claude/agents/plan-reviewer.md")";      check "[cc r4 H-1] 프로젝트 에이전트 정의 → 통과" 0
+run_hook "$P" "$(W SESS-Z "$HOME/.claude/commands/gan-design.md")";    check "[cx r4 M-1] 홈 명령 정의(gan-design) → 통과" 0
+run_hook "$P" "$(W SESS-Z "$HOME/.claude/plugins/cache/x/commands/multi-plan.md")"; check "[cx r4 M-1] 홈 플러그인 캐시 정의 → 통과" 0
+run_hook "$P" "$(W SESS-Z "$P/.claude/skills/foo/plan.md")";           check "[cc r5] 프로젝트 스킬 정의 → 통과(양성 회귀)" 0
+
+# [cc r5 H-1] anchor 우회 음성 회귀 — 면제 경로 흉내는 여전히 차단돼야 한다.
+run_hook "$P" "$(W SESS-Z "$P/_workspace/commands/10_설계서_최종.md")";      check "[cc r5 H-1] _workspace/commands 흉내 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z "$P/_workspace/.claude/commands/10_design.md")";   check "[cc r5 H-1] 비루트 .claude 흉내 → 차단" 2 "$BLOCK"
 # 공시된 결정: 정의 디렉터리 밖의 범용 -plan.md 는 차단 유지.
 run_hook "$P" "$(W SESS-Z /repo/docs/migration-plan.md)";              check "[r4 공시결정] 정의 경로 밖 -plan.md → 차단 유지" 2 "$BLOCK"
+
+# [cc r5 M-1] NFC 단계만 실패시키는 셔닝 — fail-closed 여야 한다.
+SHIM="$TMPROOT/shim"; mkdir -p "$SHIM" || die "shim mkdir 불가"
+cat > "$SHIM/python3" <<'SH'
+#!/bin/bash
+case "$*" in
+  *unicodedata*) exit 127 ;;
+  *) exec /usr/bin/python3 "$@" ;;
+esac
+SH
+chmod +x "$SHIM/python3" || die "shim chmod 불가"
+HOOK_ERR="$(printf '%s' "$(W SESS-Z /v/10_설계서_r9.md)" | PATH="$SHIM:$PATH" CLAUDE_PROJECT_DIR="$P" bash "$HOOK" 2>&1 >/dev/null)"
+RC=$?
+check "[cc r5 M-1] NFC 단계 실패 → 차단(fail-closed)" 2 "정규화"
 
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99

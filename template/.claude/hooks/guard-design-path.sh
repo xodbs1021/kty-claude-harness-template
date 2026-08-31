@@ -36,6 +36,8 @@
 #   - 도장이 증명하는 것은 "Skill 도구가 harness-orchestrator 지시문을 로드했다"까지다 —
 #     파이프라인 완주를 증명하지 않는다([cx r2 M-3]).
 #   - 설계 패턴 밖의 새 명명(예: `10_아키텍처안.md`·`설계.md`)은 못 잡는다.
+#   - 범용 `-plan.md`/`-design.md` 문서(`migration-plan.md` 등)는 차단된다(위 공시 결정) —
+#     하네스 정의 디렉터리 밖에서 그 이름을 쓰려면 도장이 필요하다.
 #   **과속방지턱이지 방벽이 아니다.** 막혔다는 사실이 안전을 보증하지 않는다.
 #
 # 셸 이식성: macOS 기본 bash 3.2. ${var,,}·mapfile·연관배열 금지.
@@ -123,10 +125,25 @@ if [ -z "$file_path" ]; then
   exit 2
 fi
 
+# 유니코드 정규화(NFC) — macOS 는 파일명을 NFD(자모 분해형)로 돌려주기도 해서, NFC 로
+# 저장된 아래 한글 글롭이 같은 이름을 놓친다(cc r4 [H-2]: NFD 설계서가 rc=0 실측).
+# python3 존재는 위 타입 검증이 이미 보증한다(없으면 그 단계에서 rc=2).
+file_path="$(printf '%s' "$file_path" | python3 -c 'import sys,unicodedata; sys.stdout.write(unicodedata.normalize("NFC", sys.stdin.read()))')"
+
 lower="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
 base="$(basename "$lower")"
 
-# 설계·계획 산출물 판정. 면제 목록은 없다 — 패턴을 좁혀서 리뷰·raw·색인·입력서가
+# 하네스 정의 경로는 산출물이 아니다 — **구조(디렉터리 계약) 기반 면제**라 r1 의 이름
+# 부분문자열 면제([cx H-4] 로 제거된 그것)와 다르다. 실제 오탐 실증: 에이전트 정의
+# `plan-reviewer.md`(cc r4 [H-1]) · 명령 정의 `gan-design.md`·`multi-plan.md`(cx r4 [M-1]).
+case "$lower" in
+  */.claude/agents/*.md|*/.claude/commands/*.md|*/.claude/skills/*|*/commands/*.md) exit 0 ;;
+esac
+
+# 일반 문서 이름과의 충돌은 **공시된 결정**이다: `migration-plan.md`·`test-plan.md` 같은
+# 범용 이름은 `media-plan.md`(산출물) 과 이름만으로 구분할 수 없어 **차단 쪽으로 기운다**
+# (cc r3 [H-1] 요구와 cc r4 [H-1] 오탐 지적의 절충 — 게이트의 목적상 위양성이 위음성보다 싸다).
+# 설계·계획 산출물 판정. 면제 목록은 없다(이름 축) — 패턴을 좁혀서 리뷰·raw·색인·입력서가
 # 애초에 안 걸리게 한다([cx H-4]·[cx M-5]).
 #   한글: 문서 유형 토큰(…서·…안) + .md 강제([cx M-1] — 확장자 없으면 소스·데이터를 막았다).
 #         `설계입력서`(입력 문서)는 `설계서` 연속 토큰이 아니라 안 걸린다.

@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=46   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=51   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -139,6 +139,18 @@ check "[cx r2 M-2] file_path 불리언 → 차단" 2 "타입 검증"
 run_hook "$P" "$(W SESS-Z /ws/auth-design.md)";                       check "[cc r3 H-1] 후행 하이픈(–design.md)·무도장 → 차단" 2 "$BLOCK"
 run_hook "$P" "$(W SESS-Z /ws/media-plan.md)";                        check "[cc r3 H-1] 후행 하이픈(–plan.md)·무도장 → 차단" 2 "$BLOCK"
 run_hook "$P" "$(W SESS-Z /ws/skin-redesign.md)";                     check "[cc r3 H-1] 경계 없는 redesign → 통과" 0
+
+# ── 5c) r4 듀얼 회귀 ───────────────────────────────────────────────────────
+# [cc r4 H-2] NFD 우회 — macOS 가 주는 자모 분해형 한글 이름도 잡아야 한다.
+NFD_PAYLOAD="$(python3 -c 'import unicodedata,json;n=unicodedata.normalize("NFD","10_설계서_r9.md");print(json.dumps({"tool_name":"Write","session_id":"SESS-Z","tool_input":{"file_path":"/v/"+n}},ensure_ascii=False))')" || die "NFD payload 생성 불가"
+run_hook "$P" "$NFD_PAYLOAD";                                          check "[cc r4 H-2] NFD 한글 설계서·무도장 → 차단" 2 "$BLOCK"
+
+# [cc r4 H-1 · cx r4 M-1] 하네스 정의 경로 — 구조 기반 면제.
+run_hook "$P" "$(W SESS-Z /repo/.claude/agents/plan-reviewer.md)";     check "[cc r4 H-1] 에이전트 정의(plan-reviewer) → 통과" 0
+run_hook "$P" "$(W SESS-Z "$HOME/.claude/commands/gan-design.md")";    check "[cx r4 M-1] 명령 정의(gan-design) → 통과" 0
+run_hook "$P" "$(W SESS-Z /plug/cache/x/commands/multi-plan.md)";      check "[cx r4 M-1] 플러그인 명령 정의(multi-plan) → 통과" 0
+# 공시된 결정: 정의 디렉터리 밖의 범용 -plan.md 는 차단 유지.
+run_hook "$P" "$(W SESS-Z /repo/docs/migration-plan.md)";              check "[r4 공시결정] 정의 경로 밖 -plan.md → 차단 유지" 2 "$BLOCK"
 
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99

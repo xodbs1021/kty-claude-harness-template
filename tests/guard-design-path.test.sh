@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=35   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=42   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -119,8 +119,21 @@ run_hook "$P" "$(S SESS-B harness-orchestrator)";                     check "두
 run_hook "$P" "$(W SESS-A /vault/specs/13_설계서_r4.md)";             check "[cx M-2] 병렬 세션이 서로 무효화하지 않는다" 0
 
 # ── 5) fail-closed ([cx H-3] 회귀 — 초판은 전부 rc=0 이었다) ───────────────
-run_hook "$P" 'not-json{{{';                                          check "[cx H-3] malformed JSON → 차단" 2 "파싱하지 못했습니다"
+run_hook "$P" 'not-json{{{';                                          check "[cx H-3] malformed JSON → 차단" 2 "파싱·타입 검증에 실패"
 run_hook "$P" '{"tool_name":"Write","session_id":"S","tool_input":{}}'; check "[cx H-3] 경로 필드 부재 → 차단" 2 "경로를 읽지 못했습니다"
+
+# ── 5b) [cx r2 H-1] 이름 경계 회귀 — 재검에서 통과가 재현됐던 이름들 ───────
+run_hook "$P" "$(W SESS-Z /ws/00_plan-media.md)";                     check "[cx r2 H-1] 하이픈 경계(plan-)·무도장 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z /ws/00_design-reference-gate.md)";          check "[cx r2 H-1] 하이픈 경계(design-)·무도장 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z /ws/design.md)";                            check "[cx r2 H-1] 정확 이름 design.md·무도장 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z /ws/plan.md)";                              check "[cx r2 H-1] 정확 이름 plan.md·무도장 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z /ws/00_designdoc.md)";                      check "[cx r2 H-1] 경계 문자 없음(designdoc) → 통과(공시된 결정)" 0
+
+# [cx r2 M-2] 비문자열 경로 — json_get 문자열화가 통과시켰던 형태.
+run_hook "$P" '{"tool_name":"Write","session_id":"S","tool_input":{"file_path":[]}}'
+check "[cx r2 M-2] file_path 배열 → 차단" 2 "타입 검증"
+run_hook "$P" '{"tool_name":"Write","session_id":"S","tool_input":{"file_path":false}}'
+check "[cx r2 M-2] file_path 불리언 → 차단" 2 "타입 검증"
 
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99

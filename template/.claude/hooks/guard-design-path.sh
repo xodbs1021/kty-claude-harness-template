@@ -29,9 +29,13 @@
 #   경로 필드 부재는 쓰기 게이트에서 rc=2 다. 이웃 guard-publish-review.sh 와 같은 방향.
 #
 # 알려진 한계(정직 고지 — [cx H-1]·[cx M-6]):
-#   - Bash 리다이렉트·mv·cp, 파일 쓰기 MCP 도구는 이 훅의 매처 밖이다.
+#   - Bash/PowerShell 리다이렉트·mv·cp, 파일 쓰기 MCP 도구는 이 훅의 매처 밖이다.
+#   - **직접 슬래시 호출(`/harness-orchestrator`)은 Skill 도구를 우회해 도장이 안 찍힌다**
+#     ([cx r2 M-1]) — 그 세션에서 설계 쓰기가 막히면 Skill 도구 경유로 다시 태워야 한다.
 #   - 도장 파일은 모델이 쓸 수 있는 경로라 위조 가능하다.
-#   - 설계 패턴 밖의 새 명명(예: `10_아키텍처안.md`)은 못 잡는다.
+#   - 도장이 증명하는 것은 "Skill 도구가 harness-orchestrator 지시문을 로드했다"까지다 —
+#     파이프라인 완주를 증명하지 않는다([cx r2 M-3]).
+#   - 설계 패턴 밖의 새 명명(예: `10_아키텍처안.md`·`설계.md`)은 못 잡는다.
 #   **과속방지턱이지 방벽이 아니다.** 막혔다는 사실이 안전을 보증하지 않는다.
 #
 # 셸 이식성: macOS 기본 bash 3.2. ${var,,}·mapfile·연관배열 금지.
@@ -51,8 +55,20 @@ payload="$(cat)"
 
 # JSON 유효성을 먼저 못박는다. json_get 은 파싱 실패를 빈 문자열로 접는데,
 # 그 빈 값이 "쓰기 도구가 아님"과 구분되지 않아 fail-open 이 됐다([cx H-3]).
-if ! printf '%s' "$payload" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
-  echo "[설계 경로 강제] 훅 입력 JSON 을 파싱하지 못했습니다 — 안전하게 차단합니다." >&2
+# 타입까지 검증한다([cx r2 M-2]) — json_get 은 배열·불리언도 문자열화해 통과시켰다.
+if ! printf '%s' "$payload" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+if not isinstance(d, dict): sys.exit(1)
+for k in ("tool_name", "session_id"):
+    if k in d and not isinstance(d[k], str): sys.exit(1)
+ti = d.get("tool_input")
+if ti is not None:
+    if not isinstance(ti, dict): sys.exit(1)
+    for k in ("file_path", "notebook_path", "skill"):
+        if k in ti and not isinstance(ti[k], str): sys.exit(1)
+' 2>/dev/null; then
+  echo "[설계 경로 강제] 훅 입력 JSON 파싱·타입 검증에 실패했습니다 — 안전하게 차단합니다." >&2
   exit 2
 fi
 
@@ -113,14 +129,18 @@ base="$(basename "$lower")"
 # 애초에 안 걸리게 한다([cx H-4]·[cx M-5]).
 #   한글: 문서 유형 토큰(…서·…안) + .md 강제([cx M-1] — 확장자 없으면 소스·데이터를 막았다).
 #         `설계입력서`(입력 문서)는 `설계서` 연속 토큰이 아니라 안 걸린다.
-#   영문: 번호 앵커는 토큰 경계까지(`12_designer.md` 오탐 방지 — [cx M-1]).
+#   영문: 번호 앵커는 **경계 문자(_ 또는 -) 필수** + 정확 이름(design.md·plan.md) —
+#         `00_plan-media.md`·`00_design-reference-gate.md` 가 실계약이다([cx r2 H-1]).
+#         `12_designer.md`·`00_designdoc.md` 는 경계 문자가 없어 비적중(공시된 결정 —
+#         mark-needs-audit 의 느슨한 글롭과 다르며, 그쪽 계약 정렬은 후속 판단).
 #         느슨한 중간 패턴(*_design_*)은 리뷰 명명 계약(NN_<출처>_plan_review)과 충돌해 뺐다.
 is_design=0
 case "$base" in
   *설계서*.md|*설계안*.md|*계획서*.md|*계획안*.md)              is_design=1 ;;
-  [0-9][0-9]_design.md|[0-9][0-9]_design_*.md)                  is_design=1 ;;
-  [0-9][0-9]_plan.md|[0-9][0-9]_plan_*.md)                      is_design=1 ;;
-  design_*.md|*_design.md|plan_*.md|*_plan.md)                  is_design=1 ;;
+  [0-9][0-9]_design.md|[0-9][0-9]_design[_-]*.md)               is_design=1 ;;
+  [0-9][0-9]_plan.md|[0-9][0-9]_plan[_-]*.md)                   is_design=1 ;;
+  design.md|plan.md)                                            is_design=1 ;;
+  design[_-]*.md|*_design.md|plan[_-]*.md|*_plan.md)            is_design=1 ;;
 esac
 [ "$is_design" -eq 0 ] && exit 0
 

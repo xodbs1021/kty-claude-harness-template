@@ -157,6 +157,13 @@ def canon(p):
 fp, proj, home = sys.argv[1], sys.argv[2], sys.argv[3]
 cf = canon(fp)
 
+# 개행·CR 은 anchor 판정보다 **먼저** 거부한다 — 순서가 뒤면 정의 디렉터리 안의 개행
+# 이름이 EXEMPT 로 빠져 "개행 이름 무조건 차단" 공시가 깨진다([cx r8 M-1]).
+# basename 만이 아니라 경로 전체 기준: 어떤 정당한 경로에도 개행은 없다.
+if "\n" in cf or "\r" in cf:
+    print("DESIGN")
+    sys.exit(0)
+
 def under(root, subs):
     if not root:
         return False
@@ -173,13 +180,7 @@ if under(proj, ("agents", "commands", "skills")) or under(home, ("agents", "comm
 
 # 설계·계획 이름 판정 — NFC 정규화·소문자화한 basename 에 대해, 종전 셸 case 와 같은 계약:
 # 한글 문서 유형 토큰 + .md / 영문은 번호 앵커·선행·후행 전부 [_-] 경계 + 정확 이름.
-bn = os.path.basename(cf)
-if "\n" in bn or "\r" in bn:
-    # 정당한 산출물 이름에 개행은 없다 — 개행 낀 이름은 판정 우회 시도로 보고 차단 방향
-    # ([cc r7 H-1] PoC 클래스 봉쇄: 어느 쪽에 설계 토큰이 있든 잠근다).
-    print("DESIGN")
-    sys.exit(0)
-b = unicodedata.normalize("NFC", bn).lower()
+b = unicodedata.normalize("NFC", os.path.basename(cf)).lower()
 korean = ("설계서", "설계안", "계획서", "계획안")
 design = False
 if b.endswith(".md"):

@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=64   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=65   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -204,6 +204,10 @@ check "[cx r7 H-1] anchor 안 dangling 링크(밖 지향·설계 이름) → 차
 ln -s "$P/.claude/commands/foo.md" "$P/_workspace/dangling-in" 2>/dev/null || die "링크 불가"
 run_hook "$P" "$(W SESS-Z "$P/_workspace/dangling-in")"
 check "[cx r7 H-1] 밖의 dangling 링크(안 지향) → 통과(면제)" 0
+
+# [cx r8 M-1] 정의 디렉터리 **안**의 개행 이름도 차단 — anchor 면제보다 개행 거부가 먼저.
+NL3="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","session_id":"SESS-Z","tool_input":{"file_path":sys.argv[1]+"/.claude/commands/safe\n10_설계서.md"}},ensure_ascii=False))' "$P")" || die "개행 payload 생성 불가"
+run_hook "$P" "$NL3"; check "[cx r8 M-1] anchor 안 개행 이름 → 차단" 2 "$BLOCK"
 
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99

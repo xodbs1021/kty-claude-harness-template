@@ -125,26 +125,26 @@ if [ -z "$file_path" ]; then
   exit 2
 fi
 
-# ── 경로 판정 일원화 (r6 듀얼 재작성) ─────────────────────────────────────
-# NFC 정규화·경로 정준화(realpath — `..`·심볼릭 링크 해소)·anchor 포함 판정·소문자
-# basename 산출을 **검증된 python3 한 단계**로 합쳤다. 셸 조각을 없앤 이유(전부 실측):
-#  - [cx r6 H-1] `.claude/commands/../../_workspace/…`·링크가 문자열 anchor 를 탈출
-#  - [cx r6 M-1 · cc r6 M-1] 후행 슬래시·NFD 루트·/var↔/private/var 별칭에서 판정이 갈림
-#  - [cx r6 M-2] tr·basename 단독 실패가 fail-open — 파이프 조각마다 검사를 다는 대신 제거
-#  - (승계) [cc r4 H-2] NFD 이름 우회 · [cc r5 H-1] anchor 부재 · [cc r5 M-1] NFC fail-open
-# 존재하지 않는 꼬리 경로의 대소문자는 정확 일치를 요구한다 — 불일치는 면제가 아니라
-# 설계 판정으로 낙하한다(보수적 방향, 공시).
+# ── 경로 판정 일원화 (r6 python 통합 → r7 듀얼로 재보강) ──────────────────
+# NFC·정준화(realpath)·anchor 판정·**설계 이름 판정까지** python3 한 단계 안에서 끝내고,
+# 셸에는 개행이 섞일 수 없는 **단일 토큰**(EXEMPT|DESIGN|OK)만 돌려준다. 이유(전부 실측):
+#  - [cc r7 H-1 = cx r7 M-1] basename 에 개행이 들면 줄 프로토콜의 마지막 줄만 검사돼
+#    개행 낀 설계 이름이 무경고 통과했다 — basename 을 셸로 왕복시키는 한 불가피.
+#  - [cx r7 H-1] dangling 링크가 "존재하지 않는 꼬리"로 오인돼 anchor 안 링크로 밖에
+#    쓸 수 있었다 → 실존 판정을 lexists(링크 자체) 기준으로.
+#  - [cx r7 H-2] NFC 를 파일시스템 조회보다 먼저 적용하면 정규화 민감 FS(Linux)에서
+#    NFD 경로와 NFC 형제가 합쳐진다 → 물리 해소는 원문으로, NFC 는 이름 판정에만.
+#  - (승계) r6: `..`·링크 탈출 정준화 · 후행 슬래시·별칭·NFD 루트 · tr/basename 제거.
+# 알려진 한계(공시): 판정은 **검사 시점** 기준이다 — 검사 후 링크를 바꿔치는 TOCTOU 는
+# 이 훅의 방벽 밖이다([cx r7 M-2]). 존재하지 않는 꼬리의 대소문자는 정확 일치 요구.
 verdict="$(python3 - "$file_path" "$PROJECT_DIR" "${HOME:-}" <<'PYEOF'
-import os, sys, unicodedata
-
-def nfc(s):
-    return unicodedata.normalize("NFC", s)
+import os, re, sys, unicodedata
 
 def canon(p):
-    # 가장 가까운 실존 조상까지 realpath(링크·`..` 해소), 나머지 꼬리는 어휘적으로 결합.
-    p = nfc(p)
+    # 가장 가까운 **실존(lexists — dangling 링크 포함)** 조상까지 realpath 로 해소하고,
+    # 나머지 꼬리는 어휘적으로 결합한다. NFC 는 여기서 적용하지 않는다([cx r7 H-2]).
     head, tail = p, []
-    while head and not os.path.exists(head):
+    while head and not os.path.lexists(head):
         head, last = os.path.split(head)
         if not last:
             break
@@ -152,7 +152,7 @@ def canon(p):
     head = os.path.realpath(head) if head else os.path.realpath(".")
     for c in reversed(tail):
         head = os.path.join(head, c)
-    return nfc(os.path.normpath(head))
+    return os.path.normpath(head)
 
 fp, proj, home = sys.argv[1], sys.argv[2], sys.argv[3]
 cf = canon(fp)
@@ -169,47 +169,43 @@ def under(root, subs):
 
 if under(proj, ("agents", "commands", "skills")) or under(home, ("agents", "commands", "skills", "plugins")):
     print("EXEMPT")
-else:
-    print("CHECK")
-    print(os.path.basename(cf).lower())
+    sys.exit(0)
+
+# 설계·계획 이름 판정 — NFC 정규화·소문자화한 basename 에 대해, 종전 셸 case 와 같은 계약:
+# 한글 문서 유형 토큰 + .md / 영문은 번호 앵커·선행·후행 전부 [_-] 경계 + 정확 이름.
+bn = os.path.basename(cf)
+if "\n" in bn or "\r" in bn:
+    # 정당한 산출물 이름에 개행은 없다 — 개행 낀 이름은 판정 우회 시도로 보고 차단 방향
+    # ([cc r7 H-1] PoC 클래스 봉쇄: 어느 쪽에 설계 토큰이 있든 잠근다).
+    print("DESIGN")
+    sys.exit(0)
+b = unicodedata.normalize("NFC", bn).lower()
+korean = ("설계서", "설계안", "계획서", "계획안")
+design = False
+if b.endswith(".md"):
+    if any(t in b for t in korean):
+        design = True
+    elif re.match(r"^[0-9][0-9]_(design|plan)(\.md$|[_-].*\.md$)", b):
+        design = True
+    elif re.match(r"^(design|plan)(\.md$|[_-].*\.md$)", b):
+        design = True
+    elif re.search(r"[_-](design|plan)\.md$", b):
+        design = True
+print("DESIGN" if design else "OK")
 PYEOF
 )"
-if [ $? -ne 0 ] || [ -z "$verdict" ]; then
+rc=$?
+if [ "$rc" -ne 0 ]; then
   echo "[설계 경로 강제] 경로 정규화·판정 단계가 실패했습니다 — 안전하게 차단합니다." >&2
   exit 2
 fi
-if [ "$verdict" = "EXEMPT" ]; then
-  exit 0
-fi
-base="${verdict##*$'\n'}"
-if [ "$base" = "$verdict" ] || [ -z "$base" ]; then
-  # CHECK 뒤 basename 줄이 없다 — 예상 밖 출력은 잠그는 쪽으로.
-  echo "[설계 경로 강제] 경로 판정 출력이 비정상입니다 — 안전하게 차단합니다." >&2
-  exit 2
-fi
-
-# 일반 문서 이름과의 충돌은 **공시된 결정**이다: `migration-plan.md`·`test-plan.md` 같은
-# 범용 이름은 `media-plan.md`(산출물) 과 이름만으로 구분할 수 없어 **차단 쪽으로 기운다**
-# (cc r3 [H-1] 요구와 cc r4 [H-1] 오탐 지적의 절충 — 게이트의 목적상 위양성이 위음성보다 싸다).
-# 설계·계획 산출물 판정. 면제 목록은 없다(이름 축) — 패턴을 좁혀서 리뷰·raw·색인·입력서가
-# 애초에 안 걸리게 한다([cx H-4]·[cx M-5]).
-#   한글: 문서 유형 토큰(…서·…안) + .md 강제([cx M-1] — 확장자 없으면 소스·데이터를 막았다).
-#         `설계입력서`(입력 문서)는 `설계서` 연속 토큰이 아니라 안 걸린다.
-#   영문: 번호 앵커·선행형·**후행형 전부 경계 문자(_ 또는 -) 필수** + 정확 이름(design.md·plan.md) —
-#         후행형 하이픈 누락으로 `auth-design.md` 가 통과하던 구멍은 cc r3 [H-1] 이 잡았다.
-#         `00_plan-media.md`·`00_design-reference-gate.md` 가 실계약이다([cx r2 H-1]).
-#         `12_designer.md`·`00_designdoc.md` 는 경계 문자가 없어 비적중(공시된 결정 —
-#         mark-needs-audit 의 느슨한 글롭과 다르며, 그쪽 계약 정렬은 후속 판단).
-#         느슨한 중간 패턴(*_design_*)은 리뷰 명명 계약(NN_<출처>_plan_review)과 충돌해 뺐다.
-is_design=0
-case "$base" in
-  *설계서*.md|*설계안*.md|*계획서*.md|*계획안*.md)              is_design=1 ;;
-  [0-9][0-9]_design.md|[0-9][0-9]_design[_-]*.md)               is_design=1 ;;
-  [0-9][0-9]_plan.md|[0-9][0-9]_plan[_-]*.md)                   is_design=1 ;;
-  design.md|plan.md)                                            is_design=1 ;;
-  design[_-]*.md|*[_-]design.md|plan[_-]*.md|*[_-]plan.md)      is_design=1 ;;
+case "$verdict" in
+  EXEMPT|OK) exit 0 ;;
+  DESIGN) : ;;
+  *)
+    echo "[설계 경로 강제] 경로 판정 출력이 비정상입니다 — 안전하게 차단합니다." >&2
+    exit 2 ;;
 esac
-[ "$is_design" -eq 0 ] && exit 0
 
 # 도장 대조 — 이 세션의 도장만 유효하다.
 stamped=""

@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=60   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=64   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -189,6 +189,21 @@ NFDP="$(python3 -c 'import unicodedata,sys;sys.stdout.write(unicodedata.normaliz
 mkdir -p "$TMPROOT/$NFDP/.claude/commands" || die "NFD 프로젝트 mkdir 불가"
 run_hook "$TMPROOT/$NFDP" "$(W SESS-Z "$TMPROOT/$NFDP/.claude/commands/x-design.md")"
 check "[cx r6 M-1] NFD 프로젝트 루트 → 통과" 0
+
+# ── 5e) r7 듀얼 회귀 — 단일 토큰 프로토콜·링크 실존 ───────────────────────
+# [cc r7 H-1 = cx r7 M-1] 개행 낀 basename 은 어느 쪽에 토큰이 있든 차단.
+NL1="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","session_id":"SESS-Z","tool_input":{"file_path":sys.argv[1]+"/_workspace/10_설계서_r1.md\nx"}},ensure_ascii=False))' "$P")" || die "개행 payload 생성 불가"
+run_hook "$P" "$NL1";  check "[cc r7 H-1] 개행 뒤붙임 이름 → 차단" 2 "$BLOCK"
+NL2="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","session_id":"SESS-Z","tool_input":{"file_path":sys.argv[1]+"/_workspace/safe\n10_설계서.md"}},ensure_ascii=False))' "$P")" || die "개행 payload 생성 불가"
+run_hook "$P" "$NL2";  check "[cc r7 H-1] 개행 앞붙임 이름 → 차단" 2 "$BLOCK"
+
+# [cx r7 H-1] dangling 링크 — 실존 판정은 lexists(링크 자체).
+ln -s /vault/10_design.md "$P/.claude/commands/dangling-out.md" 2>/dev/null || die "링크 불가"
+run_hook "$P" "$(W SESS-Z "$P/.claude/commands/dangling-out.md")"
+check "[cx r7 H-1] anchor 안 dangling 링크(밖 지향·설계 이름) → 차단" 2 "$BLOCK"
+ln -s "$P/.claude/commands/foo.md" "$P/_workspace/dangling-in" 2>/dev/null || die "링크 불가"
+run_hook "$P" "$(W SESS-Z "$P/_workspace/dangling-in")"
+check "[cx r7 H-1] 밖의 dangling 링크(안 지향) → 통과(면제)" 0
 
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99

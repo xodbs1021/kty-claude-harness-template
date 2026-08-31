@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=55   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=60   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -161,15 +161,34 @@ run_hook "$P" "$(W SESS-Z /repo/docs/migration-plan.md)";              check "[r
 SHIM="$TMPROOT/shim"; mkdir -p "$SHIM" || die "shim mkdir 불가"
 cat > "$SHIM/python3" <<'SH'
 #!/bin/bash
-case "$*" in
-  *unicodedata*) exit 127 ;;
-  *) exec /usr/bin/python3 "$@" ;;
-esac
+# 경로 판정 단계(python3 - <args>, 스크립트는 stdin)만 실패시킨다.
+if [ "$1" = "-" ]; then exit 127; fi
+exec /usr/bin/python3 "$@"
 SH
 chmod +x "$SHIM/python3" || die "shim chmod 불가"
 HOOK_ERR="$(printf '%s' "$(W SESS-Z /v/10_설계서_r9.md)" | PATH="$SHIM:$PATH" CLAUDE_PROJECT_DIR="$P" bash "$HOOK" 2>&1 >/dev/null)"
 RC=$?
-check "[cc r5 M-1] NFC 단계 실패 → 차단(fail-closed)" 2 "정규화"
+check "[cc r5 M-1→r6] 경로 판정 단계 실패 → 차단(fail-closed)" 2 "정규화"
+
+# ── 5d) r6 듀얼 회귀 — 정준화 anchor ──────────────────────────────────────
+# [cx r6 H-1] `..`·심볼릭 링크로 anchor 탈출 금지.
+run_hook "$P" "$(W SESS-Z "$P/.claude/commands/../../_workspace/10_design.md")"
+check "[cx r6 H-1] .. 탈출 → 차단" 2 "$BLOCK"
+mkdir -p "$P/.claude/commands" || die "commands mkdir 불가"
+ln -s "$P/_workspace" "$P/.claude/commands/link" 2>/dev/null || die "링크 생성 불가"
+run_hook "$P" "$(W SESS-Z "$P/.claude/commands/link/10_design.md")"
+check "[cx r6 H-1] 링크 탈출 → 차단(realpath 해소)" 2 "$BLOCK"
+
+# [cx r6 M-1 · cc r6 M-1] 별칭·후행 슬래시·NFD 루트는 정상 면제여야 한다.
+ln -s "$P" "$TMPROOT/alias" 2>/dev/null || die "alias 링크 불가"
+run_hook "$TMPROOT/alias" "$(W SESS-Z "$P/.claude/commands/gan-design.md")"
+check "[cx r6 M-1] 프로젝트 루트 별칭(symlink) → 통과" 0
+run_hook "$P/" "$(W SESS-Z "$P/.claude/commands/gan-design.md")"
+check "[cc r6 M-1] PROJECT_DIR 후행 슬래시 → 통과" 0
+NFDP="$(python3 -c 'import unicodedata,sys;sys.stdout.write(unicodedata.normalize("NFD","프로젝트"))')" || die "NFD 이름 생성 불가"
+mkdir -p "$TMPROOT/$NFDP/.claude/commands" || die "NFD 프로젝트 mkdir 불가"
+run_hook "$TMPROOT/$NFDP" "$(W SESS-Z "$TMPROOT/$NFDP/.claude/commands/x-design.md")"
+check "[cx r6 M-1] NFD 프로젝트 루트 → 통과" 0
 
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99

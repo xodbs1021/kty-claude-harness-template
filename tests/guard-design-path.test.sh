@@ -14,7 +14,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../template/.claude/hooks/guard-design-path.sh"
 
-EXPECTED_CASES=42   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
+EXPECTED_CASES=46   # check/expect_* 호출 수. 어긋나면 케이스가 조용히 증발한 것이다.
 count=0
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -107,8 +107,8 @@ run_hook "$P" "$(S SESS-A harness-orchestrator)";                     check "정
 expect_stamp "정확 이름은 도장을 찍는다(session_id 기록)" "$P" "SESS-A" 1
 
 P4="$(mkproj)" || exit 99
-run_hook "$P4" "$(S SESS-D myplugin:harness-orchestrator)";           check "플러그인 접두 형태 → 통과" 0
-expect_stamp "플러그인 접두 형태도 도장을 찍는다" "$P4" "SESS-D" 1
+run_hook "$P4" "$(S SESS-D myplugin:harness-orchestrator)";           check "[cx r3 M-1] 플러그인 접두 → 통과(무해)" 0
+expect_stamp "[cx r3 M-1] 플러그인 접두는 도장을 안 찍는다(임의 네임스페이스 불신)" "$P4" "SESS-D" 0
 
 # ── 4) 도장 이후 ───────────────────────────────────────────────────────────
 run_hook "$P" "$(W SESS-A /vault/specs/12_설계서_r3.md)";             check "도장 있음·같은 세션 → 통과" 0
@@ -135,14 +135,19 @@ check "[cx r2 M-2] file_path 배열 → 차단" 2 "타입 검증"
 run_hook "$P" '{"tool_name":"Write","session_id":"S","tool_input":{"file_path":false}}'
 check "[cx r2 M-2] file_path 불리언 → 차단" 2 "타입 검증"
 
+# [cc r3 H-1] 후행형 하이픈 경계 — auth-design.md 가 통과하던 구멍.
+run_hook "$P" "$(W SESS-Z /ws/auth-design.md)";                       check "[cc r3 H-1] 후행 하이픈(–design.md)·무도장 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z /ws/media-plan.md)";                        check "[cc r3 H-1] 후행 하이픈(–plan.md)·무도장 → 차단" 2 "$BLOCK"
+run_hook "$P" "$(W SESS-Z /ws/skin-redesign.md)";                     check "[cc r3 H-1] 경계 없는 redesign → 통과" 0
+
 # ── 6) 탈출구·경계 ─────────────────────────────────────────────────────────
 P2="$(mkproj)" || exit 99
 DISABLE="pre:write:design-path" run_hook "$P2" "$(W SESS-C /vault/10_설계서.md)"
 check "훅 id 로 개별 비활성 → 통과" 0
 
 P3="$(mkproj)" || exit 99
-printf '{"tool_name":"Skill","session_id":"","tool_input":{"skill":"harness-orchestrator"}}' \
-  | CLAUDE_PROJECT_DIR="$P3" bash "$HOOK" >/dev/null 2>&1
+run_hook "$P3" '{"tool_name":"Skill","session_id":"","tool_input":{"skill":"harness-orchestrator"}}'
+check "[cx r3 N-1] 빈 session_id Skill → 통과(rc 검사)" 0
 count=$((count+1))
 if ls "$P3/.claude/".harness-path.* >/dev/null 2>&1; then
   say "FAIL: session_id 없이 도장이 찍혔다"; fail=1

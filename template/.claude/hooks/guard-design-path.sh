@@ -83,9 +83,10 @@ stamp_path() {  # $1=session → 세션별 도장 경로. cksum 은 POSIX·bash3
 if [ "$tool" = "Skill" ]; then
   skill="$(printf '%s' "$payload" | json_get tool_input.skill)"
   # 정확 일치만. 부분 문자열 매치는 "not-harness-orchestrator-x" 도 도장을 찍었다([cx H-2]).
-  # 플러그인 접두 형태(<plugin>:harness-orchestrator)는 허용한다.
+  # 플러그인 접두(<plugin>:harness-orchestrator)는 **불허** — 임의 플러그인이 같은 이름의
+  # 스킬을 제공하면 도장을 받는 신뢰 구멍이 된다([cx r3 M-1]). 이 스킬은 프로젝트 소유다.
   case "$skill" in
-    harness-orchestrator|*:harness-orchestrator)
+    harness-orchestrator)
       if [ -n "$session" ]; then
         STAMP="$(stamp_path "$session")"
         tmp="$STAMP.tmp.$$"
@@ -129,7 +130,8 @@ base="$(basename "$lower")"
 # 애초에 안 걸리게 한다([cx H-4]·[cx M-5]).
 #   한글: 문서 유형 토큰(…서·…안) + .md 강제([cx M-1] — 확장자 없으면 소스·데이터를 막았다).
 #         `설계입력서`(입력 문서)는 `설계서` 연속 토큰이 아니라 안 걸린다.
-#   영문: 번호 앵커는 **경계 문자(_ 또는 -) 필수** + 정확 이름(design.md·plan.md) —
+#   영문: 번호 앵커·선행형·**후행형 전부 경계 문자(_ 또는 -) 필수** + 정확 이름(design.md·plan.md) —
+#         후행형 하이픈 누락으로 `auth-design.md` 가 통과하던 구멍은 cc r3 [H-1] 이 잡았다.
 #         `00_plan-media.md`·`00_design-reference-gate.md` 가 실계약이다([cx r2 H-1]).
 #         `12_designer.md`·`00_designdoc.md` 는 경계 문자가 없어 비적중(공시된 결정 —
 #         mark-needs-audit 의 느슨한 글롭과 다르며, 그쪽 계약 정렬은 후속 판단).
@@ -140,7 +142,7 @@ case "$base" in
   [0-9][0-9]_design.md|[0-9][0-9]_design[_-]*.md)               is_design=1 ;;
   [0-9][0-9]_plan.md|[0-9][0-9]_plan[_-]*.md)                   is_design=1 ;;
   design.md|plan.md)                                            is_design=1 ;;
-  design[_-]*.md|*_design.md|plan[_-]*.md|*_plan.md)            is_design=1 ;;
+  design[_-]*.md|*[_-]design.md|plan[_-]*.md|*[_-]plan.md)      is_design=1 ;;
 esac
 [ "$is_design" -eq 0 ] && exit 0
 

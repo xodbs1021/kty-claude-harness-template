@@ -125,35 +125,67 @@ if [ -z "$file_path" ]; then
   exit 2
 fi
 
-# 유니코드 정규화(NFC) — macOS 는 파일명을 NFD(자모 분해형)로 돌려주기도 해서, NFC 로
-# 저장된 아래 한글 글롭이 같은 이름을 놓친다(cc r4 [H-2]: NFD 설계서가 rc=0 실측).
-# python3 존재는 위 타입 검증이 이미 보증한다(없으면 그 단계에서 rc=2).
-norm="$(printf '%s' "$file_path" | python3 -c 'import sys,unicodedata; sys.stdout.write(unicodedata.normalize("NFC", sys.stdin.read()))')"
-if [ $? -ne 0 ] || [ -z "$norm" ]; then
-  # 이 호출 하나만 실패해도 잠그는 쪽으로 — 빈 치환이 basename 판정을 그냥 지나가
-  # rc=0 이 되던 fail-open 실측(cc r5 [M-1] · cx r5 프로브 → 오케스트레이터 재현).
-  echo "[설계 경로 강제] 경로 NFC 정규화에 실패했습니다 — 안전하게 차단합니다." >&2
+# ── 경로 판정 일원화 (r6 듀얼 재작성) ─────────────────────────────────────
+# NFC 정규화·경로 정준화(realpath — `..`·심볼릭 링크 해소)·anchor 포함 판정·소문자
+# basename 산출을 **검증된 python3 한 단계**로 합쳤다. 셸 조각을 없앤 이유(전부 실측):
+#  - [cx r6 H-1] `.claude/commands/../../_workspace/…`·링크가 문자열 anchor 를 탈출
+#  - [cx r6 M-1 · cc r6 M-1] 후행 슬래시·NFD 루트·/var↔/private/var 별칭에서 판정이 갈림
+#  - [cx r6 M-2] tr·basename 단독 실패가 fail-open — 파이프 조각마다 검사를 다는 대신 제거
+#  - (승계) [cc r4 H-2] NFD 이름 우회 · [cc r5 H-1] anchor 부재 · [cc r5 M-1] NFC fail-open
+# 존재하지 않는 꼬리 경로의 대소문자는 정확 일치를 요구한다 — 불일치는 면제가 아니라
+# 설계 판정으로 낙하한다(보수적 방향, 공시).
+verdict="$(python3 - "$file_path" "$PROJECT_DIR" "${HOME:-}" <<'PYEOF'
+import os, sys, unicodedata
+
+def nfc(s):
+    return unicodedata.normalize("NFC", s)
+
+def canon(p):
+    # 가장 가까운 실존 조상까지 realpath(링크·`..` 해소), 나머지 꼬리는 어휘적으로 결합.
+    p = nfc(p)
+    head, tail = p, []
+    while head and not os.path.exists(head):
+        head, last = os.path.split(head)
+        if not last:
+            break
+        tail.append(last)
+    head = os.path.realpath(head) if head else os.path.realpath(".")
+    for c in reversed(tail):
+        head = os.path.join(head, c)
+    return nfc(os.path.normpath(head))
+
+fp, proj, home = sys.argv[1], sys.argv[2], sys.argv[3]
+cf = canon(fp)
+
+def under(root, subs):
+    if not root:
+        return False
+    r = canon(root)
+    for sub in subs:
+        base = os.path.join(r, ".claude", sub)
+        if cf == base or cf.startswith(base + os.sep):
+            return True
+    return False
+
+if under(proj, ("agents", "commands", "skills")) or under(home, ("agents", "commands", "skills", "plugins")):
+    print("EXEMPT")
+else:
+    print("CHECK")
+    print(os.path.basename(cf).lower())
+PYEOF
+)"
+if [ $? -ne 0 ] || [ -z "$verdict" ]; then
+  echo "[설계 경로 강제] 경로 정규화·판정 단계가 실패했습니다 — 안전하게 차단합니다." >&2
   exit 2
 fi
-file_path="$norm"
-
-lower="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]')"
-base="$(basename "$lower")"
-
-# 하네스 정의 경로는 산출물이 아니다 — 단, **실제 설치 루트(프로젝트/.claude · 홈/.claude)에
-# anchor 한** 구조 면제다. r4 초판은 anchor 없는 `*/commands/*.md` 글롭이라
-# `_workspace/commands/` 폴더 하나로 게이트 전체가 뚫렸다(cc r5 [H-1] — 7변종 실측,
-# r1 의 이름 부분문자열 구멍[cx H-4]과 같은 클래스를 경로 축에서 재현한 것).
-# 상대 경로·다른 루트는 anchor 에 안 걸려 설계 판정으로 떨어진다(보수적 방향).
-proj_lower="$(printf '%s' "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]')"
-home_lower="$(printf '%s' "${HOME:-}" | tr '[:upper:]' '[:lower:]')"
-case "$lower" in
-  "$proj_lower"/.claude/agents/*|"$proj_lower"/.claude/commands/*|"$proj_lower"/.claude/skills/*) exit 0 ;;
-esac
-if [ -n "$home_lower" ]; then
-  case "$lower" in
-    "$home_lower"/.claude/agents/*|"$home_lower"/.claude/commands/*|"$home_lower"/.claude/skills/*|"$home_lower"/.claude/plugins/*) exit 0 ;;
-  esac
+if [ "$verdict" = "EXEMPT" ]; then
+  exit 0
+fi
+base="${verdict##*$'\n'}"
+if [ "$base" = "$verdict" ] || [ -z "$base" ]; then
+  # CHECK 뒤 basename 줄이 없다 — 예상 밖 출력은 잠그는 쪽으로.
+  echo "[설계 경로 강제] 경로 판정 출력이 비정상입니다 — 안전하게 차단합니다." >&2
+  exit 2
 fi
 
 # 일반 문서 이름과의 충돌은 **공시된 결정**이다: `migration-plan.md`·`test-plan.md` 같은

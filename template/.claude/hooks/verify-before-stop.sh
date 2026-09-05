@@ -159,6 +159,26 @@ bump_and_block() {
   exit 2
 }
 
+# 검증 명령 하나를 PROJECT_DIR 에서 돌린다. 결과는 gc_out(합친 출력)·gc_rc(종료 코드).
+# 타입체크와 스타일 검사가 **같은 실행 규약**을 쓰게 하려고 함수로 둔다 — 두 자리가
+# 따로 timeout 을 찾고 따로 sh -c 를 부르면 언젠가 한쪽만 고쳐진다.
+# macOS 기본에는 timeout 이 없다. 그 경우 settings.json 의 "timeout": 120 이 최종 안전망.
+gc_out=""
+gc_rc=0
+run_gate_command() {
+  local cmd="$1" bin=""
+  if command -v timeout >/dev/null 2>&1; then
+    bin="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    bin="gtimeout"
+  fi
+  if [ -n "$bin" ]; then
+    gc_out="$(cd "$PROJECT_DIR" && "$bin" 90 sh -c "$cmd" 2>&1)"; gc_rc=$?
+  else
+    gc_out="$(cd "$PROJECT_DIR" && sh -c "$cmd" 2>&1)"; gc_rc=$?
+  fi
+}
+
 # (3) 타입체크 — 결정론적 바닥. 명령은 프로필에서 파생된 harness.env 에서 읽는다.
 #     HARNESS_TYPECHECK_CMD 가 비어 있으면(타입 없는 언어/미설정) 생략한다.
 #     이렇게 하면 이 훅이 특정 스택(pnpm/tsc)에 묶이지 않는다 — 도메인-무관 재사용.
@@ -179,19 +199,8 @@ elif [ "$typecheck_rc" -ne 0 ]; then
 elif [ -z "$TYPECHECK_CMD" ]; then
   typecheck_note="타입체크 생략 (HARNESS_TYPECHECK_CMD 가 빈 값으로 설정됨)"
 else
-  timeout_bin=""
-  if command -v timeout >/dev/null 2>&1; then
-    timeout_bin="timeout"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    timeout_bin="gtimeout"
-  fi
-  # macOS 기본에는 timeout 이 없다. 그 경우 settings.json 의 "timeout": 120 이 최종 안전망.
-
-  if [ -n "$timeout_bin" ]; then
-    tc_out="$(cd "$PROJECT_DIR" && "$timeout_bin" 90 sh -c "$TYPECHECK_CMD" 2>&1)"; tc_rc=$?
-  else
-    tc_out="$(cd "$PROJECT_DIR" && sh -c "$TYPECHECK_CMD" 2>&1)"; tc_rc=$?
-  fi
+  run_gate_command "$TYPECHECK_CMD"
+  tc_out="$gc_out"; tc_rc="$gc_rc"
 
   if [ "$tc_rc" -eq 124 ] || [ "$tc_rc" -eq 137 ]; then
     # 타임아웃은 "타입 오류"가 아니라 "모름". 차단하지 않고 감사자에게 넘긴다.
@@ -210,6 +219,65 @@ else
       echo
       echo "고친 뒤 다시 종료하세요.  (차단 $((count + 1))/${MAX_BLOCKS})"
       echo "탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
+    } >&2
+    bump_and_block
+  fi
+fi
+
+# (3.1) 스타일 검사 — Google 스타일 가이드의 **기계로 판정 가능한** 조항
+#      (principles.md '스타일 정본' 절, ADR-0023).
+#
+#      **왜 타입체크와 슬롯을 나누나:** 처음에는 HARNESS_TYPECHECK_CMD 에 이어 붙이게 했는데,
+#      프로젝트가 자기 타입체크를 넣으면서 값을 통째로 갈아치우면 스타일 게이트가 조용히
+#      사라졌다. 기계가 못 막고 주석이 부탁할 뿐인 게이트는 게이트가 아니다. 슬롯을 나누면
+#      한쪽을 덮어써도 다른 쪽이 산다.
+#
+#      **키가 없으면 켜진다.** 이 키를 모르는 기존 설치본에서 게이트가 조용히 꺼지면 안 된다
+#      (HARNESS_KNOWLEDGE_GATE 와 같은 원리 — 표명이 없으면 안전한 쪽을 고른다). 키가 없을
+#      때는 번들된 검사기를 찾아 돌리고, 그것도 없으면 생략한다.
+#      끄려면 **값을 비운다** — 그 방법 하나뿐이다.
+stylecheck_note=""
+STYLECHECK_CMD="$(harness_env_value HARNESS_STYLECHECK_CMD)"; stylecheck_rc=$?
+BUNDLED_STYLECHECK=".claude/skills/google-styleguide/scripts/check-style.sh"
+
+if [ "$stylecheck_rc" -eq 3 ]; then
+  # 키 부재 — 번들 검사기로 축퇴한다(있으면).
+  if [ -f "$PROJECT_DIR/$BUNDLED_STYLECHECK" ]; then
+    STYLECHECK_CMD="bash $BUNDLED_STYLECHECK"
+    stylecheck_rc=0
+  else
+    stylecheck_note="스타일 검사 생략 (HARNESS_STYLECHECK_CMD 미설정, 번들 검사기도 없음)"
+    STYLECHECK_CMD=""
+  fi
+fi
+
+if [ -n "$stylecheck_note" ]; then
+  : # 위에서 이미 사유를 적었다
+elif [ "$stylecheck_rc" -ne 0 ]; then
+  stylecheck_note="스타일 검사 생략 (harness.env 의 HARNESS_STYLECHECK_CMD 값을 믿을 수 없음 — 선언이 2개 이상이거나, 지원 문법 밖이거나, 읽기 실패입니다. 고칠 수 있는 실수입니다)"
+elif [ -z "$STYLECHECK_CMD" ]; then
+  stylecheck_note="스타일 검사 생략 (HARNESS_STYLECHECK_CMD 가 빈 값으로 설정됨)"
+elif ! hook_disabled "stop:stylecheck"; then
+  run_gate_command "$STYLECHECK_CMD"
+  sc_out="$gc_out"; sc_rc="$gc_rc"
+
+  if [ "$sc_rc" -eq 124 ] || [ "$sc_rc" -eq 137 ]; then
+    stylecheck_note="스타일 검사 타임아웃 → 생략 (감사자가 재확인할 것)"
+  elif [ "$sc_rc" -eq 127 ]; then
+    # 도구 부재(gofmt 없음 등)는 "위반"이 아니다. 오탐 차단을 만들지 않는다.
+    stylecheck_note="스타일 검사 생략 (명령 실행 불가 rc=127): $STYLECHECK_CMD"
+  elif [ "$sc_rc" -ne 0 ]; then
+    gate_budget "stylecheck"
+    {
+      echo "[완료 차단] 스타일 검사 실패 — 지금은 '완료'가 아닙니다."
+      echo
+      echo "Google 스타일 가이드의 기계 판정 조항을 어겼습니다 (principles.md '스타일 정본' 절)."
+      echo "명령: $STYLECHECK_CMD"
+      echo
+      printf '%s\n' "$sc_out" | head -n 15
+      echo
+      echo "고친 뒤 다시 종료하세요.  (차단 $((count + 1))/${MAX_BLOCKS})"
+      echo "탈출구는 타입체크 게이트와 같습니다 (위 메시지 참조). 훅 식별자는 stop:stylecheck 입니다."
     } >&2
     bump_and_block
   fi
@@ -676,6 +744,10 @@ gate_budget "audit"
   if [ -n "$typecheck_note" ]; then
     echo
     echo "참고: $typecheck_note"
+  fi
+  if [ -n "$stylecheck_note" ]; then
+    echo
+    echo "참고: $stylecheck_note"
   fi
   emit_decision_note
   echo

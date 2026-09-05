@@ -286,6 +286,14 @@ sweep_bash_writes() {
   # **가장 오래된 창을 소비한다.** 병렬 Bash 에서 창이 여럿일 수 있는데, 짝을 정확히
   # 맞출 방법이 없으므로 **가장 넓은 창**을 쓴다 — 남의 호출이 쓴 파일까지 잡는 과탐은
   # 싸고, 놓치는 누락은 비싸다(codex r1 CRITICAL).
+  #
+  # **소비한 창은 반드시 지운다(아래 consume).** 안 지우면 창이 쌓여 매번 세션 맨 처음
+  # 창을 쓰게 되고, 감사자가 플래그를 지워도 다음 Bash 가 같은 파일을 다시 세워
+  # **게이트가 영원히 안 닫힌다 — 세션이 벽돌이 된다.** r1 수정이 만든 2차 결함이라
+  # 여기 못 박는다([cc] r2).
+  #
+  # ls -tr 은 **mtime 오름차순**이다(-t 가 mtime, -r 이 역순). 창 파일명은 우리가 짓고
+  # 공백·개행이 없으므로 ls 출력을 줄 단위로 읽어도 안전하다.
   BASH_WINDOW="$(ls -tr "$WINDOW_DIR" 2>/dev/null | head -n 1)"
   [ -n "$BASH_WINDOW" ] || return 0     # 창이 없으면(PreToolUse 미등록) 스윕하지 않는다
   BASH_WINDOW="$WINDOW_DIR/$BASH_WINDOW"
@@ -321,17 +329,30 @@ sweep_bash_writes() {
     # 추적되지 않던 파일의 삭제는 어차피 아무도 모른다.
     # 시간 창을 못 걸므로 **이전에 생긴 미커밋 삭제도 잡힌다** — 과탐이지만, 미커밋 삭제가
     # 남아 있다는 것 자체가 감사가 필요한 상태라 그대로 둔다.
-    while IFS= read -r st; do
-      f="${st#?? }"
+    #
+    # **-z 가 필수다.** 기본 porcelain 은 특수문자 경로를 따옴표로 감싸고 이스케이프한다.
+    # 실측: `src/say"hi".go` → `"src/say\"hi\".go"`, 한글 경로 → `"src/\355\225\234…"`.
+    # 그대로 쓰면 **존재하지 않는 경로**가 플래그에 박히고 실제 파일은 무게이트다 —
+    # 한국어 파일명을 쓰는 저장소에서는 상시 조건이다(codex r2 지적, [cc] 실측).
+    # -z 는 인용 없이 NUL 로 끊어 준다. 레코드 = 상태 2글자 + 공백 + 경로.
+    while IFS= read -r -d '' st; do
+      case "$st" in
+        ' D '*|'D  '*|'AD '*|'MD '*) ;;
+        *) continue ;;
+      esac
+      f="${st:3}"
       [ -n "$f" ] || continue
       n=$((n + 1))
       if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
       child_out="$(payload_for_path "$root/$f" | bash "$self" 2>/dev/null)"
       [ -n "$child_out" ] && child_msg=1
-    done < <(git -C "$root" status --porcelain 2>/dev/null | grep -E '^( D|D |AD|MD) ' 2>/dev/null)
+    done < <(git -C "$root" status --porcelain -z 2>/dev/null)
   done <<EOF
 $(sweep_roots "$cmd")
 EOF
+
+  # 창을 소비했으니 지운다. 이 줄이 없으면 위 주석의 벽돌 상태가 된다.
+  rm -f "$BASH_WINDOW" 2>/dev/null
 
   # 조용히 끊으면 사용자는 게이트가 다 섰다고 믿는데 실제로는 아니다 — 이 훅이 위음성을
   # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **한 줄만** 낸다(PostToolUse 계약).

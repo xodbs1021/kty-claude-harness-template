@@ -58,5 +58,13 @@ jobs:
       # 통과)이 유일한 치명 결함이라, 케이스가 rc 와 차단 사유 문구를 함께 잰다.
       - name: 발행 전 리뷰 게이트 회귀 테스트
         run: ./tests/guard-publish-review.test.sh
+      # 스타일 게이트(ADR-0023). 위음성 축이 둘이다 — 타입체크 슬롯을 덮어써서 사라지는
+      # 것과, 키를 모르는 기존 설치본에서 조용히 꺼지는 것. 케이스가 둘 다 잰다.
+      - name: 스타일 검사 게이트 회귀 테스트
+        run: ./tests/stylecheck-gate.test.sh
+      # Bash 로 쓴 파일의 완료 게이트(ADR-0024). 이 게이트가 없던 동안 하네스 정본을
+      # Bash 로 고친 세션이 통째로 무게이트로 끝났다 — 그 재발을 막는다.
+      - name: Bash 쓰기 스윕 회귀 테스트
+        run: ./tests/bash-write-sweep.test.sh
       - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
         run: ./scripts/check-layer-boundary.sh

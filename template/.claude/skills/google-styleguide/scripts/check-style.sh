@@ -29,7 +29,14 @@ readonly SKIP_DIRS='-name .git -o -name vendor -o -name node_modules -o -name .v
 check_go_format() {
   local mod_file mod_dir unformatted found=0 failed=0
 
-  command -v gofmt >/dev/null 2>&1 || return 0
+  # gofmt 이 없으면 검사할 수 없다. **조용히 통과시키지 않는다** — Stop 훅은 rc=0 을
+  # "위반 없음"으로 기록하므로, 알리지 않으면 Go 저장소인데 스타일 게이트가 통째로
+  # 사라진 것을 아무도 모른다(codex r1 HIGH). 차단하지는 않는다: 도구 부재는 위반이 아니고
+  # 오탐 차단은 게이트를 벽돌로 만든다.
+  if ! command -v gofmt >/dev/null 2>&1; then
+    printf '[스타일] gofmt 이 없어 Go 포맷을 검사하지 못했다 — 스타일 게이트가 이 턴에는 비어 있다.\n' >&2
+    return 0
+  fi
 
   # while-read 를 쓴다: 파이프 서브셸에서 exit 로 신호하면 rc 가 밖으로 안 나오고,
   # 경로에 공백이 있으면 for 루프의 단어 분리가 깨진다.

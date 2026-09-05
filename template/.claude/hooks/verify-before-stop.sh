@@ -162,7 +162,14 @@ bump_and_block() {
 # 검증 명령 하나를 PROJECT_DIR 에서 돌린다. 결과는 gc_out(합친 출력)·gc_rc(종료 코드).
 # 타입체크와 스타일 검사가 **같은 실행 규약**을 쓰게 하려고 함수로 둔다 — 두 자리가
 # 따로 timeout 을 찾고 따로 sh -c 를 부르면 언젠가 한쪽만 고쳐진다.
-# macOS 기본에는 timeout 이 없다. 그 경우 settings.json 의 "timeout": 120 이 최종 안전망.
+#
+# **개별 상한이 합쳐서 훅 상한을 넘으면 안 된다 (codex r1 CRITICAL).** 예전엔 명령마다
+# 90초였는데 명령이 둘이 되면서 최악 180초가 됐고, settings.json 의 훅 상한(이제 180)을
+# 넘으면 Claude Code 가 훅을 취소한다 — 그러면 **출력도 판정도 없이** 나머지 게이트가
+# 통째로 사라진다(fail-open). 그래서 명령당 상한을 아래 값으로 낮추고 훅 상한을 올렸다:
+#   명령당 GATE_CMD_TIMEOUT(45) × 2 + 나머지 게이트 여유 < settings.json 의 180
+# macOS 기본에는 timeout 이 없다. 그 경우 훅 상한만 남으므로 여유가 더 중요하다.
+GATE_CMD_TIMEOUT=45
 gc_out=""
 gc_rc=0
 run_gate_command() {
@@ -173,7 +180,7 @@ run_gate_command() {
     bin="gtimeout"
   fi
   if [ -n "$bin" ]; then
-    gc_out="$(cd "$PROJECT_DIR" && "$bin" 90 sh -c "$cmd" 2>&1)"; gc_rc=$?
+    gc_out="$(cd "$PROJECT_DIR" && "$bin" "$GATE_CMD_TIMEOUT" sh -c "$cmd" 2>&1)"; gc_rc=$?
   else
     gc_out="$(cd "$PROJECT_DIR" && sh -c "$cmd" 2>&1)"; gc_rc=$?
   fi

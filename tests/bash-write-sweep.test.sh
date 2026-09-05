@@ -141,7 +141,32 @@ F=" $(flags "$P") "
 if contains "$F" " src/a.go "; then report "병렬 창 — 먼저 쓴 파일 보존" ""
 else report "병렬 창 — 먼저 쓴 파일 보존" "A 의 파일이 사라짐: [$F]"; fi
 
-# 9) 기존 경로(Edit/Write 페이로드)는 그대로 동작한다 — 회귀 방어.
+# 9) **감사 후 재플래그 금지 (벽돌 방지).** 창을 소비하고 지우지 않으면 매번 세션 맨 처음
+#    창을 써서, 감사자가 플래그를 지워도 다음 Bash 가 같은 파일을 다시 세운다 →
+#    게이트가 영원히 안 닫힌다([cc] r2 CRITICAL).
+P="$(make_project)"
+window "$P"; sleep 1
+printf 'package main\n' > "$P/src/one.go"
+sweep "$P" "1차"
+rm -f "$P/.claude/.needs-audit"            # 감사자가 통과시킨 상황
+window "$P"; sleep 1
+sweep "$P" "2차 — 아무것도 안 씀"
+if [ -s "$P/.claude/.needs-audit" ]; then report "감사 후 재플래그 없음" "옛 파일이 다시 섬: [$(flags "$P")]"
+else report "감사 후 재플래그 없음" ""; fi
+
+# 10) **한글·특수문자 경로의 삭제**도 잡는다. git status 는 -z 없이는 이런 경로를
+#     따옴표+8진 이스케이프로 내서 존재하지 않는 경로가 박힌다(codex r2).
+P="$(make_project)"
+printf 'package main\n' > "$P/src/한글.go"
+git -C "$P" add -A >/dev/null 2>&1
+git -C "$P" -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1
+window "$P"; sleep 1
+rm -f "$P/src/한글.go"
+sweep "$P" "rm"
+if contains " $(flags "$P")" " src/한글.go "; then report "한글 경로 삭제 → 게이트" ""
+else report "한글 경로 삭제 → 게이트" "플래그: [$(flags "$P")]"; fi
+
+# 11) 기존 경로(Edit/Write 페이로드)는 그대로 동작한다 — 회귀 방어.
 P="$(make_project)"
 printf '{"tool_input":{"file_path":"%s/src/direct.go"}}' "$P" \
   | CLAUDE_PROJECT_DIR="$P" bash "$P/.claude/hooks/mark-needs-audit.sh" >/dev/null 2>&1

@@ -46,7 +46,10 @@
 - **타입체크:** `.claude/harness/harness.env` 참조 (여기 다시 적지 않는다)
 - **테스트:** {{예: `pnpm test`  (프레임워크: Vitest)}}
 - **빌드:** {{예: `pnpm build`}}
-- **린트/포맷(선택):** {{예: `pnpm lint` / `pnpm format`}}
+- **스타일(필수 — Google 스타일 가이드 정본):** `bash .claude/skills/google-styleguide/scripts/check-style.sh`
+  (기계 판정 가능한 조항만. harness.env 의 `HARNESS_TYPECHECK_CMD` 에 이미 물려 있어 Stop 훅이 매 턴 돌린다 —
+  그 값에 프로젝트 타입체크를 넣을 때 이 검사를 지우지 마라. principles.md '스타일 정본' 절)
+- **린트/포맷(프로젝트 도구, 선택):** {{예: `pnpm lint` / `pnpm format`}}
 - **브라우저·런타임 관찰 필요?** {{예: 예 — 대시보드 변경은 preview 도구로 실제 렌더 확인까지}}
 
 ---

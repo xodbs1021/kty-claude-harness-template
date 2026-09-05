@@ -49,7 +49,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 | 층 | 무엇 | 갱신 주체 |
 |---|---|---|
 | **참조** (복사 안 함, 전역 1회 설치) | ECC 룰(코딩/테스트/보안 표준) · superpowers(방법론 스킬) · claude-mem(세션 기억 자동 캡처+검색) · find-skills(스킬 생태계 검색 — 진화 시 "만들기 전에 찾는다") | 각 시스템이 업데이트되면 모든 프로젝트에서 즉시 최신 |
-| **글루** (이 repo 소유, install 시 복사) | 자체 에이전트 8 · 스킬 3(harness-orchestrator·readable-writing·google-styleguide) · 강제 훅 4(커밋 가드·codex 규율 가드·게이트 플래그·Stop 게이트) · 제0원칙 (설계·계획·검수·보안검수 4역할은 ECC 에이전트 **참조** — dispatch 계약으로 호출 · 테스트품질 ecc:pr-test-analyzer는 조건부 `[tq]` 참조) | 이 repo에서 개선 → `sync.sh`로 프로젝트에 전파 |
+| **글루** (이 repo 소유, install 시 복사) | 자체 에이전트 8 · 스킬 3(harness-orchestrator·readable-writing·google-styleguide) · 강제 훅 5(커밋 가드·codex 규율 가드·게이트 플래그·**Bash 쓰기 스윕**·Stop 게이트) · 제0원칙 (설계·계획·검수·보안검수 4역할은 ECC 에이전트 **참조** — dispatch 계약으로 호출 · 테스트품질 ecc:pr-test-analyzer는 조건부 `[tq]` 참조) | 이 repo에서 개선 → `sync.sh`로 프로젝트에 전파 |
 | **전역 글루** (이 repo `global-agents/` 소유, install/sync 시 `~/.claude/agents/`로 배포) | 프로젝트 무관 전역 에이전트 — research-collector(수집 [rc]) · research-evaluator(독립 평가 [re]). 정본이 repo인 이유: 전역 디렉토리는 버전 관리가 안 된다 ([ADR-0002](docs/decisions/2026-07-20-global-agents-layer.md)) | 이 repo에서 개선 → install/sync가 전역 갱신 |
 | **슬롯** (프로젝트 소유, 절대 안 덮음) | `project-profile.md`(도메인 전부: 스택·검증·불변식·경계면·운영·vcs·예시) · `harness.env`(타입체크 명령) | 사용자 |
 
@@ -169,7 +169,7 @@ CHZZK/SOOP 채팅 시스템을 만들며 겪은 실제 실패들(§5)로부터 �
 │       │   ├── harness-orchestrator/           # 오케스트레이터 (프로필 주입·듀얼 리뷰·보고 블록·ADR 규약)
 │       │   ├── readable-writing/               # 사용자 대면 글 문장 품질 (보고 블록 본문이 따름)
 │       │   └── google-styleguide/             # 스타일 최상위 정본 (Google 가이드 원문 사본 + 기계 검사)
-│       ├── hooks/ + settings.json              # 강제 훅 5 + 배선 (커밋 가드·codex 규율·게이트 끄기 가드·게이트 플래그·Stop 게이트)
+│       ├── hooks/ + settings.json              # 강제 훅 6 + 배선 (커밋 가드·codex 규율·게이트 끄기 가드·게이트 플래그·Bash 쓰기 스윕·Stop 게이트)
 │       └── harness/
 │           ├── project-profile.template.md     # 슬롯 스키마 (9섹션)
 │           ├── harness.env.template            # 타입체크 명령 슬롯

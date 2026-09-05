@@ -54,6 +54,9 @@ make_project() {
   printf '%s' "$p"
 }
 
+# 문구만 보면 메시지를 낸 뒤 rc=0/1 로 fail-open 해도 통과한다 — 차단 게이트의 계약은
+# rc=2 다(codex r1 MEDIUM). 그래서 호출부가 `OUT="$(run_stop …)"; RC=$?` 로 **명령 치환의
+# 종료 코드**를 받는다. 함수 안에서 변수에 담으면 서브셸에 갇혀 부모가 못 본다.
 run_stop() {
   printf '{"stop_hook_active":false,"transcript_path":""}' \
     | CLAUDE_PROJECT_DIR="$1" bash "$1/.claude/hooks/verify-before-stop.sh" 2>&1
@@ -64,9 +67,10 @@ echo "stylecheck-gate:"
 # 1) 전용 키가 설정돼 있고 위반이 있으면 막는다.
 P="$(make_project 'HARNESS_TYPECHECK_CMD=""
 HARNESS_STYLECHECK_CMD="bash .claude/skills/google-styleguide/scripts/check-style.sh"')"
-OUT="$(run_stop "$P")"
-if contains "$OUT" "스타일 검사 실패"; then report "위반 → 완료 차단" ""
-else report "위반 → 완료 차단" "차단 메시지 없음"; fi
+OUT="$(run_stop "$P")"; RC=$?
+if ! contains "$OUT" "스타일 검사 실패"; then report "위반 → 완료 차단" "차단 메시지 없음"
+elif [ "$RC" -ne 2 ]; then report "위반 → 완료 차단" "메시지는 냈지만 rc=$RC (기대 2 — fail-open)"
+else report "위반 → 완료 차단" ""; fi
 
 # 2) **슬롯 분리의 핵심**: 타입체크를 프로젝트 명령으로 갈아치워도 스타일은 산다.
 P="$(make_project 'HARNESS_TYPECHECK_CMD="true"

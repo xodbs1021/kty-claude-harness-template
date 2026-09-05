@@ -90,7 +90,58 @@ sweep "$P" "printf ... > src/app.go"
 if [ -s "$P/.claude/.needs-audit" ]; then report "표식 없음 → 스윕 비활성" "표식 없이 스윕이 돔"
 else report "표식 없음 → 스윕 비활성" ""; fi
 
-# 5) 기존 경로(Edit/Write 페이로드)는 그대로 동작한다 — 회귀 방어.
+# 5) **JSON 이스케이프**: 따옴표·백슬래시가 든 파일명도 잡는다.
+#    초판은 printf 로 JSON 을 조립해서 이런 파일명이 파싱 실패 → 빈 file_path →
+#    조용한 통과가 됐다(실측 CRITICAL). json.dumps 로 고쳤고, 여기서 못 박는다.
+P="$(make_project)"
+window "$P"; sleep 1
+printf 'package main\n' > "$P/src/plain.go"
+printf 'package main\n' > "$P/src/say\"hi\".go"
+printf 'package main\n' > "$P/src/back\\slash.go"
+sweep "$P" "generate"
+F="$(flags "$P")"
+miss=""
+for want in 'src/plain.go' 'src/say"hi".go' 'src/back\slash.go'; do
+  contains " $F " " $want " || miss="$miss $want"
+done
+if [ -z "$miss" ]; then report "따옴표·백슬래시 파일명도 게이트" ""
+else report "따옴표·백슬래시 파일명도 게이트" "놓침:$miss (실제: [$F])"; fi
+
+# 6) 개행이 든 경로는 기록하지 않되 **소리를 낸다** — 조용한 위음성 금지.
+P="$(make_project)"
+window "$P"; sleep 1
+printf 'package main\n' > "$P/src/ok.go"
+printf 'package main\n' > "$P/src/new
+line.go"
+OUT="$(sweep "$P" "generate")"
+if contains "$OUT" "systemMessage"; then report "개행 경로 → 경고를 낸다" ""
+else report "개행 경로 → 경고를 낸다" "조용히 넘어감"; fi
+
+# 7) **삭제된 추적 파일도 잡는다.** find -type f 로는 원리적으로 못 본다 —
+#    `rm src/auth.go` 가 게이트를 그대로 통과하던 구멍(codex r1 CRITICAL).
+P="$(make_project)"
+printf 'package main\n' > "$P/src/auth.go"
+git -C "$P" add -A >/dev/null 2>&1
+git -C "$P" -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1
+window "$P"; sleep 1
+rm -f "$P/src/auth.go"
+sweep "$P" "rm src/auth.go"
+if contains " $(flags "$P")" " src/auth.go "; then report "삭제된 추적 파일 → 게이트" ""
+else report "삭제된 추적 파일 → 게이트" "플래그 없음: [$(flags "$P")]"; fi
+
+# 8) **병렬 창 경합**: 창이 둘일 때 먼저 쓴 파일이 사라지지 않는다.
+#    표식이 하나뿐이던 초판은 B의 Pre 가 A의 창을 덮어 A의 변경을 통째로 잃었다.
+P="$(make_project)"
+window "$P"; sleep 1              # A 의 창
+printf 'package main\n' > "$P/src/a.go"
+window "$P"; sleep 1              # B 의 창 (A 가 아직 Post 를 안 돌린 상태)
+printf 'package main\n' > "$P/src/b.go"
+sweep "$P" "A 의 PostToolUse"
+F=" $(flags "$P") "
+if contains "$F" " src/a.go "; then report "병렬 창 — 먼저 쓴 파일 보존" ""
+else report "병렬 창 — 먼저 쓴 파일 보존" "A 의 파일이 사라짐: [$F]"; fi
+
+# 9) 기존 경로(Edit/Write 페이로드)는 그대로 동작한다 — 회귀 방어.
 P="$(make_project)"
 printf '{"tool_input":{"file_path":"%s/src/direct.go"}}' "$P" \
   | CLAUDE_PROJECT_DIR="$P" bash "$P/.claude/hooks/mark-needs-audit.sh" >/dev/null 2>&1

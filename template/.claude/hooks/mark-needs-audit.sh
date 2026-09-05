@@ -46,6 +46,8 @@ hook_disabled "$HOOK_ID" && exit 0
 MSG_WRITE_FAIL="완료 게이트 플래그를 기록하지 못했다(.claude 쓰기 실패). 게이트가 서지 않았으니 완료 판정 전에 수동으로 확인하라."
 MSG_NEWLINE="편집 경로에 개행이 있어 게이트 플래그를 기록하지 않았다. 줄 단위 플래그 파일이 오염되기 때문이다. 수동으로 확인하라."
 MSG_GIT_UNAVAILABLE="git 이 저장소 정보를 돌려주지 못해(소유권 거부·권한·손상) 하네스 정본 여부를 판정하지 못했다. 앵커 밖 파일에는 게이트가 서지 않았으니 수동으로 확인하라."
+MSG_SWEEP_TRUNCATED="이 명령이 바꾼 파일이 너무 많아 일부만 게이트에 기록했다. 나머지에는 게이트가 서지 않았으니 수동으로 확인하라."
+MSG_SWEEP_PARTIAL="이 명령이 바꾼 파일 중 일부는 게이트에 기록하지 못했다(경로에 개행이 있거나 기록에 실패). 그 파일들은 수동으로 확인하라."
 
 # --- 계약 함수 ------------------------------------------------------------
 
@@ -227,18 +229,36 @@ record_flag() {
 # **판정은 재호출로 위임한다.** 찾은 파일마다 이 스크립트를 file_path 페이로드로 다시
 # 부른다. classify 의 사본을 만들지 않으려는 것이다 — 사본을 두는 순간 두 판정이
 # 어긋나는 날이 온다(이 저장소가 반복해서 배운 것).
-BASH_WINDOW="$STATE_DIR/.bash-window"
+WINDOW_DIR="$STATE_DIR/.bash-windows"
+BASH_WINDOW=""         # 이번 스윕이 쓸 창. sweep_bash_writes 가 고른다.
 SWEEP_MAX=200          # 병적인 명령(대량 생성)에서 재호출이 폭주하지 않게
 SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
 
-# find 의 prune 목록. 빌드 산출물·캐시·남의 코드는 스윕 대상이 아니다.
-SWEEP_PRUNE='-name .git -o -name node_modules -o -name .venv -o -name vendor -o -name _workspace -o -name worktrees -o -name dist -o -name build -o -name target -o -name .next -o -name __pycache__'
+# find 의 prune 목록. **성능을 위한 것만 남긴다.**
+# 예전엔 dist·build·target·vendor 도 잘라냈는데, 그것들이 **git 에 추적 중**이면
+# Edit 경로의 classify 는 게이트 대상으로 보는데 스윕만 통째로 건너뛰었다 —
+# "판정은 재호출로 단일화한다"는 이 스윕의 전제와 어긋난다(codex r1 HIGH).
+# 무엇이 산출물인지는 아래 git check-ignore 가 판정한다. 여기서 다시 정하지 않는다.
+SWEEP_PRUNE='-name .git -o -name node_modules -o -name .venv -o -name __pycache__'
 
-# sweep_find <뿌리> — 표식 이후 바뀐 파일을 한 줄에 하나씩.
+# sweep_find <뿌리> — 표식 이후 바뀐 파일을 **NUL 구분**으로.
+# 개행이 든 파일명을 줄 단위로 읽으면 **두 개의 가짜 경로**로 쪼개져, 엉뚱한 경로가
+# 플래그에 박히고 정작 그 파일은 무게이트가 된다([cc] r1 지적). find 의 -print0 과
+# read -d '' 조합이 그 부류를 통째로 없앤다.
 sweep_find() {
   # SWEEP_PRUNE 은 find 의 인자 목록이라 의도적으로 인용하지 않는다.
   # shellcheck disable=SC2086
-  find "$1" \( $SWEEP_PRUNE \) -prune -o -type f -newer "$BASH_WINDOW" -print 2>/dev/null
+  find "$1" \( $SWEEP_PRUNE \) -prune -o -type f -newer "$BASH_WINDOW" -print0 2>/dev/null
+}
+
+# payload_for_path <절대경로> — 재호출용 JSON 한 줄.
+#
+# **문자열로 조립하지 않는다.** printf '…"%s"…' 로 끼우면 파일명의 `"` 나 `\` 가 JSON 을
+# 깨고, json_get 은 파싱 실패를 빈 출력으로 삼키므로 재호출된 훅이 그 파일을 **조용히
+# 통과시킨다.** 실측: `say"hi".go`·`back\slash.go` 가 플래그에 안 잡혔다([cc] r1 CRITICAL).
+# json.dumps 가 이스케이프의 유일 정본이다 — 우리가 규칙을 다시 쓰지 않는다.
+payload_for_path() {
+  python3 -c 'import json,sys; print(json.dumps({"tool_input":{"file_path":sys.argv[1]}}))' "$1" 2>/dev/null
 }
 
 # sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 한 줄에 하나씩.
@@ -261,37 +281,66 @@ sweep_roots() {
 
 # sweep_bash_writes <명령문자열> — 표식 이후 바뀐 파일을 찾아 자기 자신에게 넘긴다.
 sweep_bash_writes() {
-  local cmd="$1" self root f n=0 seen="" ignored
-  [ -f "$BASH_WINDOW" ] || return 0     # 표식이 없으면(PreToolUse 미등록) 스윕하지 않는다
+  local cmd="$1" self root f n=0 seen="" truncated=0 child_msg=0 child_out st
+
+  # **가장 오래된 창을 소비한다.** 병렬 Bash 에서 창이 여럿일 수 있는데, 짝을 정확히
+  # 맞출 방법이 없으므로 **가장 넓은 창**을 쓴다 — 남의 호출이 쓴 파일까지 잡는 과탐은
+  # 싸고, 놓치는 누락은 비싸다(codex r1 CRITICAL).
+  BASH_WINDOW="$(ls -tr "$WINDOW_DIR" 2>/dev/null | head -n 1)"
+  [ -n "$BASH_WINDOW" ] || return 0     # 창이 없으면(PreToolUse 미등록) 스윕하지 않는다
+  BASH_WINDOW="$WINDOW_DIR/$BASH_WINDOW"
+  [ -f "$BASH_WINDOW" ] || return 0
   self="${BASH_SOURCE[0]}"
 
   while IFS= read -r root; do
     [ -n "$root" ] || continue
-    case "$seen" in *"|$root|"*) continue ;; esac
-    seen="$seen|$root|"
+    # 구분자로 문자열 집합을 만들면 경로에 그 구분자가 들어갔을 때 접두 충돌한다
+    # (codex r1 MEDIUM). 개행은 git 루트 경로에 못 들어가므로 안전한 구분자다.
+    case "$seen" in *"$root"$'\n'*) continue ;; esac
+    seen="$seen$root"$'\n'
 
-    # git 이 무시하는 파일(빌드 산출물·캐시)은 소스가 아니다. 한 번에 물어 걸러낸다.
-    # git 이 없는 뿌리에서는 목록이 비고 prune 만으로 간다.
-    ignored=""
-    while IFS= read -r f; do
+    # 목록을 **한 번만** 만든다. 예전엔 무시 목록용과 본 루프용으로 find 를 두 번 돌렸는데,
+    # 그 사이에 생긴 파일이 무시 목록에 없는 채로 본 루프에 잡혔다([cc] r1 지적).
+    # 무시 여부는 파일마다 git 에 직접 묻는다 — 목록을 문자열로 들고 다니면 개행·NUL 이
+    # 든 파일명에서 다시 깨진다. 대상이 보통 몇 개라 비용보다 정확성을 택했다.
+    while IFS= read -r -d '' f; do
       [ -n "$f" ] || continue
-      ignored="$ignored|$f|"
-    done <<EOF
-$(sweep_find "$root" | git -C "$root" check-ignore --stdin 2>/dev/null)
-EOF
-
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      case "$ignored" in *"|$f|"*) continue ;; esac
+      git -C "$root" check-ignore -q -- "$f" 2>/dev/null && continue
       n=$((n + 1))
-      [ "$n" -gt "$SWEEP_MAX" ] && return 0
-      printf '{"tool_input":{"file_path":"%s"}}' "$f" | bash "$self" >/dev/null 2>&1
-    done <<EOF
-$(sweep_find "$root")
-EOF
+      if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
+      # 자식이 낸 systemMessage 를 **버리지 않는다.** 개행이 든 경로처럼 자식이 "기록을
+      # 포기했다"고 알리는 경우가 있는데, >/dev/null 로 삼키면 이 훅의 fail-loud 계약이
+      # 스윕 경로에서만 사라진다. 자식 JSON 을 그대로 흘리면 stdout 에 여러 줄이 나가므로
+      # (PostToolUse 는 한 줄 계약) **있었다는 사실만** 모아 아래에서 한 번 알린다.
+      child_out="$(payload_for_path "$f" | bash "$self" 2>/dev/null)"
+      [ -n "$child_out" ] && child_msg=1
+    done < <(sweep_find "$root")
+
+    # **삭제는 find 로 못 본다** — `-type f` 는 없는 파일을 찾을 수 없다(codex r1 CRITICAL).
+    # `rm src/auth.go` 가 게이트를 그대로 통과하던 구멍이다. git 이 아는 삭제만 잡는다:
+    # 추적되지 않던 파일의 삭제는 어차피 아무도 모른다.
+    # 시간 창을 못 걸므로 **이전에 생긴 미커밋 삭제도 잡힌다** — 과탐이지만, 미커밋 삭제가
+    # 남아 있다는 것 자체가 감사가 필요한 상태라 그대로 둔다.
+    while IFS= read -r st; do
+      f="${st#?? }"
+      [ -n "$f" ] || continue
+      n=$((n + 1))
+      if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
+      child_out="$(payload_for_path "$root/$f" | bash "$self" 2>/dev/null)"
+      [ -n "$child_out" ] && child_msg=1
+    done < <(git -C "$root" status --porcelain 2>/dev/null | grep -E '^( D|D |AD|MD) ' 2>/dev/null)
   done <<EOF
 $(sweep_roots "$cmd")
 EOF
+
+  # 조용히 끊으면 사용자는 게이트가 다 섰다고 믿는데 실제로는 아니다 — 이 훅이 위음성을
+  # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **한 줄만** 낸다(PostToolUse 계약).
+  if [ "$truncated" -eq 1 ]; then
+    emit_message "$MSG_SWEEP_TRUNCATED"
+  elif [ "$child_msg" -eq 1 ]; then
+    emit_message "$MSG_SWEEP_PARTIAL"
+  fi
+  return 0
 }
 
 # --- 판정 -----------------------------------------------------------------

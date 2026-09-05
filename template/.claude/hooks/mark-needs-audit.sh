@@ -213,6 +213,87 @@ record_flag() {
   return 0
 }
 
+# --- Bash 스윕 -------------------------------------------------------------
+#
+# **왜 필요한가 (2026-09-05 실사고):** 이 훅은 Edit|Write|MultiEdit 에만 걸려 있어서
+# `cat > 파일`·`sed -i`·`python3` 로 쓴 파일은 게이트를 통째로 지나쳤다. 하네스 정본
+# (template/.claude/*)을 Bash 로 고친 세션 전체가 무게이트로 끝났다 — 게이트가 있다고
+# 믿는 쪽이 없는 것보다 나쁘다.
+#
+# **명령을 파싱하지 않는다.** 무엇을 썼는지 명령줄에서 알아내려는 시도는 히어독·리다이렉트·
+# 스크립트 호출마다 새는 구멍을 만든다. 대신 **결과를 본다**: PreToolUse 가 찍어 둔 시각
+# 표식보다 새로 바뀐 파일을 찾는다. 명령이 어떻게 썼든 파일 mtime 은 거짓말하지 않는다.
+#
+# **판정은 재호출로 위임한다.** 찾은 파일마다 이 스크립트를 file_path 페이로드로 다시
+# 부른다. classify 의 사본을 만들지 않으려는 것이다 — 사본을 두는 순간 두 판정이
+# 어긋나는 날이 온다(이 저장소가 반복해서 배운 것).
+BASH_WINDOW="$STATE_DIR/.bash-window"
+SWEEP_MAX=200          # 병적인 명령(대량 생성)에서 재호출이 폭주하지 않게
+SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
+
+# find 의 prune 목록. 빌드 산출물·캐시·남의 코드는 스윕 대상이 아니다.
+SWEEP_PRUNE='-name .git -o -name node_modules -o -name .venv -o -name vendor -o -name _workspace -o -name worktrees -o -name dist -o -name build -o -name target -o -name .next -o -name __pycache__'
+
+# sweep_find <뿌리> — 표식 이후 바뀐 파일을 한 줄에 하나씩.
+sweep_find() {
+  # SWEEP_PRUNE 은 find 의 인자 목록이라 의도적으로 인용하지 않는다.
+  # shellcheck disable=SC2086
+  find "$1" \( $SWEEP_PRUNE \) -prune -o -type f -newer "$BASH_WINDOW" -print 2>/dev/null
+}
+
+# sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 한 줄에 하나씩.
+# 프로젝트는 언제나 포함한다. 하네스 정본은 **다른 클론**에서 고쳐지는 일이 잦으므로
+# (이 파일 머리 주석의 2026-08-04 실사고), 명령문에 등장한 절대경로의 git 루트도 훑는다.
+# 이건 명령 해석이 아니라 **탐색 범위 힌트**다 — 틀려도 프로젝트 스캔은 그대로 돈다.
+sweep_roots() {
+  local cmd="$1" tok root n=0
+  printf '%s\n' "$proj"
+  for tok in $(printf '%s' "$cmd" | grep -o '/[A-Za-z0-9_./~@+-]\{2,\}' 2>/dev/null | sort -u); do
+    [ -e "$tok" ] || continue
+    root="$(git_toplevel "$tok")" || continue
+    [ -n "$root" ] || continue
+    [ "$root" = "$proj" ] && continue
+    printf '%s\n' "$root"
+    n=$((n + 1))
+    [ "$n" -ge "$SWEEP_MAX_ROOTS" ] && break
+  done
+}
+
+# sweep_bash_writes <명령문자열> — 표식 이후 바뀐 파일을 찾아 자기 자신에게 넘긴다.
+sweep_bash_writes() {
+  local cmd="$1" self root f n=0 seen="" ignored
+  [ -f "$BASH_WINDOW" ] || return 0     # 표식이 없으면(PreToolUse 미등록) 스윕하지 않는다
+  self="${BASH_SOURCE[0]}"
+
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    case "$seen" in *"|$root|"*) continue ;; esac
+    seen="$seen|$root|"
+
+    # git 이 무시하는 파일(빌드 산출물·캐시)은 소스가 아니다. 한 번에 물어 걸러낸다.
+    # git 이 없는 뿌리에서는 목록이 비고 prune 만으로 간다.
+    ignored=""
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      ignored="$ignored|$f|"
+    done <<EOF
+$(sweep_find "$root" | git -C "$root" check-ignore --stdin 2>/dev/null)
+EOF
+
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$ignored" in *"|$f|"*) continue ;; esac
+      n=$((n + 1))
+      [ "$n" -gt "$SWEEP_MAX" ] && return 0
+      printf '{"tool_input":{"file_path":"%s"}}' "$f" | bash "$self" >/dev/null 2>&1
+    done <<EOF
+$(sweep_find "$root")
+EOF
+  done <<EOF
+$(sweep_roots "$cmd")
+EOF
+}
+
 # --- 판정 -----------------------------------------------------------------
 
 payload="$(cat)"
@@ -223,7 +304,18 @@ payload="$(cat)"
 raw="$(printf '%s' "$payload" | json_get tool_input.file_path; printf 'X')"
 raw="${raw%X}"
 file_path="${raw%$'\n'}"
-[ -z "$file_path" ] && exit 0
+
+# proj 는 두 갈래가 다 쓴다(스윕의 기본 뿌리 · 아래 상대경로 해석). 분기 전에 구한다.
+proj="$(physical_dir "$PROJECT_DIR")"
+
+# file_path 가 없으면 Bash 다. 명령이 무엇을 썼는지는 **결과로** 알아낸다(위 스윕 주석).
+if [ -z "$file_path" ]; then
+  cmd_raw="$(printf '%s' "$payload" | json_get tool_input.command; printf 'X')"
+  cmd_raw="${cmd_raw%X}"
+  [ -n "${cmd_raw%$'\n'}" ] || exit 0
+  sweep_bash_writes "${cmd_raw%$'\n'}"
+  exit 0
+fi
 
 # 개행 가드는 **정규화보다 먼저**여야 한다. 디렉토리 컴포넌트가 개행으로 끝나면
 # (…/sr<LF>/app.ts) physical_path 의 pwd -P 출력을 받는 명령 치환이 그 개행을 먹어
@@ -238,8 +330,7 @@ esac
 # 정규화 없이 자르면 접두사가 안 맞아 프로젝트 안 편집이 통째로 "밖"으로 샌다.
 # PROJECT_DIR 은 디렉토리라 통째로 물리화한다(심링크 PROJECT_DIR — 케이스 11·12).
 # 편집 경로는 파일이라 마지막 성분 이름을 보존하는 physical_path 를 쓴다 — 두 계약이
-# 다르므로 함수도 둘이다.
-proj="$(physical_dir "$PROJECT_DIR")"
+# 다르므로 함수도 둘이다. (proj 는 Bash 스윕도 쓰므로 분기 **전에** 구해 뒀다.)
 case "$file_path" in
   /*) ;;
   *) file_path="$proj/$file_path" ;;

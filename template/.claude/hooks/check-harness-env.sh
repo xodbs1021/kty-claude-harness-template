@@ -26,7 +26,7 @@ set -uo pipefail
 HOOK_ID="post:edit:harness-env"
 hook_disabled "$HOOK_ID" && exit 0
 
-KNOWN_KEYS="HARNESS_TYPECHECK_CMD HARNESS_KNOWLEDGE_GATE HARNESS_PUBLISH_REVIEW_WINDOW_MIN"
+KNOWN_KEYS="HARNESS_TYPECHECK_CMD HARNESS_STYLECHECK_CMD HARNESS_KNOWLEDGE_GATE HARNESS_PUBLISH_REVIEW_WINDOW_MIN"
 
 payload="$(cat)"
 # 명령 치환의 후행 개행 흡수를 센티널로 막는다 — mark-needs-audit 와 같은 관용구.

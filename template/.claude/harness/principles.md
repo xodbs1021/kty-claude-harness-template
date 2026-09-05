@@ -30,6 +30,37 @@
 5. 과설계 금지 — 추측성 인터페이스·구현 하나뿐인 추상·과분할은 반려. 교체 가능성은 '실제로 바뀔 축'에만 준다(YAGNI 우선).
 <!-- rule:core:end -->
 
+## 스타일 정본 — Google 스타일 가이드가 최상위다 (kty 2026-09-04 확정)
+
+제0원칙이 **구조**를, 변경 규약이 **diff 범위**를 판정한다면, 이 절은 **표기·형식·명명**을 판정한다.
+정본은 하나다: **Google 스타일 가이드**(https://github.com/google/styleguide).
+
+**우선순위 (위가 아래를 덮는다):**
+
+1.  **Google 스타일 가이드** — 스킬 `google-styleguide`, 원문 사본 `.claude/skills/google-styleguide/references/`
+2.  제0원칙 · 변경 규약 (이 파일)
+3.  프로필 4절 불변식
+4.  `readable-writing` 스킬 (사용자 대면 글의 문장 품질)
+5.  외부 룰셋(ecc `rules/` coding-style 등), 개인 취향
+
+**층이 다르므로 1위와 2위는 대부분 다투지 않는다** — Google 은 표기를, 제0원칙은 경계·교체
+가능성을 정한다. 실제로 부딪히는 좁은 지점에서만 1위가 이긴다.
+
+**Google 이 침묵하면 아래 순위가 그대로 산다.** 이건 Google 자신의 규칙이다(Go 가이드
+`Local consistency` 절: 가이드가 말하지 않는 지점은 주변의 일관된 입장을 따른다). 그래서
+readable-writing 의 프로젝트 확정 선호(절 참조 표기·범위 표기·1차 언어 등)는 폐기되지 않는다.
+
+**역별 담당:**
+
+*   **developer** — 코드·문서를 쓰기 전에 `google-styleguide` 스킬을 호출하고, 작업 언어의
+    정본을 연다. 제출 전 `.claude/skills/google-styleguide/scripts/check-style.sh` 를
+    **직접 돌려** 통과를 확인한다.
+*   **ecc:code-reviewer · codex** — 스타일 지적에는 정본 근거를 적는다
+    (`[스타일] go-guide.md MixedCaps — MAX_RETRY → MaxRetry`). 근거를 못 대는 스타일 지적은
+    하지 않는다. `check-style.sh` 가 실패하면 HIGH.
+*   **plan-reviewer** — 계획이 새 언어·새 문서 형식을 도입하면 정본 매핑이 있는지 본다.
+*   **pr-author · change-explainer** — PR 본문·설명 문서는 `docguide-style.md` 서식을 따른다.
+
 ## 변경 규약 (Surgical Changes — 변경 과정에 적용)
 
 제0원칙이 산출물의 구조를 판정한다면, 이 규약은 변경(diff)의 범위를 판정한다.

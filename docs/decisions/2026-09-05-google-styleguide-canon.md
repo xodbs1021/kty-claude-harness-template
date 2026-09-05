@@ -35,9 +35,11 @@
 3.  **Google 이 침묵하면 아래 순위가 그대로 산다.** 이건 양보가 아니라 Google 자신의
     규칙이다 — Go 가이드 `Local consistency` 절이 "가이드가 말하지 않는 지점은 주변의
     일관된 입장을 따른다"고 정한다. 그래서 프로젝트 확정 선호가 폐기되지 않는다.
-4.  **기계 검사를 기존 게이트에 얹는다.** `scripts/check-style.sh` 가 저장소의 모든 Go
-    모듈에서 `gofmt -l` 을 돌린다(vendor·node_modules 제외). 새 훅을 만들지 않고
-    `harness.env` 의 `HARNESS_TYPECHECK_CMD` 기본값으로 넣어 Stop 훅이 매 턴 돌리게 한다.
+4.  **기계 검사를 Stop 게이트에 얹되 슬롯을 나눈다.** `scripts/check-style.sh` 가
+    저장소의 모든 Go 모듈에서 `gofmt -l` 을 돌린다(vendor·node_modules 제외). Stop 훅에
+    전용 단계 `(3.1) 스타일 검사`를 두고 **전용 키 `HARNESS_STYLECHECK_CMD`** 로 읽는다.
+    키가 없으면 번들 검사기로 축퇴해 **켜진 채** 동작한다(기존 설치본 보호 —
+    `HARNESS_KNOWLEDGE_GATE` 와 같은 원리). 끄는 방법은 값을 비우는 것 하나뿐이다.
 5.  **계약에 물린다.** 오케스트레이터 주입 규칙 표(developer·code-reviewer 행), 공통 계약
     ⑤, code-reviewer dispatch 계약 ⑨, `developer` 착수 전 필수 로드 6번.
 
@@ -55,11 +57,11 @@
 - **설치본마다 468KB 사본이 생긴다.** 상류가 바뀌면 드리프트한다 —
   `scripts/fetch-guides.sh` 로 갱신하고 `references/FETCHED` 에 취득 날짜를 남긴다.
   오프라인에서도 정본이 열리는 값이 이 중복보다 크다고 판단했다.
-- **스타일 게이트가 `HARNESS_TYPECHECK_CMD` 슬롯 하나를 타입체크와 공유한다.** 프로젝트가
-  타입체크를 넣으면서 값을 통째로 갈아치우면 스타일 게이트가 조용히 사라진다. 기계가
-  막아주지 못하고 `harness.env.template` 주석과 프로필 3절 문구가 경고할 뿐이다.
-  전용 키(`HARNESS_STYLECHECK_CMD`)를 신설하면 막히지만, `check-harness-env.sh` 의
-  `KNOWN_KEYS` 와 그 테스트까지 번지므로 이번 범위에서는 하지 않았다. **미조치로 공시한다.**
+- 게이트 슬롯이 하나 늘었다 — `HARNESS_STYLECHECK_CMD`. `check-harness-env.sh` 의
+  `KNOWN_KEYS` 와 `tests/stylecheck-gate.test.sh` 가 따라붙는다.
+  (초판은 `HARNESS_TYPECHECK_CMD` 에 이어 붙이게 했다. 프로젝트가 타입체크를 넣으면서 값을
+  갈아치우면 스타일 게이트가 조용히 사라졌고, 기계가 못 막고 주석이 부탁만 하는 게이트는
+  게이트가 아니다. kty 지시로 슬롯을 분리해 막았다 — 2026-09-05.)
 - 마크다운 80자 규칙이 새로 강제된다. 기존 하네스 문서 다수가 이를 넘지만 **일괄 재포맷은
   하지 않는다** — 변경 규약 위반이다. 손대는 파일에서만 적용한다.
 

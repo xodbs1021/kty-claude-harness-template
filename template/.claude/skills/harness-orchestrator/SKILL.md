@@ -62,12 +62,12 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
 **모든 리뷰 게이트는 Claude + Codex 듀얼로 돈다** — plan-reviewer의 설계/계획 각 pass(Phase 2), ecc:code-reviewer 검수(Phase 3), pr-reviewer 점검(Phase 4) 전부. Claude 리뷰어 dispatch와 **병렬로** Codex를 호출한다:
 
 ```bash
-codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort="high" "<리뷰 프롬프트: 대상 파일 경로·판정 기준·출력 형식(판정 줄+심각도+시나리오)>" < /dev/null
+codex exec --sandbox read-only -m gpt-6-sol -c model_reasoning_effort="high" "<리뷰 프롬프트: 대상 파일 경로·판정 기준·출력 형식(판정 줄+심각도+시나리오)>" < /dev/null
 ```
 
 - **제0원칙·변경 규약이 판정 축인 리뷰(설계·계획·코드 검수)면 codex 프롬프트에 `.claude/harness/principles.md` 경로를 판단 기준으로 명시한다** — codex 는 주입 표 밖이지만 read-only 로 리포를 직접 읽으므로, 경로 명시가 주입의 등가물이다(2026-08-17 단일 정본화의 codex 측 전달 경로).
 - **끝의 `< /dev/null` 을 빼지 않는다.** 프롬프트를 인자로 줘도 codex CLI 가 stdin 을 계속 읽으려 해서 `Reading additional input from stdin...` 에서 **무한 대기**한다(이번 세션 실측 — 미폐쇄 호출 2회 hang, 붙인 뒤 1회 정상 완료). 백그라운드 실행이면 조용히 0바이트로 멈춰 있어 "codex 가 죽었다"고 오판하게 된다. 같은 부류의 CLI 함정 목록은 사용자 층이 가리키는 지식 저장소에 있다. 가드 훅은 이 리다이렉션을 보지 않는다(모델·effort 토큰 쌍만 검사) — 붙여도 차단되지 않는다.
-- **모델 `gpt-5.6-sol` 하드코딩** (2026-08-01 기준 최신 세대 — CLI에 "최신 자동 추종" 메커니즘이 없음을 확인 후 사용자 지시로 고정). 새 세대 모델 출시 시 이 줄 갱신. **effort `high` 하드코딩**(사용자 지시).
+- **모델 `gpt-6-sol` 하드코딩** (2026-09-24 kty 지시로 `gpt-5.6-sol` → `gpt-6-sol` 교체 — 훅 2·SKILL.md·템플릿·`~/.codex/config.toml` 동시 갱신 + 스모크 통과. **codex-cli 0.156.1 이상 필요**(0.144.5 는 6세대를 모른다 — `npm install -g @openai/codex@latest`); 2026-08-01 기준 최신 세대 — CLI에 "최신 자동 추종" 메커니즘이 없음을 확인 후 사용자 지시로 고정). 새 세대 모델 출시 시 이 줄 갱신. **effort `high` 하드코딩**(사용자 지시).
 - **임의 하향 절대 금지 (2026-08-01 재확정):** "확인이 작다/비용" 등 어떤 사유로도 오케스트레이터가 모델·effort를 스스로 낮출 수 없다 — 실사고 있음. 낮출 필요가 보이면 실행 전에 사용자 승인. **`.claude/hooks/guard-codex-invocation.sh`(PreToolUse)가 위반 호출을 기계적으로 차단한다**(정직한 드리프트 방지용 — 적대 방어 아님) — 훅 우회·삭제는 규율 위반.
 - 통합 시 모든 지적에 출처 태그: **`[cc]`**(Claude 리뷰어) / **`[cx]`**(Codex) / **`[cc·cx]`**(둘 다 = 신뢰도 높음, 우선 처리). 심각도 규칙은 출처 무관 동일(CRITICAL/HIGH = 차단, 어느 쪽이 잡았든).
 - 판정 충돌 시(한쪽 승인·한쪽 보류): **보류가 이긴다.** 단 보류 사유가 사실 오인이면 오케스트레이터가 근거를 명시하고 기각 가능(기각 사유는 산출물에 기록). 이 조항은 **판정(승인/보류) 층**이다. **개별 지적 층에는 제약이 하나 더 붙는다 — 싱글턴 CRITICAL/HIGH 지적은 교차 검증 dispatch 없이 단독 기각할 수 없다**(아래 "싱글턴 지적 교차 검증" 절). 판정 층의 재량은 그대로이되, 차단 지적이 남아 있으면 판정은 자동으로 보류다.

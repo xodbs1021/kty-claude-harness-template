@@ -15,7 +15,7 @@ description: 이 프로젝트의 개발 작업 전체를 조율하는 오케스�
 
 1. **실행 모드 판별 + RAM 재개:**
    - `_workspace/progress.md`가 있으면 **가장 먼저 읽는다** — 진행 중 작업의 현재 상태(완료 단계·다음 단계·미해결 결정). 세션이 바뀌었어도 여기서 이어받는다. 없고 새 작업이면 생성한다.
-   - `_workspace/` 존재 + 부분 수정 요청("검수만 다시", "PR만") → **부분 재실행** (해당 Phase 만 — 리뷰 게이트면 cc·cx 한 쌍, 아래 해당 Phase로 점프)
+   - `_workspace/` 존재 + 부분 수정 요청("검수만 다시", "PR만") → **부분 재실행** (해당 에이전트만 — 리뷰 게이트면 그 Phase 의 cc·cx 한 쌍, 아래 해당 Phase로 점프)
    - `_workspace/` 존재 + 새 입력 → **새 실행** (기존을 `_workspace_prev/`로 이동)
    - `_workspace/` 미존재 → **초기 실행**
 2. **프로필·원칙 로드(오케스트레이터가 직접 1회 Read):** `.claude/harness/project-profile.md` + `.claude/harness/principles.md`. 이후 각 에이전트 dispatch 시 아래 주입 규칙대로 **해당 섹션 전문을 Task 프롬프트에 동봉**한다 — 에이전트가 "읽으러 갈지"를 선택에 맡기지 않는다.
@@ -380,4 +380,4 @@ Phase 3 최종 판정: 통과|보류
 
 ## 후속 작업
 
-"다시/재실행/보완/수정/이전 결과 기반" 요청은 Phase 0에서 `_workspace/` 확인 후 해당 에이전트만 부분 재실행한다(리뷰 게이트면 그 Phase 의 cc·cx 한 쌍). 각 에이전트는 이전 산출물이 있으면 읽고 델타만 반영한다. "검수만 다시" → Phase 3 검수만(ecc:code-reviewer 와 codex 를 같은 메시지로 동시 발사 — 보안 트리거면 ecc:security-reviewer 도), "PR만 다시" → Phase 4 점검만(pr-reviewer 와 codex 동시) — 단 그 결과가 앞 단계 산출물과 모순되면 해당 앞 단계로 되돌린다.
+"다시/재실행/보완/수정/이전 결과 기반" 요청은 Phase 0에서 `_workspace/` 확인 후 해당 에이전트만 부분 재실행한다(리뷰 게이트면 그 Phase 의 cc·cx 한 쌍). 각 에이전트는 이전 산출물이 있으면 읽고 델타만 반영한다. "검수만 다시" → Phase 3 검수만(2–7번 그대로 — ecc:code-reviewer 와 codex 는 같은 메시지로 동시 발사), "PR만 다시" → Phase 4만(pr-author 가 PR 을 갱신하고, 점검은 pr-reviewer 와 codex 동시) — 단 그 결과가 앞 단계 산출물과 모순되면 해당 앞 단계로 되돌린다.

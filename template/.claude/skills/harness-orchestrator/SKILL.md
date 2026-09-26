@@ -380,4 +380,4 @@ Phase 3 최종 판정: 통과|보류
 
 ## 후속 작업
 
-"다시/재실행/보완/수정/이전 결과 기반" 요청은 Phase 0에서 `_workspace/` 확인 후 해당 에이전트만 부분 재실행한다. 각 에이전트는 이전 산출물이 있으면 읽고 델타만 반영한다. "검수만 다시" → Phase 3 검수만(ecc:code-reviewer 와 codex 를 같은 메시지로 동시 발사 — 보안 트리거면 ecc:security-reviewer 도), "PR만 다시" → Phase 4 점검만(pr-reviewer 와 codex 동시) — 단 그 결과가 앞 단계 산출물과 모순되면 해당 앞 단계로 되돌린다.
+"다시/재실행/보완/수정/이전 결과 기반" 요청은 Phase 0에서 `_workspace/` 확인 후 해당 에이전트만 부분 재실행한다(리뷰 게이트면 그 Phase 의 cc·cx 한 쌍). 각 에이전트는 이전 산출물이 있으면 읽고 델타만 반영한다. "검수만 다시" → Phase 3 검수만(ecc:code-reviewer 와 codex 를 같은 메시지로 동시 발사 — 보안 트리거면 ecc:security-reviewer 도), "PR만 다시" → Phase 4 점검만(pr-reviewer 와 codex 동시) — 단 그 결과가 앞 단계 산출물과 모순되면 해당 앞 단계로 되돌린다.

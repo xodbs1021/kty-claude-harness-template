@@ -292,7 +292,7 @@ try:
 except Exception:
     print("parse-error"); sys.exit(0)
 model_ok = cfg.get("model") == "gpt-6-sol"
-effort_ok = cfg.get("model_reasoning_effort") in ("high", "xhigh")
+effort_ok = cfg.get("model_reasoning_effort") == "xhigh"
 print("ok" if model_ok and effort_ok else
       "model" if not model_ok else "effort")
 PYEOF
@@ -300,7 +300,7 @@ PYEOF
   case "$codex_cfg_state" in
     ok)     echo "   codex 기본값    ~/.codex/config.toml 확인됨 (기존 유지)" ;;
     model)  warn "   ⚠ ~/.codex/config.toml 최상위 model 이 gpt-6-sol 이 아님 — 가드의 '생략 = 안전' 전제가 깨집니다(사용자 파일이라 안 덮음)." ;;
-    effort) warn "   ⚠ ~/.codex/config.toml 의 model_reasoning_effort 가 high/xhigh 가 아님(또는 없음) — 생략 호출이 규정보다 약하게 돕니다(사용자 파일이라 안 덮음)." ;;
+    effort) warn "   ⚠ ~/.codex/config.toml 의 model_reasoning_effort 가 xhigh 가 아님(또는 없음) — 생략 호출이 규정보다 약하게 돕니다(사용자 파일이라 안 덮음)." ;;
     *)      warn "   ⚠ ~/.codex/config.toml 파싱 실패 — 내용을 직접 확인하세요(사용자 파일이라 안 덮음)." ;;
   esac
 fi

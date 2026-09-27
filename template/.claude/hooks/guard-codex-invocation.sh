@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # codex 호출 규율 훅 (2026-08-01 kty 지시)
-# 모든 `codex exec` 호출은 모델 gpt-6-sol + effort xhigh 고정(2026-09-27 kty 지시로 high → xhigh — high 는 이제 하향이다).
+# 모든 `codex exec` 호출은 모델 gpt-6-sol + effort xhigh 고정.
+# 2026-09-27 kty 지시로 high → xhigh — high 는 이제 하향이다.
 # 오케스트레이터가 "작업이 작다/비용" 이유로 임의 하향한 사고의 재발을 기계로 차단한다.
 # 변경이 필요하면 이 훅과 하네스 SKILL.md를 함께 고친다 — 사용자 승인 필수.
 #

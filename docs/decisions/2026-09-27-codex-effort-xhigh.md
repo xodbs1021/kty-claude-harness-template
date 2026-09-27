@@ -16,6 +16,7 @@ pokeclip-mono POK-195 세션에서 kty 가 「cx effort x-high 로 설정된거�
 - `install.sh` — config.toml 검사식(xhigh 만) · 경고 문구
 - `README.md` · `docs/usage.md` — 안내 문구
 - 프로젝트 적용본: pokeclip-mono 메인 체크아웃과 현행 워크트리 셋의 `.claude`. 사용자 `~/.codex/config.toml` 은 이미 xhigh 라 그대로다.
+- 손대지 않은 것: 전역 `~/.claude/hooks/guard-codex-mcp.sh`(지금 gpt-5.6-sol · high/xhigh 판 — 09-24 모델 교체 때부터 낡았다). `install.sh` 1c 가 이 파일을 조건 없이 복사하므로, 머지 뒤 첫 install(sync.sh 경유 포함)에서 이 브랜치의 판으로 바뀐다. codex MCP 경로는 상류에서 제거돼 지금은 쓰이지 않는다.
 
 ## 검증 (2026-09-27 KST)
 

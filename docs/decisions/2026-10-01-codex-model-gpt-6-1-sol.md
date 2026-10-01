@@ -18,8 +18,10 @@
 - `README.md`(43 · 93 · 132행 — 둘째 커밋 `e35e60b`) · `docs/usage.md` — 안내 문구
 - 프로젝트 적용본: pokeclip-mono 메인 체크아웃과 현행 워크트리 넷의 `.claude`,
   사용자 `~/.codex/config.toml` 최상위 `model`
-- 손대지 않은 것: 전역 `~/.claude/hooks/guard-codex-mcp.sh` · pokeclip-mono 옛
-  워크트리 둘
+- 손대지 않은 것: 전역 `~/.claude/hooks/guard-codex-mcp.sh`(09-05 판 — 옛 모델만
+  통과시키지만 codex 0.159.3 에는 MCP 서버 하위 명령이 없어 그 경로가 쓰이지
+  않는다 · 머지 뒤 `install.sh` 1c 단계가 템플릿 판으로 덮는다) · pokeclip-mono
+  옛 워크트리 둘(effort 가 high 인 옛 판 — 값만 바꿀 자리가 아니다)
 
 ## 검증 (2026-10-01 KST)
 
@@ -37,6 +39,9 @@
    model_reasoning_effort="xhigh" "…" < /dev/null` → rc 0 · 기록 머리
    `model: gpt-6.1-sol` · `reasoning effort: xhigh` · 4,380 tokens · 답
    「준비됨 GPT-6」.
+4. 배선 확인 — 살아 있는 PreToolUse 훅이 옛 값 호출을 「-m gpt-6.1-sol 필수」
+   문구로 막고 새 값 호출은 통과시켰다(cc 검수자 실측 · `false &&` 로 실행은
+   막음).
 
 ## 검수 (2026-10-01)
 
@@ -45,7 +50,13 @@
   SKILL.md 70행의 현행 CLI 판 안내)을 다음 커밋에 반영 · LOW(셸 수정 줄
   네 곳의 80자 초과 — 기존 줄과 같은 길이의 값 치환) 기록. 합성 시험 22건
   독립 재현 · 훅 둘 × 적용본 다섯 `cmp` 10건 rc 0.
-- cc: 도착 뒤 추기.
+- cc(ecc:code-reviewer · opus · 217,540 tokens): 원 대상(1f39d92 · e35e60b)
+  기준 보류 — 문서 HIGH 1(SKILL.md 70행이 0.156.1 을 검증 판으로 안내하고
+  0.159.3 조건을 누락 — 8e2d9f8 이 고쳤음을 cc 가 확인) · MED 2(README 주장 —
+  8e2d9f8 해소 · 70행의 09-28 잔재) · LOW 3(전역 MCP 가드 사유 · 「배선 확인」
+  항목 · CLAUDE.md 행의 어림 시각). HEAD 기준 C/H 0. 합성 시험 33건 × 사본
+  둘 = 66회 통과 · 훅 둘 sha256 여섯 사본 동일. 남은 MED · LOW 는 넷째
+  커밋에 반영(70행 이력 정리 · 이 문서 21 · 40행 · CLAUDE.md 행의 시각 삭제).
 
 ## 옛 기록은 그대로
 

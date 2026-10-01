@@ -15,7 +15,7 @@
 - `template/.claude/skills/harness-orchestrator/SKILL.md` — 듀얼 리뷰 명령 줄 +
   「모델 하드코딩」 항목
 - `install.sh` — config.toml 스캐폴드 · 검사식 · 경고 문구
-- `docs/usage.md` — 안내 문구(README.md 에는 모델 문자열이 없다)
+- `README.md`(43 · 93 · 132행 — 둘째 커밋 `e35e60b`) · `docs/usage.md` — 안내 문구
 - 프로젝트 적용본: pokeclip-mono 메인 체크아웃과 현행 워크트리 넷의 `.claude`,
   사용자 `~/.codex/config.toml` 최상위 `model`
 - 손대지 않은 것: 전역 `~/.claude/hooks/guard-codex-mcp.sh` · pokeclip-mono 옛
@@ -27,7 +27,8 @@
    (「Model metadata for `gpt-6.1-sol` not found」), 서버가 400 「The 'gpt-6.1-sol'
    model is not supported when using Codex with a ChatGPT account」를 냈다.
    npm 으로 0.159.3 으로 올린 뒤 같은 호출이 통과했다 — **`gpt-6.1-sol` 은
-   codex-cli 0.159.3 이상이 필요하다.**
+   codex-cli 0.159.3 에서 통과했다**(0.156.1 은 거부 · 그 사이 판은 시험하지
+   않아 최소 지원 판은 미확인).
 2. 가드 시험 행렬(합성 입력 → 종료 코드) — Bash 가드 10건(근사 모델
    `gpt-6x1-sol` · 옛 모델 둘 · effort high · `-m` 없음 · 연쇄 차단 포함) ·
    MCP 가드 4건(최상위 `model` · `config.model` · 생략). 고친 뒤 14건 모두
@@ -36,6 +37,15 @@
    model_reasoning_effort="xhigh" "…" < /dev/null` → rc 0 · 기록 머리
    `model: gpt-6.1-sol` · `reasoning effort: xhigh` · 4,380 tokens · 답
    「준비됨 GPT-6」.
+
+## 검수 (2026-10-01)
+
+- cx(`gpt-6.1-sol` · xhigh · 78,222 tokens — 이 모델의 첫 실전 검수): 통과 ·
+  설계 C/H/M/L 0/0/0/1 · 문서 0/0/2/0. MED 둘(이 문서의 README 누락 ·
+  SKILL.md 70행의 현행 CLI 판 안내)을 다음 커밋에 반영 · LOW(셸 수정 줄
+  네 곳의 80자 초과 — 기존 줄과 같은 길이의 값 치환) 기록. 합성 시험 22건
+  독립 재현 · 훅 둘 × 적용본 다섯 `cmp` 10건 rc 0.
+- cc: 도착 뒤 추기.
 
 ## 옛 기록은 그대로
 

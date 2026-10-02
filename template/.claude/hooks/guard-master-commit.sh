@@ -51,7 +51,7 @@ default_branch_of() {
 # **완전한 셸 파싱이 아니다.** 잡는 형태: `-C 경로` · 명령 머리(`;` `&` `|` `(` 뒤 포함)의
 # `cd 경로` — 경로는 인용 없음 · "겹따옴표" · '홑따옴표'. 못 잡는 형태(공시): 변수·`~`·`$(…)`
 # 로 만든 경로, `pushd`, `--git-dir=`/`GIT_DIR=`, `-C경로`(붙여 쓰기), 줄바꿈으로 이어진 cd.
-# 겨눈 디렉토리가 기본 브랜치면 그 명령의 커밋이 다른 디렉토리를 향해도 막는다 — 과탐 쪽이다.
+# 겨눈 이 저장소 디렉토리가 기본 브랜치면 그 명령의 커밋이 다른 디렉토리를 향해도 막는다 — 과탐 쪽이다.
 command_targets() {
   local tok base="${HARNESS_CWD:-$PROJECT_DIR}"
   printf '%s' "$1" \
@@ -68,10 +68,14 @@ command_targets() {
 # 하나라도 기본 브랜치면 그 브랜치를 쓴다. cwd 를 따로 보는 이유: 세션 루트는 고정이라
 # (_common.sh) W 에 고정된 세션이 cwd=M(main) 에서 맨 `git commit` 을 하면 루트만 봐서는
 # 놓친다([cx] r1).
+# cwd·겨눈 디렉토리는 **이 저장소의 체크아웃**(메인이든 워크트리든 — checkout_root_of)일 때만
+# 본다. 이 가드의 계약은 이 프로젝트 저장소의 기본 브랜치다. 다른 저장소(main 직접 커밋이
+# 그쪽 규약일 수 있다)·저장소 아님은 관여하지 않는다 — 그 저장소의 규약은 그쪽 몫이다.
 branch="$(default_branch_of "$PROJECT_DIR")"
 if [ -z "$branch" ]; then
   while IFS= read -r target; do
     [ -n "$target" ] && [ -d "$target" ] || continue
+    checkout_root_of "$target" || continue
     branch="$(default_branch_of "$target")" && break
   done <<EOF
 $HARNESS_CWD

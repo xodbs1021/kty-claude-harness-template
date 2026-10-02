@@ -64,18 +64,36 @@ command_targets() {
       done
 }
 
+# foreign_target <디렉토리> — 이 저장소 밖으로 **확인되면** rc=0: 상위 어디에도 `.git` 이 없거나
+# (저장소 아님), 양쪽 --git-common-dir 이 조회됐는데 다르다(다른 저장소). 조회가 실패하면
+# 판정 불가라 rc=1 — 호출자는 그 대상의 기본 브랜치 판정을 그대로 한다(막는 쪽).
+# `.git` 을 직접 찾는 이유: git 조회의 실패는 "저장소 아님"과 "조회 실패"를 rc 로 가르지 못한다.
+foreign_target() {
+  local d common
+  d="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P)" || return 1
+  while [ ! -e "$d/.git" ]; do
+    [ "$d" = / ] && return 0
+    d="$(dirname -- "$d")"
+  done
+  if [ -z "$ORIG_COMMON" ]; then
+    ORIG_COMMON="$(git_dir_physical "$ORIG_ROOT" --git-common-dir)" || return 1
+  fi
+  common="$(git_dir_physical "$1" --git-common-dir)" || return 1
+  [ "$common" != "$ORIG_COMMON" ]
+}
+
 # 판정 대상: 이 훅의 루트 + 입력 cwd(명령이 실제로 시작하는 곳) + 명령이 겨누는 디렉토리들.
 # 하나라도 기본 브랜치면 그 브랜치를 쓴다. cwd 를 따로 보는 이유: 세션 루트는 고정이라
 # (_common.sh) W 에 고정된 세션이 cwd=M(main) 에서 맨 `git commit` 을 하면 루트만 봐서는
 # 놓친다([cx] r1).
-# cwd·겨눈 디렉토리는 **이 저장소의 체크아웃**(메인이든 워크트리든 — checkout_root_of)일 때만
-# 본다. 이 가드의 계약은 이 프로젝트 저장소의 기본 브랜치다. 다른 저장소(main 직접 커밋이
-# 그쪽 규약일 수 있다)·저장소 아님은 관여하지 않는다 — 그 저장소의 규약은 그쪽 몫이다.
+# cwd·겨눈 디렉토리 중 **다른 저장소·저장소 아님으로 확인된 것**은 건너뛴다(foreign_target).
+# 이 가드의 계약은 이 프로젝트 저장소의 기본 브랜치다. 다른 저장소(main 직접 커밋이 그쪽
+# 규약일 수 있다)는 관여하지 않는다 — 그 저장소의 규약은 그쪽 몫이다.
 branch="$(default_branch_of "$PROJECT_DIR")"
 if [ -z "$branch" ]; then
   while IFS= read -r target; do
     [ -n "$target" ] && [ -d "$target" ] || continue
-    checkout_root_of "$target" || continue
+    foreign_target "$target" && continue
     branch="$(default_branch_of "$target")" && break
   done <<EOF
 $HARNESS_CWD

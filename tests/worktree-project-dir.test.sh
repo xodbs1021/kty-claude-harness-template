@@ -909,9 +909,27 @@ w54() {
   report "$name" "$why"
 }
 
+w55() {
+  local name='w55 커밋 가드 — common-dir 조회 실패(판정 불가)는 건너뛰지 않는다 · 저장소 아님만 건너뛴다' why='' shim real plain
+  new_fixture || { report "$name" '픽스처 실패'; return 0; }
+  window "$W"
+  shim="$TMPROOT/shim.$RANDOM"; real="$(command -v git)"; plain="$TMPROOT/plain.$RANDOM"
+  mkdir -p "$shim" "$plain" || { report "$name" '픽스처 실패 — shim'; return 0; }
+  # --git-common-dir 조회만 실패로 만든다. 나머지는 진짜 git 이다.
+  printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && exit 1; done\nexec "%s" "$@"\n' "$real" > "$shim/git"
+  chmod +x "$shim/git"
+  HOOK_ENV="PATH=$shim:$PATH" bashpre guard-master-commit.sh "$W" "git -C $M commit -m x"
+  if [ "$RC" -ne 2 ]; then why="조회 실패 + git -C <메인(main)> commit rc=$RC (기대 2)"; report "$name" "$why"; return 0; fi
+  HOOK_ENV="PATH=$shim:$PATH" bashpre guard-master-commit.sh "$M" 'git commit -m x'
+  if [ "$RC" -ne 2 ]; then why="조회 실패 + cwd=<메인(main)> 맨 git commit rc=$RC (기대 2)"; report "$name" "$why"; return 0; fi
+  HOOK_ENV="PATH=$shim:$PATH" bashpre guard-master-commit.sh "$W" "git -C $plain commit -m x"
+  [ "$RC" -eq 0 ] || why="조회 실패 + 저장소 아닌 폴더 대상 rc=$RC (기대 0)"
+  report "$name" "$why"
+}
+
 echo "worktree-project-dir:"
 w01; w02; w03; w04; w05; w06; w07; w08; w09; w10; w11; w12; w13; w14; w15; w16; w17; w18; w19
 w20; w21; w22; w23; w24; w25; w26; w27; w28; w29; w30; w31; w32; w33; w34; w35; w36; w37; w38
-w39; w40; w41; w42; w43; w44; w45; w46; w47; w48; w49; w50; w51; w52; w53; w54
+w39; w40; w41; w42; w43; w44; w45; w46; w47; w48; w49; w50; w51; w52; w53; w54; w55
 echo "— $pass/$ran 통과"
 [ "$fail" -eq 0 ]

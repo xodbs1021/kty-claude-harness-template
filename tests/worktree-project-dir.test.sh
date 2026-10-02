@@ -881,9 +881,37 @@ w53() {
   report "$name" "$why"
 }
 
+# other_repo — 고정틀과 **다른 저장소**(브랜치 main, 커밋 1개)를 만들어 경로를 stdout 에.
+# main 직접 커밋이 그쪽 규약인 저장소를 흉내 낸다.
+other_repo() {
+  local o
+  o="$(mktemp -d "$TMPROOT/other.XXXXXX")" || return 1
+  g "$o" init -q -b main && printf 'n\n' > "$o/note.md" && g "$o" add -A \
+    && g "$o" commit -q -m init || return 1
+  printf '%s' "$o"
+}
+
+w54() {
+  local name='w54 커밋 가드는 이 저장소만 본다 — 다른 저장소(main)를 -C · cd · cwd 로 겨눈 커밋은 통과' why='' o
+  new_fixture || { report "$name" '픽스처 실패'; return 0; }
+  o="$(other_repo)" || { report "$name" '다른 저장소 픽스처 실패'; return 0; }
+  window "$W"
+  bashpre guard-master-commit.sh "$W" "git -C $o commit -m x"
+  if [ "$RC" -ne 0 ]; then why="git -C <다른 저장소> commit rc=$RC (기대 0)"; report "$name" "$why"; return 0; fi
+  bashpre guard-master-commit.sh "$W" "cd $o && git commit -m x"
+  if [ "$RC" -ne 0 ]; then why="cd <다른 저장소> && git commit rc=$RC (기대 0)"; report "$name" "$why"; return 0; fi
+  bashpre guard-master-commit.sh "$o" 'git commit -m x'
+  if [ "$RC" -ne 0 ]; then why="cwd=<다른 저장소> 맨 git commit rc=$RC (기대 0)"; report "$name" "$why"; return 0; fi
+  bashpre guard-master-commit.sh "$W" "git -C $o commit -m x && git -C $M commit -m y"
+  if [ "$RC" -ne 2 ]; then why="다른 저장소 + 메인을 함께 겨눈 명령 rc=$RC (기대 2)"; report "$name" "$why"; return 0; fi
+  bashpre guard-master-commit.sh "$o" "git -C $M commit -m x"
+  [ "$RC" -eq 2 ] || why="cwd=<다른 저장소> 에서 git -C <메인> commit rc=$RC (기대 2)"
+  report "$name" "$why"
+}
+
 echo "worktree-project-dir:"
 w01; w02; w03; w04; w05; w06; w07; w08; w09; w10; w11; w12; w13; w14; w15; w16; w17; w18; w19
 w20; w21; w22; w23; w24; w25; w26; w27; w28; w29; w30; w31; w32; w33; w34; w35; w36; w37; w38
-w39; w40; w41; w42; w43; w44; w45; w46; w47; w48; w49; w50; w51; w52; w53
+w39; w40; w41; w42; w43; w44; w45; w46; w47; w48; w49; w50; w51; w52; w53; w54
 echo "— $pass/$ran 통과"
 [ "$fail" -eq 0 ]

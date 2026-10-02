@@ -18,7 +18,13 @@
 
 set -uo pipefail
 
-readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+# 검사 대상 저장소. Stop 훅이 HARNESS_CHECK_ROOT 로 루트를 알려 주면 그 루트다 — 하네스가 메인
+# 체크아웃에만 설치된 워크트리를 메인의 이 스크립트로 검사할 때, 스크립트 위치(메인)가 아니라
+# 워크트리를 봐야 한다([cx] r1 #4). 없으면 스크립트가 든 저장소다(지금까지와 같다).
+# 공시: Stop 은 이 값을 늘 덮어쓰지만, 셸에 같은 이름을 export 해 둔 채 직접 돌리면 그 루트를 본다.
+REPO_ROOT="${HARNESS_CHECK_ROOT:-}"
+[[ -n "${REPO_ROOT}" ]] || REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+readonly REPO_ROOT
 
 # 탐색에서 제외할 디렉토리. 남의 코드(vendor·node_modules)를 우리 스타일로 판정하면
 # 고칠 수 없는 위반이 영구히 게이트를 막는다.

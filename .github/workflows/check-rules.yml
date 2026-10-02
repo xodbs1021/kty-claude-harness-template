@@ -70,5 +70,9 @@ jobs:
       # 같이 써서 서로의 종료를 막은 실사고의 재발 방지 — 변이 6개가 이 시험에서 적색이다.
       - name: 게이트 상태 세션 격리 회귀 테스트
         run: ./tests/session-state-isolation.test.sh
+      # 워크트리 세션의 프로젝트 루트(2026-10-01). 메인 체크아웃을 루트로 넘겨받아 워크트리
+      # 편집이 `.claude/*` 로 분류돼 게이트가 하나도 서지 않던 결함의 재발 방지.
+      - name: 워크트리 프로젝트 루트 회귀 테스트
+        run: ./tests/worktree-project-dir.test.sh
       - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
         run: ./scripts/check-layer-boundary.sh

@@ -17,6 +17,9 @@ hook_disabled "$HOOK_ID" && exit 0
 
 payload="$(cat)"
 bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
+# 세션 루트(_common.sh). 워크트리 세션이면 아래 검증(타입체크·스타일·push·리뷰 산출물·머리
+# 표명)이 전부 그 세션에 고정된 루트 하나에서 돈다 — 지금 cwd 와 무관하다.
+bind_project_dir "$(printf '%s' "$payload" | json_get cwd)"
 stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 # 대화 기록 경로. 결정 게이트(3.2)가 이 턴의 발화를 읽는 데 쓴다. 비어 있거나 못 읽으면
 # 그 게이트만 생략되고 **사유가 마지막 게이트 메시지에 실린다** — 조용히 사라지지 않는
@@ -170,6 +173,8 @@ bump_and_block() {
 # 통째로 사라진다(fail-open). 그래서 명령당 상한을 아래 값으로 낮추고 훅 상한을 올렸다:
 #   명령당 GATE_CMD_TIMEOUT(45) × 2 + 나머지 게이트 여유 < settings.json 의 180
 # macOS 기본에는 timeout 이 없다. 그 경우 훅 상한만 남으므로 여유가 더 중요하다.
+# HARNESS_CHECK_ROOT 로 검사 대상 루트를 늘 알린다 — 다른 체크아웃에 있는 번들 스타일 검사기가
+# 자기 위치가 아니라 이 루트를 보게 한다(아래 3.1). 상속된 값은 여기서 덮어쓴다.
 GATE_CMD_TIMEOUT=45
 gc_out=""
 gc_rc=0
@@ -181,9 +186,10 @@ run_gate_command() {
     bin="gtimeout"
   fi
   if [ -n "$bin" ]; then
-    gc_out="$(cd "$PROJECT_DIR" && "$bin" "$GATE_CMD_TIMEOUT" sh -c "$cmd" 2>&1)"; gc_rc=$?
+    gc_out="$(cd "$PROJECT_DIR" && HARNESS_CHECK_ROOT="$PROJECT_DIR" \
+      "$bin" "$GATE_CMD_TIMEOUT" sh -c "$cmd" 2>&1)"; gc_rc=$?
   else
-    gc_out="$(cd "$PROJECT_DIR" && sh -c "$cmd" 2>&1)"; gc_rc=$?
+    gc_out="$(cd "$PROJECT_DIR" && HARNESS_CHECK_ROOT="$PROJECT_DIR" sh -c "$cmd" 2>&1)"; gc_rc=$?
   fi
 }
 
@@ -244,14 +250,36 @@ fi
 #      (HARNESS_KNOWLEDGE_GATE 와 같은 원리 — 표명이 없으면 안전한 쪽을 고른다). 키가 없을
 #      때는 번들된 검사기를 찾아 돌리고, 그것도 없으면 생략한다.
 #      끄려면 **값을 비운다** — 그 방법 하나뿐이다.
+#
+#      **번들 검사기가 세션 루트에 없으면 원래 루트의 것을 쓴다**([cx] r1 #4). 하네스가 메인
+#      체크아웃에만 설치된 워크트리에는 검사기가 없어서, 상대경로를 워크트리에서 돌리면 rc=127 로
+#      검사가 조용히 생략됐다. 명령 안의 상대경로를 원래 루트의 절대경로로 바꾸되 **홑따옴표로
+#      인용**한다 — 경로에 공백이 있어도 sh -c 가 한 인자로 읽는다. 검사 대상은 여전히 세션
+#      루트다(run_gate_command 의 HARNESS_CHECK_ROOT). 기본 형태가 아닌 명령(따옴표·절대경로)은
+#      그대로 돈다 — 따옴표 친 상대경로는 세션 루트에 검사기가 없으면 rc=127 생략 사유로 남는다.
 stylecheck_note=""
 STYLECHECK_CMD="$(harness_env_value HARNESS_STYLECHECK_CMD)"; stylecheck_rc=$?
 BUNDLED_STYLECHECK=".claude/skills/google-styleguide/scripts/check-style.sh"
+style_fallback=""
+if [ ! -f "$PROJECT_DIR/$BUNDLED_STYLECHECK" ] && [ -f "$ORIG_ROOT/$BUNDLED_STYLECHECK" ]; then
+  style_fallback="'$(printf '%s' "$ORIG_ROOT/$BUNDLED_STYLECHECK" | sed "s/'/'\\\\''/g")'"
+fi
+# 바꾸는 것은 **기본 형태**(따옴표 없는 상대경로 `bash <번들 경로>` 로 시작)뿐이다. 따옴표를 쳤거나
+# 절대경로인 명령은 손대지 않고 그대로 돌린다 — 부분 문자열을 치환하면 그런 명령이 깨진다([cx] r1).
+if [ -n "$style_fallback" ] && [ "$stylecheck_rc" -eq 0 ]; then
+  case "$STYLECHECK_CMD" in
+    "bash $BUNDLED_STYLECHECK" | "bash $BUNDLED_STYLECHECK "*)
+      STYLECHECK_CMD="bash $style_fallback${STYLECHECK_CMD#"bash $BUNDLED_STYLECHECK"}" ;;
+  esac
+fi
 
 if [ "$stylecheck_rc" -eq 3 ]; then
   # 키 부재 — 번들 검사기로 축퇴한다(있으면).
   if [ -f "$PROJECT_DIR/$BUNDLED_STYLECHECK" ]; then
     STYLECHECK_CMD="bash $BUNDLED_STYLECHECK"
+    stylecheck_rc=0
+  elif [ -n "$style_fallback" ]; then
+    STYLECHECK_CMD="bash $style_fallback"
     stylecheck_rc=0
   else
     stylecheck_note="스타일 검사 생략 (HARNESS_STYLECHECK_CMD 미설정, 번들 검사기도 없음)"

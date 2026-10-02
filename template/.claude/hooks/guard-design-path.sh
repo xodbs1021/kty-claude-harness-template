@@ -76,6 +76,8 @@ fi
 
 tool="$(printf '%s' "$payload" | json_get tool_name)"
 session="$(printf '%s' "$payload" | json_get session_id)"
+bind_session_state "$session"   # 세션 루트(.root)를 찾으려고 — 상태 플래그는 쓰지 않는다
+bind_project_dir "$(printf '%s' "$payload" | json_get cwd)"
 
 stamp_path() {  # $1=session → 세션별 도장 경로. cksum 은 POSIX·bash3.2 안전.
   printf '%s/.harness-path.%s' "$STATE_DIR" "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"

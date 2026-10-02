@@ -44,9 +44,10 @@ BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플�
 # 공시된 한계 둘:
 #   ① 세션 번호가 바뀌면 남은 의무는 승계되지 않는다 — 예: 코드를 고친 턴을 중단한 뒤 /clear
 #      로 새 세션을 열면, 옛 세션 폴더의 게이트를 새 세션의 Stop 이 보지 않는다(격리의 대가).
-#   ② 격리되는 것은 **상태 파일뿐**이다. _workspace 의 리뷰 산출물(*codex*.md)과 Bash 스윕의
-#      시간 창은 여전히 프로젝트 공유다 — 다른 세션의 리뷰 산출물이 이 세션의 듀얼리뷰 게이트를
-#      풀 수 있고(신선도 비교), 스윕은 창이 열린 동안 다른 세션이 쓴 파일도 잡는다(과탐).
+#   ② 격리되는 것은 **상태 파일뿐**이다. 리뷰 산출물(*codex*.md)은 세션 루트(아래)의
+#      _workspace 에서 찾고 Bash 스윕의 시간 창은 세션별이지만, **같은 루트**에서 도는 다른
+#      세션의 리뷰 산출물은 이 세션의 듀얼리뷰 게이트를 풀 수 있고(신선도 비교), 스윕은 창이
+#      열린 동안 다른 세션이 쓴 파일도 잡는다(과탐).
 SESSION_STATE_DIR="$STATE_DIR"
 
 # bind_session_state <session_id> — 각 훅이 입력을 읽은 **직후** 부른다. 빈 값이면 아무것도
@@ -69,6 +70,136 @@ bind_session_state() {
   HARNESS_SESSION_ID="$sid"
 }
 HARNESS_SESSION_ID=""
+
+# 세션 루트 — 워크트리 세션의 프로젝트 루트를 **세션마다 한 번 정해 고정한다**
+# (2026-10-01 실측 · kty 결정 2026-10-02).
+#
+# 왜: 데스크톱 앱은 워크트리 세션에도 CLAUDE_PROJECT_DIR 로 **메인 체크아웃**을 넘긴다.
+# 워크트리는 메인 아래 .claude/worktrees/<이름>/ 에 있어서, 워크트리 파일이 프로젝트 기준
+# `.claude/worktrees/…` 로 잡혀 분류(.claude/* 제외)에서 통째로 빠졌다 — 워크트리 세션의
+# 코드 편집에 게이트가 하나도 서지 않았다. Stop 의 타입체크·push·리뷰 산출물 탐색도 메인을 봤다.
+#
+# 무엇: 세션의 **첫 훅 호출**(cwd 가 있는 것) 때 cwd 로 루트를 판정해 세션 상태 폴더의 .root 에
+# 적는다. 그 뒤로는 cwd 가 바뀌어도(세션의 cd · 같은 session_id 를 싣는 서브에이전트) 그 값을
+# 쓴다 — 편집할 때의 루트와 Stop 할 때의 루트가 갈라질 수 없다. 판정 규칙: cwd 가 원래 루트와
+# **같은 저장소의 링크된 워크트리** 안이면 그 워크트리 최상위, 아니면 원래 CLAUDE_PROJECT_DIR.
+# 같은 저장소 = 두 곳의 git-common-dir 이 물리 경로로 같다. 링크된 워크트리 = git-dir 이
+# common-dir 과 다르다(메인 체크아웃은 둘이 같다). 둘 중 하나라도 조회에 실패하면 판정 실패 —
+# 원래 루트다. harness.env 는 그 루트의 것이 있으면 그것, 없으면 원래 것이다.
+# STATE_DIR(세션 상태 폴더)은 **바꾸지 않는다** — 늘 원래 루트 아래다.
+#
+# session_id 가 없는 입력(옛 클라이언트·시험 픽스처)은 **원래 루트**다. 상태 폴더가 공유라
+# 고정값을 둘 자리가 없고, 고정 없이 cwd 를 따르면 편집과 Stop 의 루트가 다시 갈라진다 —
+# 이 PR 이전 동작 그대로가 가장 안전한 하위 호환이다.
+#
+# 대가(공시): 한 세션은 루트 하나다. 그 세션이 다른 체크아웃의 파일을 고치면 그 파일은 그
+# 세션의 의무로 잡히지만(mark-needs-audit), 타입체크·스타일·push·리뷰 산출물 탐색은 세션 루트
+# 에서만 한다. .root 가 가리키는 폴더가 사라지면(워크트리 삭제) 원래 루트로 판정한다.
+# .root 는 절대경로·폴더 실존만 검사하고 **같은 저장소의 체크아웃인지는 검사하지 않는다** —
+# 세션 중에 덮어쓰면 그 폴더가 루트가 된다(같은 폴더의 .needs-* 를 지울 수 있는 것과 같은 위협 범위).
+# 하드 링크가 안 되는 파일시스템에서만 쓰는 noclobber 폴백은 빈 .root 생성과 내용 기록 사이가
+# 원자적이지 않다 — 그 틈에 읽은 병렬 훅 하나는 원래 루트로 판정할 수 있다(공시, YAGNI).
+# git 2.31 미만은 --path-format 을 몰라 판정이 실패하고, 원래 루트로 물러선다.
+HARNESS_ENV_FILE="$STATE_DIR/harness/harness.env"
+HARNESS_CWD=""      # 훅 입력의 cwd 그대로 (상대경로 해석용 — guard-master-commit 등)
+ORIG_ROOT="$(CDPATH='' cd -P -- "$PROJECT_DIR" 2>/dev/null && pwd -P)"
+[ -n "$ORIG_ROOT" ] || ORIG_ROOT="$PROJECT_DIR"
+ORIG_COMMON=""      # 원래 루트의 common-dir. checkout_root_of 가 처음 쓸 때 채운다.
+CHECKOUT_ROOT=""    # checkout_root_of 의 결과 (서브셸 없이 넘기려고 전역으로 둔다)
+
+# git_clean <git 인자>... — 상속된 GIT_* 를 걷어낸 git. 훅이 git 훅 안에서 돌면 이 변수들이
+# 엉뚱한 저장소를 가리킨다 — GIT_COMMON_DIR 하나만 남아도 다른 저장소가 같은 저장소로 보인다.
+git_clean() {
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git "$@"
+}
+
+# git_dir_physical <디렉토리> <rev-parse 옵션> — git 디렉토리를 물리 절대경로로. 실패·빈 값이면 rc=1.
+git_dir_physical() {
+  local d
+  d="$(git_clean -C "$1" rev-parse --path-format=absolute "$2" 2>/dev/null)" || return 1
+  [ -n "$d" ] || return 1
+  (CDPATH='' cd -P -- "$d" 2>/dev/null && pwd -P)
+}
+
+# checkout_root_of <디렉토리> — 그 폴더가 원래 루트와 **같은 저장소**의 체크아웃(메인이든 링크된
+# 워크트리든) 안이면 CHECKOUT_ROOT 에 그 최상위(물리 경로)를 담고 rc=0. 아니면 rc=1.
+checkout_root_of() {
+  local top common
+  CHECKOUT_ROOT=""
+  top="$(git_clean -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  top="$(CDPATH='' cd -P -- "$top" 2>/dev/null && pwd -P)" || return 1
+  [ -n "$top" ] || return 1
+  if [ -z "$ORIG_COMMON" ]; then
+    ORIG_COMMON="$(git_dir_physical "$ORIG_ROOT" --git-common-dir)" || return 1
+  fi
+  common="$(git_dir_physical "$1" --git-common-dir)" || return 1
+  [ "$common" = "$ORIG_COMMON" ] || return 1
+  CHECKOUT_ROOT="$top"
+}
+
+# judge_root <cwd> — 위 판정 규칙의 결과를 stdout 에. 실패하면 원래 루트다.
+judge_root() {
+  local cwd="$1" gd common
+  if checkout_root_of "$cwd" && [ "$CHECKOUT_ROOT" != "$ORIG_ROOT" ]; then
+    # 링크 판정. 조회 실패·빈 값을 "다르다"로 읽으면 판정 실패가 바인딩으로 샌다([cx] r1 #5).
+    if gd="$(git_dir_physical "$cwd" --git-dir)" \
+        && common="$(git_dir_physical "$cwd" --git-common-dir)" \
+        && [ "$gd" != "$common" ]; then
+      printf '%s\n' "$CHECKOUT_ROOT"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$ORIG_ROOT"
+}
+
+# fix_session_root <.root 경로> <루트> — 아직 없으면 만든다. 이미 있으면 그대로 둔다.
+# 고정값이 파일에 남았으면 rc=0, 못 남겼으면 rc=1 이다(그때 호출자는 원래 루트로 간다).
+# 임시 파일을 다 쓴 뒤 하드 링크로 건다 — link(2) 는 대상이 있으면 실패하므로, 첫 호출의 병렬
+# 훅들이 경쟁해도 **먼저 건 쪽 하나**가 남고 반쯤 쓴 파일이 보이지 않는다. 하드 링크가 안 되는
+# 파일시스템이면 noclobber 리다이렉션(O_EXCL — 있으면 실패)으로 한 번 더 시도한다([cc·cx] r1).
+fix_session_root() {
+  local tmp="$1.$$.$RANDOM"
+  if { printf '%s\n' "$2" > "$tmp"; } 2>/dev/null; then
+    ln "$tmp" "$1" 2>/dev/null
+    rm -f "$tmp" 2>/dev/null
+  fi
+  [ -s "$1" ] && return 0
+  [ -e "$1" ] && return 1      # 빈 .root — 덮어쓰지 않는다(누가 쓰는 중일 수도 있다)
+  (set -C; printf '%s\n' "$2" > "$1") 2>/dev/null
+  [ -s "$1" ]
+}
+
+# root_env_file <루트> — 그 루트가 쓸 harness.env. 루트의 것이 있으면 그것, 없으면 원래 것.
+root_env_file() {
+  if [ -f "$1/.claude/harness/harness.env" ]; then
+    printf '%s' "$1/.claude/harness/harness.env"
+  else
+    printf '%s' "$STATE_DIR/harness/harness.env"
+  fi
+}
+
+# bind_project_dir <cwd> — 각 훅이 bind_session_state **다음에**, PROJECT_DIR 을 쓰기 전에 부른다.
+# PROJECT_DIR 과 harness.env 를 세션 루트로 옮긴다(위 머리 주석).
+bind_project_dir() {
+  local cwd="$1" root_file root=""
+  HARNESS_CWD="$cwd"
+  # 상속된 git 환경은 이 훅의 모든 git 호출에서 `-C <루트>` 보다 앞선다 — 훅이 git 훅 안에서
+  # 돌면 고정 루트가 아니라 엉뚱한 저장소를 본다([cx] r1). 루트 판정만이 아니라 전부에서 지운다.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+  [ -n "$HARNESS_SESSION_ID" ] || return 0
+  root_file="$SESSION_STATE_DIR/.root"
+  if [ ! -s "$root_file" ] && [ -n "$cwd" ]; then
+    # 고정값을 못 남기면(빈 .root · 쓰기 실패) 방금 판정한 루트로 가지 않는다 — 호출마다 cwd 를
+    # 따라 루트가 달라지기 때문이다. 아래 읽기가 비어 원래 루트로 일관 판정한다([cc·cx] r1).
+    fix_session_root "$root_file" "$(judge_root "$cwd")" || true
+  fi
+  [ -s "$root_file" ] && IFS= read -r root < "$root_file"
+  case "$root" in /*) ;; *) return 0 ;; esac
+  [ -d "$root" ] || return 0
+  [ "$root" != "$ORIG_ROOT" ] || return 0   # 원래 루트면 PROJECT_DIR 표기도 손대지 않는다
+  PROJECT_DIR="$root"
+  HARNESS_ENV_FILE="$(root_env_file "$root")"
+}
 
 # session_key <session_id> — 세션 폴더 이름. python3 의 SHA-256 앞 32자(json_get 과 같은 의존이다
 # — 그것이 없으면 session_id 도 못 읽으므로 의존이 늘지 않는다). python3 가 실패하면 cksum 으로
@@ -182,9 +313,9 @@ hook_disabled() {
 # 그 자리에 최종 문자열을 적어야 한다.
 # 둘째 인자(선택)로 판독할 파일을 지정할 수 있다 — 편집 검증 훅이 "방금 편집된 그 파일"을
 # 읽어야 하기 때문이다(다른 프로젝트의 harness.env 편집도 그 파일 기준으로 판정).
-# 생략하면 이 프로젝트의 정본 경로다.
+# 생략하면 이 프로젝트의 정본 경로다(워크트리 세션이면 bind_project_dir 이 고른 것).
 harness_env_value() {
-  local file="${2:-$STATE_DIR/harness/harness.env}" key="$1" val rc
+  local file="${2:-$HARNESS_ENV_FILE}" key="$1" val rc
   [ -f "$file" ] || { printf '%s' ''; return 3; }
   if [ ! -r "$file" ]; then
     # "미설정"과 "읽기 실패"는 다르다. 판정은 같게(rc=1) 가되 실패는 소리를 낸다.

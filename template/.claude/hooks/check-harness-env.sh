@@ -29,6 +29,8 @@ hook_disabled "$HOOK_ID" && exit 0
 KNOWN_KEYS="HARNESS_TYPECHECK_CMD HARNESS_STYLECHECK_CMD HARNESS_KNOWLEDGE_GATE HARNESS_PUBLISH_REVIEW_WINDOW_MIN"
 
 payload="$(cat)"
+bind_session_state "$(printf '%s' "$payload" | json_get session_id)"   # 세션 루트(.root)를 찾으려고
+bind_project_dir "$(printf '%s' "$payload" | json_get cwd)"
 # 명령 치환의 후행 개행 흡수를 센티널로 막는다 — mark-needs-audit 와 같은 관용구.
 raw="$(printf '%s' "$payload" | json_get tool_input.file_path; printf 'X')"
 raw="${raw%X}"
@@ -40,9 +42,14 @@ case "$file_path" in
   *$'\n'*) exit 0 ;;
 esac
 
+# 상대경로는 입력 cwd 기준이다(mark-needs-audit 와 같은 원칙 — [cx] r1). cwd 가 없으면 루트 기준.
 case "$file_path" in
   /*) envfile="$file_path" ;;
-  *)  envfile="$PROJECT_DIR/$file_path" ;;
+  *)
+    case "$HARNESS_CWD" in
+      /*) envfile="$HARNESS_CWD/$file_path" ;;
+      *)  envfile="$PROJECT_DIR/$file_path" ;;
+    esac ;;
 esac
 
 # 디렉토리 성분을 물리화한 **뒤에** 앵커를 판정한다 — `.`/`..`/심링크 경유 표기

@@ -173,5 +173,121 @@ printf '{"tool_input":{"file_path":"%s/src/direct.go"}}' "$P" \
 if contains " $(flags "$P")" " src/direct.go "; then report "Edit/Write 경로 불변" ""
 else report "Edit/Write 경로 불변" "플래그 없음: [$(flags "$P")]"; fi
 
+# 12) **실패한 Bash 도 창을 소비하는 배선**이 settings.json 에 있다.
+#     Claude Code 가 도구 실패로 처리한 Bash(예: `false` — 2026-10-08 실측)에는 PostToolUse
+#     가 아니라 PostToolUseFailure 가 발화한다. PostToolUse 에만 걸려 있으면 그 호출의 창이
+#     남고, 그 옛 창이 기준이 되어 리뷰가 끝난 파일이 Bash 마다 다시 플래그에 오른다
+#     (실세션 미소비 창 약 110개).
+#     판정은 **엄격하게** 한다 — matcher 가 Bash 이고, type 이 command 이고, 명령이 실제 실행
+#     명령과 글자 그대로 같아야 한다. 부분 문자열로 보면 `echo mark-needs-audit.sh` 같은 가짜
+#     등록도 통과한다(r1 [cx] L). 판정기 자신이 가짜를 거르는지도 픽스처로 함께 잰다.
+SWEEP_CMD='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/mark-needs-audit.sh"'
+failure_wired() {   # <settings.json> — 등록돼 있으면 yes
+  python3 - "$1" "$SWEEP_CMD" <<'PY' 2>/dev/null
+import json, sys
+hooks = json.load(open(sys.argv[1])).get("hooks", {})
+for entry in hooks.get("PostToolUseFailure", []):
+    if entry.get("matcher") != "Bash":
+        continue
+    for h in entry.get("hooks", []):
+        if h.get("type") == "command" and h.get("command") == sys.argv[2]:
+            print("yes")
+            sys.exit(0)
+PY
+}
+fake_settings() {   # <경로> <type> <command> — PostToolUseFailure/Bash 등록 하나짜리 픽스처
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+hook = {"type": sys.argv[2], "command": sys.argv[3]}
+json.dump({"hooks": {"PostToolUseFailure": [{"matcher": "Bash", "hooks": [hook]}]}},
+          open(sys.argv[1], "w"))
+PY
+}
+if [ "$(failure_wired "$SRC/settings.json")" = "yes" ]; then
+  report "실패 Bash 배선(PostToolUseFailure·Bash)" ""
+else report "실패 Bash 배선(PostToolUseFailure·Bash)" "settings.json 에 등록 없음"; fi
+
+miss=""
+fake_settings "$TMPROOT/fake-echo.json" command 'echo mark-needs-audit.sh'
+[ -z "$(failure_wired "$TMPROOT/fake-echo.json")" ] || miss="$miss echo-명령"
+fake_settings "$TMPROOT/fake-type.json" prompt "$SWEEP_CMD"
+[ -z "$(failure_wired "$TMPROOT/fake-type.json")" ] || miss="$miss type≠command"
+if [ -z "$miss" ]; then report "배선 판정기 — 가짜 등록을 거른다" ""
+else report "배선 판정기 — 가짜 등록을 거른다" "통과시킨 가짜:$miss"; fi
+
+# 13–15 는 **실제 실패 입력의 모양**으로 부른다 — session_id · cwd 가 실리고(세션 폴더로
+# 바인딩), tool_response 대신 error 가 있고, is_interrupt 가 참·거짓 둘 다 온다.
+# 이 시험들은 Claude Code 가 이벤트를 발화하는지를 재현하지 않는다(그건 12 의 배선 몫).
+# 훅이 그 입력을 받았을 때 성공 경로와 같은 판정 · 창 소비를 하는지를 잰다.
+SID='33333333-cccc-4ccc-8ccc-cccccccccccc'
+sdir() {   # <프로젝트> — 세션 상태 폴더(.claude/.sessions/<SHA-256 앞 32자>)
+  printf '%s/.claude/.sessions/%s' "$1" "$(printf '%s' "$SID" \
+    | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:32])')"
+}
+window_s() {
+  printf '{"session_id":"%s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"x"}}' \
+    "$SID" "$1" | CLAUDE_PROJECT_DIR="$1" bash "$1/.claude/hooks/mark-bash-window.sh"
+}
+sweep_ok_s() {   # <프로젝트> <명령> — 성공 페이로드(PostToolUse)
+  printf '{"hook_event_name":"PostToolUse","session_id":"%s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"tool_response":{"stdout":""}}' \
+    "$SID" "$1" "$2" | CLAUDE_PROJECT_DIR="$1" bash "$1/.claude/hooks/mark-needs-audit.sh"
+}
+sweep_failed() {   # <프로젝트> <명령> <is_interrupt> — 실패 페이로드(PostToolUseFailure)
+  printf '{"hook_event_name":"PostToolUseFailure","session_id":"%s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"error":"Exit code 1","is_interrupt":%s}' \
+    "$SID" "$1" "$2" "$3" | CLAUDE_PROJECT_DIR="$1" bash "$1/.claude/hooks/mark-needs-audit.sh"
+}
+sflags()  { tr '\n' ' ' < "$(sdir "$1")/.needs-audit" 2>/dev/null; }
+windows() { find "$(sdir "$1")/.bash-windows" -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+# 13) 실패 페이로드도 가장 오래된 창을 소비하고 성공 페이로드와 같은 판정을 낸다.
+#     is_interrupt 는 참·거짓 둘 다 같은 경로여야 한다.
+for intr in false true; do
+  name="실패 페이로드(is_interrupt=$intr) → 게이트·창 소비"
+  P="$(make_project)"
+  window_s "$P"; sleep 1
+  printf 'package main\n' > "$P/src/failed.go"
+  before="$(windows "$P")"
+  sweep_failed "$P" "generate; false" "$intr"
+  after="$(windows "$P")"
+  F=" $(sflags "$P") "
+  if ! contains "$F" " src/failed.go "; then report "$name" "세션 플래그 없음: [$F]"
+  elif [ -s "$P/.claude/.needs-audit" ]; then report "$name" "세션 밖 공유 플래그에 기록됨"
+  elif [ "$before" -ne 1 ] || [ "$after" -ne 0 ]; then
+    report "$name" "창 미소비: 전 $before · 후 $after"
+  else report "$name" ""; fi
+done
+
+# 14) 실패 호출 뒤에도 감사 후 재플래그가 없다 — 9 의 실패판.
+P="$(make_project)"
+window_s "$P"; sleep 1
+printf 'package main\n' > "$P/src/one.go"
+sweep_failed "$P" "1차 — 실패" false
+rm -f "$(sdir "$P")/.needs-audit"           # 감사자가 통과시킨 상황
+window_s "$P"; sleep 1
+sweep_ok_s "$P" "2차 — 아무것도 안 씀"
+if [ -s "$(sdir "$P")/.needs-audit" ]; then
+  report "실패 뒤 감사 후 재플래그 없음" "옛 파일이 다시 섬: [$(sflags "$P")]"
+else report "실패 뒤 감사 후 재플래그 없음" ""; fi
+
+# 15) **이 결함이 실제로 만든 증상**: 듀얼리뷰 플래그 mtime 이 리뷰 산출물보다 새로워지지
+#     않는다. Stop 훅은 플래그보다 새로운 _workspace/*codex*.md 가 있으면 플래그를 스스로
+#     지운다(ADR-0017). 실패 호출의 창이 남으면 다음 Bash 가 그 옛 창으로 스윕해 같은 파일을
+#     다시 기록하고, record_flag 의 touch 로 플래그가 산출물보다 새로워져 자동 해제가 안 됐다.
+#     여기서는 실패 경로가 창을 소비해 누수 창이 없을 때 그 증상이 없음을 잰다.
+name="실패 뒤 듀얼리뷰 플래그가 리뷰 산출물보다 새로워지지 않음"
+P="$(make_project)"
+window_s "$P"; sleep 1
+printf 'package main\n' > "$P/src/one.go"
+sweep_failed "$P" "generate; false" false     # 쓰고 실패한 호출
+DR="$(sdir "$P")/.needs-dualreview"
+REVIEW="$P/_workspace/82_codex_review.md"
+mkdir -p "$P/_workspace"; sleep 1
+printf 'review\n' > "$REVIEW"                 # 플래그보다 새로운 리뷰 산출물
+window_s "$P"; sleep 1
+sweep_ok_s "$P" "ls"                          # 아무것도 안 쓴 다음 Bash
+if [ ! -s "$DR" ]; then report "$name" "실패 호출이 플래그를 세우지 않음"
+elif [ "$REVIEW" -nt "$DR" ]; then report "$name" ""
+else report "$name" "플래그가 산출물보다 새로움(자동 해제 불가)"; fi
+
 printf '  %d개 중 %d개 통과\n' "$ran" "$pass"
 [ "$fail" -eq 0 ]

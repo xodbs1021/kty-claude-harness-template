@@ -94,15 +94,37 @@ CRITICAL). 그래서 호출마다 창 파일을 만들고 PostToolUse 는 **가�
 
 ## 후속 이력
 
-- **2026-10-08 — 실패한 Bash 도 창을 소비한다**: 종료 코드가 0 이 아닌 Bash 에는
-  `PostToolUse` 가 아니라 `PostToolUseFailure` 가 발화한다([훅 문서]). 스윕이
-  `PostToolUse/Bash` 에만 걸려 있어 실패 호출의 창이 소비되지 않고 남았다(`false` 한 번에
-  1개, 실세션 약 110개). 그 옛 창이 "가장 오래된 창"이 되어 리뷰·설명이 끝난 파일이 Bash
-  마다 다시 플래그에 올랐고, `record_flag` 의 `touch` 로 플래그 mtime 이 계속 새로워져
-  리뷰 산출물에 의한 자동 해제(ADR-0017)가 영영 안 됐다. `settings.json` 에
-  `PostToolUseFailure/Bash` → `mark-needs-audit.sh` 를 등록해 등록이 3건이 됐다. 훅 본문은
-  `tool_response`·이벤트 이름을 읽지 않으므로 고치지 않았다(같은 판정). **남는 한계:** 권한
-  거부·PreToolUse 차단으로 시작조차 안 한 호출은 어느 Post 이벤트도 발화하지 않는다 — 그
-  창은 위 60분 정리로만 치워진다. 회귀 방어는 `tests/bash-write-sweep.test.sh` 12–14.
+- **2026-10-08 — 실패한 Bash 도 창을 소비한다**: Claude Code 가 도구 실패로 처리해
+  `PostToolUseFailure` 를 발화한 Bash(예: `false` — 2026-10-08 실측)에는 `PostToolUse` 가
+  발화하지 않는다([훅 문서]). 종료 코드가 0 이 아닌 Bash 가 전부 이 경로로 가는지는
+  단정하지 않는다 — 실측한 것은 `false` 이고, 어떤 Bash 결과가 실패로 분류되는지는
+  [도구 문서]의 Bash 절이 정한다(r1 리뷰 인용). 스윕이 `PostToolUse/Bash` 에만 걸려 있어
+  실패로 처리된 호출의 창이 소비되지 않고 남았다(`false` 한 번에 1개, 실세션 약 110개).
+  그 옛 창이 "가장 오래된 창"이 되어 리뷰·설명이 끝난 파일이 Bash 마다 다시 플래그에
+  올랐고, `record_flag` 의 `touch` 로 플래그 mtime 이 계속 새로워져 리뷰 산출물에 의한
+  자동 해제(ADR-0017)가 영영 안 됐다. `settings.json` 에 `PostToolUseFailure/Bash` →
+  `mark-needs-audit.sh` 를 등록해 등록이 3건이 됐다. 훅 본문은 `tool_response`·이벤트
+  이름을 읽지 않으므로 고치지 않았다(같은 판정). 회귀 방어는
+  `tests/bash-write-sweep.test.sh` 12–15(배선은 type · 명령까지 글자 그대로 대조, 실패
+  입력은 `session_id` · `cwd` · `is_interrupt` 를 실은 모양, 15 는 듀얼리뷰 플래그가 리뷰
+  산출물보다 새로워지지 않음).
+
+  **남는 한계:**
+
+    - **남은 창은 60분 정리만이 아니라 다음 Post 가 소비한다.** 스윕은 호출의 짝을 찾지
+      않고 가장 오래된 창을 쓴다. 어느 Post 도 발화하지 않은 호출(권한 거부·PreToolUse
+      차단으로 시작조차 안 한 호출)의 창은 그 뒤 Bash 의 Post 가 하나씩 소비하고, 그
+      스윕은 옛 창 기준이라 같은 오탐(끝난 파일 재플래그 · 플래그 `touch`)을 낸다. 남은
+      창이 k개면 이후 Bash k번에 걸쳐 이어진다.
+    - **60분 정리는 타이머가 아니다.** 다음 `PreToolUse/Bash`(`mark-bash-window.sh`)가 돌
+      때 `find -mmin +60 -delete` 로 지운다. 그 전에 Post 가 먼저 소비하면 위 오탐이 난다.
+    - **이미 쌓인 창은 이 수정이 즉시 지우지 않는다.** 실세션의 약 110개는 위 두 경로로만
+      줄어든다.
+    - **백그라운드 Bash** 는 반환할 때 Post 가 창을 소비하므로, 그 뒤에도 도는 명령의
+      쓰기는 스윕이 못 잡는다(기존 한계).
+    - **후속 후보(미구현 · kty 회부):** `tool_use_id` 로 창을 짝짓는다 — Pre 가 그 id 로
+      창을 만들고 Post 가 자기 창만 소비하면, 시작 못 한 호출의 창이 다른 호출을
+      오염시키는 문제와 동시 Post 의 중복 소비가 함께 줄어든다.
 
 [훅 문서]: https://code.claude.com/docs/en/hooks
+[도구 문서]: https://code.claude.com/docs/en/tools-reference

@@ -2,15 +2,20 @@
 # PostToolUse(Edit|Write|MultiEdit): 편집된 파일이 완료 게이트 대상이면 플래그를 세운다.
 # PostToolUse(Bash) · PostToolUseFailure(Bash): Bash 가 바꾼 파일을 같은 판정으로 스윕한다.
 #
-# 왜 PostToolUseFailure(Bash) 에도 거나 (2026-10-08 실측): 종료 코드가 0 이 아닌 Bash 에는
-# PostToolUse 가 아니라 PostToolUseFailure 가 발화한다. PostToolUse 에만 걸려 있을 때는
-# mark-bash-window 가 찍은 창이 실패 호출마다 소비되지 않고 남았다(`false` 한 번에 1개,
-# 실세션 약 110개). 남은 옛 창이 "가장 오래된 창"이 되어 리뷰·설명이 끝난 파일이 Bash
-# 마다 다시 플래그에 오르고, record_flag 의 touch 로 플래그 mtime 이 계속 새로워져 리뷰
-# 산출물에 의한 자동 해제가 영영 안 됐다. 실패 페이로드에는 tool_response 가 없고 error 가
-# 있지만 이 훅은 둘 다 읽지 않으므로 이벤트 이름으로 분기하지 않는다(같은 판정).
+# 왜 PostToolUseFailure(Bash) 에도 거는가 (2026-10-08 실측): Claude Code 가 도구 실패로
+# 처리한 Bash(예: `false`)에는 PostToolUse 가 아니라 PostToolUseFailure 가 발화한다(종료
+# 코드가 0 이 아니면 전부 그렇다고 단정하지 않는다 — 결과 분류는 Claude Code 몫이다).
+# PostToolUse 에만 걸려 있을 때는 mark-bash-window 가 찍은 창이 그런 호출마다 소비되지
+# 않고 남았다(`false` 한 번에 1개, 실세션 약 110개). 남은 옛 창이 "가장 오래된 창"이 되어
+# 리뷰·설명이 끝난 파일이 Bash 마다 다시 플래그에 오르고, record_flag 의 touch 로 플래그
+# mtime 이 계속 새로워져 리뷰 산출물에 의한 자동 해제가 영영 안 됐다. 실패 페이로드에는
+# tool_response 가 없고 error 가 있지만 이 훅은 둘 다 읽지 않으므로 이벤트 이름으로
+# 분기하지 않는다(같은 판정).
 # 남는 한계: 권한 거부·PreToolUse 차단으로 시작조차 안 한 호출은 어느 Post 이벤트도
-# 발화하지 않는다. 그 창은 mark-bash-window 의 60분 정리로만 치워진다.
+# 발화하지 않아 창이 남는다. 그 창은 60분 정리만 기다리지 않는다 — 스윕이 짝을 찾지 않고
+# 가장 오래된 창을 쓰므로 **다음 Bash 의 Post 가 소비하며 같은 오탐을 낸다**(남은 창 k개면
+# k번). 60분 정리는 타이머가 아니라 다음 PreToolUse(Bash) 때 도는 find 다. 이미 쌓인 창도
+# 이 등록이 즉시 지우지 않는다. 상세·후속 후보(tool_use_id 짝짓기)는 ADR-0024 후속 이력.
 #
 # 이 플래그는 completion-auditor 가 검증을 통과시킨 뒤에만 지워진다.
 # Stop 훅이 플래그를 보고 턴 종료를 막는다 → 감사자 호출이 강제된다.

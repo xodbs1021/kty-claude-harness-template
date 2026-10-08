@@ -173,5 +173,53 @@ printf '{"tool_input":{"file_path":"%s/src/direct.go"}}' "$P" \
 if contains " $(flags "$P")" " src/direct.go "; then report "Edit/Write 경로 불변" ""
 else report "Edit/Write 경로 불변" "플래그 없음: [$(flags "$P")]"; fi
 
+# 12) **실패한 Bash 도 창을 소비하는 배선**이 settings.json 에 있다.
+#     종료 코드가 0 이 아닌 Bash 에는 PostToolUse 가 아니라 PostToolUseFailure 가 발화한다.
+#     PostToolUse 에만 걸려 있으면 실패 호출의 창이 남고, 그 옛 창이 기준이 되어 리뷰가 끝난
+#     파일이 Bash 마다 다시 플래그에 오른다(2026-10-08 실측 — 미소비 창 약 110개).
+WIRED="$(python3 - "$SRC/settings.json" <<'PY' 2>/dev/null
+import json, sys
+hooks = json.load(open(sys.argv[1])).get("hooks", {})
+for entry in hooks.get("PostToolUseFailure", []):
+    if entry.get("matcher") != "Bash":
+        continue
+    for h in entry.get("hooks", []):
+        if "mark-needs-audit.sh" in h.get("command", ""):
+            print("yes")
+PY
+)"
+if [ "$WIRED" = "yes" ]; then report "실패 Bash 배선(PostToolUseFailure·Bash)" ""
+else report "실패 Bash 배선(PostToolUseFailure·Bash)" "settings.json 에 등록 없음"; fi
+
+# 13) **실패 페이로드**(hook_event_name=PostToolUseFailure · tool_response 없음 · error 있음)로
+#     불러도 가장 오래된 창을 소비하고, 성공 페이로드와 같은 판정을 낸다.
+sweep_failed() {
+  printf '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"%s"},"error":"Exit code 1","is_interrupt":false}' "$2" \
+    | CLAUDE_PROJECT_DIR="$1" bash "$1/.claude/hooks/mark-needs-audit.sh"
+}
+windows() { find "$1/.claude" -path '*/.bash-windows/*' -type f 2>/dev/null | wc -l | tr -d ' '; }
+P="$(make_project)"
+window "$P"; sleep 1
+printf 'package main\n' > "$P/src/failed.go"
+before="$(windows "$P")"
+sweep_failed "$P" "generate; false"
+after="$(windows "$P")"
+F=" $(flags "$P") "
+if ! contains "$F" " src/failed.go "; then report "실패 페이로드 → 게이트" "플래그 없음: [$F]"
+elif [ "$before" -ne 1 ] || [ "$after" -ne 0 ]; then
+  report "실패 페이로드 → 게이트" "창 미소비: 전 $before · 후 $after"
+else report "실패 페이로드 → 게이트" ""; fi
+
+# 14) 실패 호출 뒤에도 감사 후 재플래그가 없다 — 이 결함이 실제로 만든 증상(9 의 실패판).
+P="$(make_project)"
+window "$P"; sleep 1
+printf 'package main\n' > "$P/src/one.go"
+sweep_failed "$P" "1차 — 실패"
+rm -f "$P/.claude/.needs-audit"            # 감사자가 통과시킨 상황
+window "$P"; sleep 1
+sweep "$P" "2차 — 아무것도 안 씀"
+if [ -s "$P/.claude/.needs-audit" ]; then report "실패 뒤 감사 후 재플래그 없음" "옛 파일이 다시 섬: [$(flags "$P")]"
+else report "실패 뒤 감사 후 재플래그 없음" ""; fi
+
 printf '  %d개 중 %d개 통과\n' "$ran" "$pass"
 [ "$fail" -eq 0 ]

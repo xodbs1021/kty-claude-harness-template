@@ -91,3 +91,18 @@ CRITICAL). 그래서 호출마다 창 파일을 만들고 PostToolUse 는 **가�
 - **PostToolUse 에서 이전 스윕 시각을 창으로 재활용(PreToolUse 훅 없이)** — 창이
   [이전 명령 끝 ~ 지금] 으로 벌어져, 그 사이 사람이 고친 파일까지 잡힌다. 훅 하나를 더
   등록하는 값이 그 위양성보다 싸다.
+
+## 후속 이력
+
+- **2026-10-08 — 실패한 Bash 도 창을 소비한다**: 종료 코드가 0 이 아닌 Bash 에는
+  `PostToolUse` 가 아니라 `PostToolUseFailure` 가 발화한다([훅 문서]). 스윕이
+  `PostToolUse/Bash` 에만 걸려 있어 실패 호출의 창이 소비되지 않고 남았다(`false` 한 번에
+  1개, 실세션 약 110개). 그 옛 창이 "가장 오래된 창"이 되어 리뷰·설명이 끝난 파일이 Bash
+  마다 다시 플래그에 올랐고, `record_flag` 의 `touch` 로 플래그 mtime 이 계속 새로워져
+  리뷰 산출물에 의한 자동 해제(ADR-0017)가 영영 안 됐다. `settings.json` 에
+  `PostToolUseFailure/Bash` → `mark-needs-audit.sh` 를 등록해 등록이 3건이 됐다. 훅 본문은
+  `tool_response`·이벤트 이름을 읽지 않으므로 고치지 않았다(같은 판정). **남는 한계:** 권한
+  거부·PreToolUse 차단으로 시작조차 안 한 호출은 어느 Post 이벤트도 발화하지 않는다 — 그
+  창은 위 60분 정리로만 치워진다. 회귀 방어는 `tests/bash-write-sweep.test.sh` 12–14.
+
+[훅 문서]: https://code.claude.com/docs/en/hooks

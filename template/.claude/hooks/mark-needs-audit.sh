@@ -210,11 +210,16 @@ physical_path() {
 # project_rel <절대경로> — $proj 아래면 프로젝트 기준 상대경로를 stdout·rc=0, 아니면 rc=1.
 # 접두사에 **슬래시를 반드시 포함**한다. 빠뜨리면 형제 디렉토리(<proj>-backup/…)를
 # 프로젝트 안으로 오인한다. "$proj" 를 인용하는 것은 경로 안의 글롭 문자 때문이다.
+# 슬롯이 켜졌으면 표기만 다른 루트 경로도 같은 폴더 기준(-ef)으로 루트 안이다 — ⑤′ 의
+# 루트 제외(is_slot_entry)와 기준이 갈리면 그 편집을 어느 분기도 맡지 않는다. 키가
+# 없으면 문자열 비교 그대로다(I2).
 project_rel() {
   case "$1" in
-    "$proj"/*) printf '%s\n' "${1#"$proj"/}" ;;
-    *) return 1 ;;
+    "$proj"/*) printf '%s\n' "${1#"$proj"/}"; return 0 ;;
   esac
+  [ "$EXTRA_ON" -eq 1 ] && find_same_dir_prefix "$1" "$proj" \
+    && [ "$SAME_DIR_PREFIX" != "$1" ] || return 1
+  printf '%s\n' "${1#"$SAME_DIR_PREFIX"/}"
 }
 
 # git_toplevel <절대경로> — 그 파일이 속한 git 저장소 루트를 물리 경로로. 없으면 rc=1.

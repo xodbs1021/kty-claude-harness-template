@@ -593,3 +593,39 @@ e24() { # H-C — 슬롯 값이 NFC 한글인데 디스크 이름이 NFD 여도(
   why="$VARIANT_WHY"
   report "$name" "$why"
 }
+
+e25() { # H-C 회귀 — 세션 루트가 슬롯 안의 git clone 이고 편집 경로는 루트 이름만 표기가
+        # 다르다(같은 파일). ② 의 루트 소속과 ⑤′ 의 루트 제외가 같은 기준(같은 폴더)이어야
+        # 어느 분기도 안 맡는 경로가 없다 — 세션 루트 규칙(상대 값)으로 4종이 선다.
+        # 키가 없으면 기존 문자열 ② 그대로라 같은 편집이 187398c 처럼 skip 이다(I2).
+        # 판별력: 대소문자 무시 볼륨에서만. 구분하는 볼륨은 정본 표기 대조만 확인한다.
+  local name='e25 루트가 슬롯 안 · 루트 표기 다른 편집 → 세션 루트 규칙 4종' why=''
+  local r base alt
+  new_mna_project 1 '' || { report "$name" ''; return; }
+  r="$MNA_PROJ"
+  printf 'package a\n' > "$r/src/a.go" && commit_repo "$r" \
+    || { report "$name" ''; return; }
+  set_env "$r" "HARNESS_EXTRA_GATE_DIRS=\"${r%/*}\""$'\n'
+  run_mna "$r" edit "$r/src/a.go"
+  why="$(expect_silent '정본 표기')"
+  [[ -z "$why" ]] && why="$(expect_flags "$r" 4 src/a.go)"
+  base="${r##*/}"
+  alt="${r%/*}/$(printf '%s' "$base" | tr 'a-zA-Z' 'A-Za-z')"
+  if [[ -z "$why" && "$alt" != "$r" && "$alt" -ef "$r" ]]; then
+    rm -f "$r"/.claude/.needs-*
+    run_mna "$r" edit "$alt/src/a.go"
+    why="$(expect_silent '표기 다른 루트 경로')"
+    [[ -z "$why" ]] && why="$(expect_flags "$r" 4 src/a.go)"
+    [[ -z "$why" && -e "$r/.claude/.review-dirs" ]] \
+      && why="루트 안 상대 값인데 기록을 남겼다"
+    if [[ -z "$why" ]]; then   # I2 — 키가 없으면 187398c 판정(문자열 ②) 그대로다
+      rm -f "$r"/.claude/.needs-*
+      set_env "$r" "$ENV_NO_KEY"
+      run_mna "$r" edit "$alt/src/a.go"
+      why="$(expect_silent '키 부재')"
+      [[ -z "$why" ]] && why="$(expect_flags "$r" 0 src/a.go)"
+      [[ -n "$why" ]] && why="키 부재(187398c 동작): $why"
+    fi
+  fi
+  report "$name" "$why"
+}

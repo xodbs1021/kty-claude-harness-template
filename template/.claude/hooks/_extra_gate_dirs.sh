@@ -43,6 +43,7 @@ EXTRA_GATE_PROBLEM=''      # 불량 사유: colon|tilde|relative|missing|newline
 REVIEW_RECORD_SEP=$'\037'  # 기록 형식의 필드 구분자(US)
 REVIEW_VERDICT_REASONS=''  # read_review_verdict 가 쌓는 사유 코드(공백 구분)
 REVIEW_VERDICT_LINES=''    # read_review_verdict 가 쌓는 W·M 줄(LF 구분)
+SAME_DIR_PREFIX=''         # find_same_dir_prefix 가 찾은 접두
 
 # 기록 형식의 판독기. 쓰기 쪽 계약(위 머리 주석)과 한 파일에 둔다. 경로는 awk 피연산자로만
 # 넘긴다 — `-v` 로 넘기면 백슬래시가 이스케이프로 해석된다.
@@ -172,29 +173,52 @@ expand_home_path() {
 }
 
 #######################################
-# 경로가 슬롯과 같거나 그 아래인가(성분 경계).
+# 경로 자신이나 그 조상(문자열로 한 성분씩 거슬러 오름) 가운데 폴더 $2 와 같은 폴더
+# (-ef — 같은 inode)를 찾는다. 소속 판정의 유일한 비교다. 문자열 접두로 비교하면
+# 대소문자·유니코드 정규화를 무시하는 볼륨에서 틀린다 — `pwd -P` 는 입력한 표기를,
+# git 은 디스크 표기를 돌려준다. 없는 성분(지워진 경로)은 건너뛴다.
 # Globals:
-#   EXTRA_GATE_DIR (읽음)
+#   SAME_DIR_PREFIX (씀 — 찾은 접두, 입력 표기 그대로)
+# Arguments:
+#   $1 — 경로, $2 — 폴더
+# Returns:
+#   0 찾음 · 1 없음(인자 빈 값 포함)
+#######################################
+find_same_dir_prefix() {
+  local p="${1:-}" d="${2:-}"
+  SAME_DIR_PREFIX=''
+  [[ -n "$p" && -n "$d" ]] || return 1
+  while [[ -n "$p" ]]; do
+    if [[ "$p" -ef "$d" ]]; then
+      SAME_DIR_PREFIX="$p"
+      return 0
+    fi
+    [[ "$p" == */* ]] || return 1
+    p="${p%/*}"
+  done
+  return 1
+}
+
+#######################################
+# 경로가 슬롯과 같거나 그 아래인가(같은 폴더 판정 — 표기와 무관).
+# Globals:
+#   EXTRA_GATE_DIR (읽음) · SAME_DIR_PREFIX (find_same_dir_prefix 가 씀)
 # Arguments:
 #   $1 — 물리 절대경로
 # Returns:
 #   0 안 · 1 밖, 또는 슬롯이 비었다(켜지지 않음)
 #######################################
 in_extra_gate_dir() {
-  local d="${EXTRA_GATE_DIR:-}"
-  [[ -n "$d" ]] || return 1
-  case "${1:-}" in
-    "$d" | "$d"/*) return 0 ;;
-  esac
-  return 1
+  [[ -n "${EXTRA_GATE_DIR:-}" ]] || return 1
+  find_same_dir_prefix "${1:-}" "$EXTRA_GATE_DIR"
 }
 
 #######################################
-# 플래그 값이 슬롯 항목인가 — 절대경로 ∧ 세션 루트 밖(성분 경계) ∧ 슬롯 안.
+# 플래그 값이 슬롯 항목인가 — 절대경로 ∧ 세션 루트 밖 ∧ 슬롯 안(둘 다 같은 폴더 판정).
 # 판정자(자리 계산)와 Stop(기록 없는 절대 항목의 누락 검사)이 함께 쓰는 유일한
 # 소속 술어다.
 # Globals:
-#   EXTRA_GATE_DIR (in_extra_gate_dir 이 읽음)
+#   EXTRA_GATE_DIR (in_extra_gate_dir 이 읽음) · SAME_DIR_PREFIX (씀)
 # Arguments:
 #   $1 — 플래그 값, $2 — 물리 세션 루트(비면 판정하지 않는다)
 # Returns:
@@ -203,9 +227,7 @@ in_extra_gate_dir() {
 is_slot_entry() {
   local v="${1:-}" root="${2:-}"
   [[ "$v" == /* && -n "$root" ]] || return 1
-  case "$v" in
-    "$root" | "$root"/*) return 1 ;;
-  esac
+  find_same_dir_prefix "$v" "$root" && return 1
   in_extra_gate_dir "$v"
 }
 

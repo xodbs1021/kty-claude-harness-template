@@ -494,7 +494,7 @@ JUDGE_MSG=""   # judge_file 이 알릴 메시지(없으면 빈 값). 출력은 �
 VALUE=""       # verdict_of 의 결과 — 기록값
 VERDICT=""     # verdict_of 의 결과 — gate · knowledge · skip
 VERDICT_REPO=""  # verdict_of 의 결과 — 분류 기준 저장소 최상위(①③④⑤′, 없으면 빈 값)
-SLOT_TOP=""      # slot_repo_top 의 결과
+REPO_TOP=""      # repo_top_of 의 결과
 RECORDING=0      # 이번 판정이 리뷰 자리를 기록하는가(슬롯 켜짐 ∧ 절대 값)
 
 # other_checkout <물리 절대경로> — 그 파일이 세션 루트($proj)가 아닌 **같은 저장소의 다른
@@ -520,24 +520,23 @@ other_checkout() {
 }
 
 #######################################
-# ⑤′ 의 저장소 최상위 — 그 파일의 git 최상위가 슬롯 안이면 SLOT_TOP 에 담는다(③ 이 구한
-# 최상위를 재사용). 폴더째 지워진 파일은 남아 있는 가장 가까운 조상으로 묻는다
-# (other_checkout 과 같은 관용구).
+# 그 파일의 git 최상위(④·⑤′ 공용) — ③ 이 구한 최상위를 재사용하고, 폴더째 지워진 파일은
+# 남아 있는 가장 가까운 조상으로 묻는다(other_checkout 과 같은 관용구).
 # Globals:
-#   EXISTING (existing_ancestor 가 씀) · SLOT_TOP (씀)
+#   EXISTING (existing_ancestor 가 씀) · REPO_TOP (씀)
 # Arguments:
 #   $1 — 물리 절대경로, $2 — ③ 이 구한 최상위(빈 값일 수 있다)
 # Returns:
-#   0 최상위가 슬롯 안 · 1 아님
+#   0 찾음 · 1 없음
 #######################################
-slot_repo_top() {
-  SLOT_TOP="${2:-}"
-  if [ -z "$SLOT_TOP" ] && [ ! -d "${1%/*}" ]; then
+repo_top_of() {
+  REPO_TOP="${2:-}"
+  if [ -z "$REPO_TOP" ] && [ ! -d "${1%/*}" ]; then
     existing_ancestor "${1%/*}"
-    [ -n "$EXISTING" ] || return 1
-    SLOT_TOP="$(git_toplevel "$EXISTING/.")" || return 1
+    REPO_TOP=""
+    [ -n "$EXISTING" ] && REPO_TOP="$(git_toplevel "$EXISTING/.")"
   fi
-  [ -n "$SLOT_TOP" ] && in_extra_gate_dir "$SLOT_TOP"
+  [ -n "$REPO_TOP" ]
 }
 
 # verdict_of <물리 절대경로> — 기록값(VALUE)·판정(VERDICT)·분류 기준 저장소(VERDICT_REPO).
@@ -569,12 +568,16 @@ verdict_of() {
       # 그 디렉토리가 git 저장소가 아니어도 하네스 동작을 정의한다. 분류 기준 저장소는
       # 그 파일의 git 최상위다(git 밖이면 빈 값 — 리뷰 자리는 빈 집합, Y4).
       VERDICT_REPO="$root"
+      [ "$EXTRA_ON" -eq 1 ] && repo_top_of "$abs" "$root" \
+        && VERDICT_REPO="$REPO_TOP"
       VERDICT='gate'
     elif [ "$EXTRA_ON" -eq 1 ] && is_slot_entry "$abs" "$proj" \
-        && slot_repo_top "$abs" "$root"; then
-      # ⑤′ 추가 관할 폴더(사용자 옵트인 선언). 폴더 안 분류는 classify 가 한다.
-      VERDICT_REPO="$SLOT_TOP"
-      VERDICT="$(classify "${abs#"$SLOT_TOP"/}" "$SLOT_TOP")"
+        && repo_top_of "$abs" "$root" && in_extra_gate_dir "$REPO_TOP"; then
+      # ⑤′ 추가 관할 폴더(사용자 옵트인 선언). 폴더 안 분류는 classify 가 한다. 상대경로는
+      # 같은 폴더 접두로 자른다 — git 은 디스크 표기, 편집 경로는 입력 표기일 수 있다.
+      VERDICT_REPO="$REPO_TOP"
+      find_same_dir_prefix "$abs" "$REPO_TOP" || SAME_DIR_PREFIX="$REPO_TOP"
+      VERDICT="$(classify "${abs#"$SAME_DIR_PREFIX"/}" "$REPO_TOP")"
     else
       VERDICT='skip'
       # git 이 빈 값을 돌려줬는데 조상에 .git 이 있으면, 저장소가 아닌 게 아니라 git 이
@@ -724,15 +727,24 @@ review_record_begin() {
 # 결속 ③ — 그 값의 현재 기록 줄을 덧붙인다. 자리 규칙(Y4): 슬롯 항목인 설계물 → 그
 # 파일의 폴더 · 슬롯 항목이고 VERDICT_REPO 가 슬롯 안 → 그 저장소의 _workspace 와 형제
 # _workspace_<이름> · 그 밖(git 밖 앵커, 최상위가 슬롯 밖, 슬롯 밖 절대 항목) → 빈 집합.
-# 듀얼리뷰 플래그를 쓰지 못했으면 쓰지 않는다 — 의무 갱신과 현재 기록을 결속한다.
+# 듀얼리뷰 플래그를 실제로 갱신하지 못했으면 쓰지 않고 회복 가능 문구를 낸다. 소속을
+# 모르면(git 판독 실패) 빈 집합 대신 갱신 표시를 남긴다 — 둘 다 막는 쪽이다.
 # Globals:
-#   RECORDING, VERDICT_REPO, proj (읽음) · RECORD_MSG (씀)
+#   RECORDING, VERDICT_REPO, proj, DUALREVIEW_FLAG (읽음) ·
+#   RECORD_MSG, JUDGE_MSG (씀)
 # Arguments:
 #   $1 — 플래그 값, $2 — 듀얼리뷰 플래그를 썼는가(1|0), $3 — 설계물인가(1|0)
 #######################################
 review_record_end() {
   local v="$1" sibling
-  [ "$RECORDING" -eq 1 ] && [ "$2" -eq 1 ] || return 0
+  [ "$RECORDING" -eq 1 ] || return 0
+  # 플래그의 실제 갱신을 확인한다 — record_flag 는 이미 있는 줄이면 touch 실패를 무시하고
+  # 0 을 낸다(키 부재 동작 그대로). 그대로 믿으면 mtime 이 옛날인 채 현재 기록이 서서
+  # 재편집 전 리뷰로 풀린다. 한 번 더 갱신해 rc 로 본다.
+  if [ "$2" -ne 1 ] || ! touch "$DUALREVIEW_FLAG" 2>/dev/null; then
+    note_record_rc 1
+    return 0
+  fi
   if ! is_slot_entry "$v" "$proj"; then
     record_review_dirs "$v"
   elif [ "$3" -eq 1 ]; then
@@ -740,6 +752,10 @@ review_record_end() {
   elif [ -n "$VERDICT_REPO" ] && in_extra_gate_dir "$VERDICT_REPO" \
       && sibling="$(sibling_workspace_of "$VERDICT_REPO")"; then
     record_review_dirs "$v" "$VERDICT_REPO/_workspace" "$sibling"
+  elif [ -z "$VERDICT_REPO" ] && has_git_ancestor "$v"; then
+    # 소속을 모른다(.git 은 있는데 최상위를 못 받음) — 빈 집합이면 세션 루트 리뷰로 풀린다.
+    [ -n "$JUDGE_MSG" ] || JUDGE_MSG="$MSG_GIT_UNAVAILABLE"
+    return 0
   else
     record_review_dirs "$v"
   fi

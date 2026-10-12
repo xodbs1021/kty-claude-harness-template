@@ -401,3 +401,195 @@ open(sys.argv[2], "w").write(json.dumps(body))' \
   done
   report "$name" "$why"
 }
+
+# --- 수정 커밋(C3 r1 HIGH): 막아야 할 때 조용히 풀리는 경로 ------------------
+
+TOK_GIT_UNAVAILABLE='git 이 저장소 정보를 돌려주지 못해'   # 기존 MSG_GIT_UNAVAILABLE
+
+# commit_more <저장소> — 새로 만든 파일까지 커밋한다.
+commit_more() {
+  git -C "$1" add -A \
+    && git -C "$1" -c user.email=t@t -c user.name=t commit -q -m more \
+    || { FIXTURE_FAIL="추가 커밋 $1"; return 1; }
+}
+
+# last_tail_of <프로젝트> <값> — 그 값의 마지막 기록 꼬리.
+last_tail_of() {
+  local tails
+  tails="$(record_lines_of "$1" "$2")"
+  printf '%s' "${tails##*$'\n'}"
+}
+
+# expect_places_ef <프로젝트> <값> <자리>... — 마지막 기록 꼬리의 자리들이 순서대로 그
+# 폴더들과 같은 폴더(-ef)인가. 표기(대소문자·NFC/NFD)가 디스크와 달라도 같은 폴더면 맞다.
+expect_places_ef() {
+  local p="$1" v="$2" rest d
+  shift 2
+  rest="$(last_tail_of "$p" "$v")"
+  [[ "$rest" != '!' && "$rest" != '-' && -n "$rest" ]] \
+    || { printf '마지막 꼬리가 자리가 아니다 [%s]' "$rest"; return; }
+  rest="$rest$US"
+  for d in "$@"; do
+    [[ "${rest%%"$US"*}" -ef "$d" ]] \
+      || { printf '자리 [%s] 가 [%s] 와 다른 폴더' "${rest%%"$US"*}" "$d"; return; }
+    rest="${rest#*"$US"}"
+  done
+  [[ -z "$rest" ]] || printf '남는 자리 [%s]' "$(flat "$rest")"
+}
+
+e20() { # H-A — 슬롯 저장소의 ④ 앵커 폴더를 통째로 지워도(절대경로 명령) 그 앵커의
+        # 리뷰 자리는 T 다. 폴더가 없어 그 자리에서 git 을 못 불러도 남은 조상으로
+        # 최상위를 찾는다(⑤′ 와 같은 규칙) — 빈 집합(세션 루트 규칙)으로 새면 안 된다.
+  local name='e20 슬롯 저장소 .claude/hooks 폴더째 삭제 → ④ 4종 + T 자리' why='' v
+  slot_fixture || { report "$name" ''; return; }
+  mkdir -p "$C3_T/.claude/hooks" && printf 'x\n' > "$C3_T/.claude/hooks/x.sh" \
+    && commit_more "$C3_T" || { report "$name" ''; return; }
+  find "$C3_F" -exec touch -t 201901010000 {} + \
+    && make_window "$C3_R" && rm -r "$C3_T/.claude/hooks" \
+    || { FIXTURE_FAIL='창·삭제'; report "$name" ''; return; }
+  v="$C3_T/.claude/hooks/x.sh"
+  run_mna "$C3_R" bash "rm -r $C3_T/.claude/hooks"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  [[ -z "$why" ]] && why="$(expect_record "$C3_R" "$v" \
+    "$(places "$C3_T/_workspace" "$C3_S/_workspace_T")")"
+  report "$name" "$why"
+}
+
+e21() { # H-A 부류 — 슬롯 안 ④ 앵커의 저장소를 git 이 돌려주지 못하면(.git 은 있는데
+        # 판독 실패) 소속을 모른다. 빈 집합으로 쓰지 않고 갱신 표시를 마지막 줄로 남겨
+        # 막으며, git 판독 실패를 알린다.
+  local name='e21 슬롯 ④ 앵커 · git 판독 실패 → 현재 기록 생략 + 알림' why='' u v
+  slot_fixture || { report "$name" ''; return; }
+  u="$C3_S/U"
+  mkdir -p "$u/.claude/hooks" \
+    && printf 'gitdir: %s\n' "$C3_S/nowhere" > "$u/.git" \
+    || { FIXTURE_FAIL='깨진 .git'; report "$name" ''; return; }
+  v="$u/.claude/hooks/x.sh"
+  edit_new "$C3_R" "$v" || { report "$name" ''; return; }
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  if [[ -z "$why" ]] && ! contains "$OUT" "$TOK_GIT_UNAVAILABLE"; then
+    why="git 판독 실패 알림 없음 [$OUT]"
+  fi
+  [[ -z "$why" && "$(record_lines_of "$C3_R" "$v")" != '!' ]] \
+    && why="소속을 모르는데 현재 기록을 썼다 [$(flat "$(record_lines_of "$C3_R" "$v")")]"
+  report "$name" "$why"
+}
+
+e22() { # H-B — 기존 값 재편집에서 듀얼리뷰 플래그 갱신(touch)이 실패하면 결속은 그것을
+        # 성공으로 보지 않는다. 갱신 표시를 마지막 줄로 남기고 회복 가능 문구를 낸다.
+        # 주입: PATH 의 touch 심(실패) — 환경 변수 시험 모드 없이(cc7).
+  local name='e22 재편집 · 플래그 갱신 실패 → 갱신 표시 남김 + 기록 실패 문구' why=''
+  local shim v
+  slot_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/a.go"
+  run_mna "$C3_R" edit "$v"
+  why="$(expect_record "$C3_R" "$v" \
+    "$(places "$C3_T/_workspace" "$C3_S/_workspace_T")")"
+  if [[ -z "$why" ]]; then
+    shim="$(new_dir shim)" && printf '#!/bin/sh\nexit 1\n' > "$shim/touch" \
+      && chmod +x "$shim/touch" \
+      || { FIXTURE_FAIL='touch 심'; report "$name" ''; return; }
+    local -x PATH="$shim:$PATH"
+    run_mna "$C3_R" edit "$v"
+    if ! contains "$OUT" "$TOK_RECORD_FAIL"; then why="기록 실패 문구 없음 [$OUT]"
+    elif [[ "$(last_tail_of "$C3_R" "$v")" != '!' ]]; then
+      why="플래그 갱신 실패인데 현재 기록을 썼다 [$(flat "$(last_tail_of "$C3_R" "$v")")]"
+    fi
+  fi
+  report "$name" "$why"
+}
+
+#######################################
+# 표기만 다른 슬롯 고정틀: 디스크 이름은 $2, harness.env 값은 $3 이름. 안에 저장소 T
+# (src/a.go 커밋)와 T/_workspace · 형제 _workspace_T 를 둔다.
+# Globals:
+#   C3_F, C3_R, C3_S(디스크 이름 경로), C3_T, FIXTURE_FAIL (씀)
+# Arguments:
+#   $1 — 접두사, $2 — 디스크 이름, $3 — 값에 쓸 이름
+#######################################
+variant_fixture() {
+  local f
+  f="$(new_dir "$1")" || { FIXTURE_FAIL='임시 디렉토리'; return 1; }
+  mkdir -p "$f/$2/T/src" "$f/$2/T/_workspace" "$f/$2/_workspace_T" \
+    || { FIXTURE_FAIL='슬롯 골격'; return 1; }
+  printf 'package a\n' > "$f/$2/T/src/a.go"
+  commit_repo "$f/$2/T" || return 1
+  new_mna_project 1 "HARNESS_EXTRA_GATE_DIRS=\"$f/$3\""$'\n' || return 1
+  C3_F="$f"; C3_R="$MNA_PROJ"; C3_S="$f/$2"; C3_T="$f/$2/T"
+}
+
+#######################################
+# 표기 변형 케이스의 본문. 볼륨이 그 표기 차이를 같은 폴더로 보면(-ef) 디스크 표기 경로와
+# 값 표기 경로의 편집 모두 4종 + T 자리, 값 표기 _workspace_x 설계물 3종이어야 한다.
+# 볼륨이 구분하면(ubuntu ext4) 값의 폴더가 없으므로 슬롯을 쓸 수 없다는 알림(missing)이
+# 맞다 — 이 경우는 수정의 판별력이 없고 계약만 확인한다(주석에 밝힌다).
+# 서브셸 없이 부른다(실행 센티널 DID_RUN 이 살아야 한다). 사유는 VARIANT_WHY 에 담는다.
+# Globals:
+#   C3_R, C3_S, C3_T (읽음) · VARIANT_WHY (씀)
+# Arguments:
+#   $1 — 값 표기의 슬롯 경로
+#######################################
+variant_expect() {
+  local typed="$1" v w=''
+  VARIANT_WHY=''
+  if [[ ! "$typed" -ef "$C3_S" ]]; then
+    edit_new "$C3_R" "$C3_T/src/b.go" || return
+    VARIANT_WHY="$(expect_notice missing '표기를 구분하는 볼륨 — 값의 폴더 없음')"
+    return
+  fi
+  for v in "$C3_T/src/a.go" "$typed/T/src/b.go"; do
+    edit_new "$C3_R" "$v" || return
+    w="$(expect_silent "[$v]")"
+    [[ -z "$w" ]] && w="$(expect_flags "$C3_R" 4 "$v")"
+    [[ -z "$w" ]] && w="$(expect_places_ef "$C3_R" "$v" \
+      "$C3_T/_workspace" "$C3_S/_workspace_T")"
+    [[ -n "$w" ]] && { VARIANT_WHY="[$v] $w"; return; }
+  done
+  v="$typed/_workspace_x/00_design.md"
+  edit_new "$C3_R" "$v" || return
+  w="$(expect_flags "$C3_R" 3 "$v")"
+  [[ -z "$w" ]] && w="$(expect_places_ef "$C3_R" "$v" "$C3_S/_workspace_x")"
+  [[ -n "$w" ]] && { VARIANT_WHY="[설계] $w"; return; }
+  # ⑤′ 의 상대경로도 표기와 무관해야 한다 — 저장소 기준 `.claude/*` 는 classify 가 뺀다.
+  v="$typed/T/.claude/notes.txt"
+  edit_new "$C3_R" "$v" || return
+  w="$(expect_flags "$C3_R" 0 "$v")"
+  [[ -n "$w" ]] && VARIANT_WHY="[저장소 기준 .claude/*] $w"
+}
+VARIANT_WHY=''
+
+e23() { # H-C — 슬롯 값의 대소문자가 디스크와 달라도(대소문자 무시 볼륨) 같은 폴더다.
+        # 문자열 접두로 비교하면 git 최상위(디스크 표기)가 "밖"이 되어 ⑤′·설계 OR 이
+        # 알림 없이 꺼진다. 세션 루트 제외도 같은 판정이어야 한다(모듈 단위로 확인).
+        # 판별력: macOS 기본 APFS 에서만. 대소문자를 구분하는 볼륨은 계약만 확인한다.
+  local name='e23 슬롯 값 대소문자가 디스크와 다름 → 같은 폴더(대소문자 무시 볼륨)'
+  local why=''
+  variant_fixture e23 Slot slot || { report "$name" ''; return; }
+  variant_expect "$C3_F/slot"
+  why="$VARIANT_WHY"
+  if [[ -z "$why" && "$C3_F/slot" -ef "$C3_S" ]]; then
+    mkdir -p "$C3_S/root/x"
+    run_module '
+EXTRA_GATE_DIR="$FIX/Slot"
+is_slot_entry "$FIX/Slot/root/x/a.go" "$FIX/slot/root"; echo "rootx=$?"
+is_slot_entry "$FIX/slot/T/a.go" "$FIX/Slot/root"; echo "slotin=$?"' FIX="$C3_F"
+    [[ "$(flat "$OUT")" == 'rootx=1 slotin=0' ]] \
+      || why="표기가 다른 세션 루트 제외 [$(flat "$OUT")] (기대 rootx=1 slotin=0)"
+  fi
+  report "$name" "$why"
+}
+
+e24() { # H-C — 슬롯 값이 NFC 한글인데 디스크 이름이 NFD 여도(정규화 무시 볼륨) 같은
+        # 폴더다. git 최상위는 디스크 표기(NFD)로 온다.
+        # 판별력: macOS APFS 에서만. 정규화를 구분하는 볼륨은 계약만 확인한다.
+  local name='e24 슬롯 값 NFC · 디스크 NFD → 같은 폴더(정규화 무시 볼륨)' why=''
+  local nfc nfd
+  nfc="$(python3 -c 'import unicodedata as u; print(u.normalize("NFC", "트랙"))')"
+  nfd="$(python3 -c 'import unicodedata as u; print(u.normalize("NFD", "트랙"))')"
+  [[ -n "$nfc" && "$nfc" != "$nfd" ]] \
+    || { DID_RUN=1; FIXTURE_FAIL='NFC/NFD 문자열'; report "$name" ''; return; }
+  variant_fixture e24 "$nfd" "$nfc" || { report "$name" ''; return; }
+  variant_expect "$C3_F/$nfc"
+  why="$VARIANT_WHY"
+  report "$name" "$why"
+}

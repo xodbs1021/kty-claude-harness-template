@@ -25,6 +25,10 @@ GOLDEN_PARTIAL='이 명령이 바꾼 파일 중 일부는 게이트에 기록하
 MNA_PROJ=''       # 직전 new_mna_project 가 만든 프로젝트
 ENV_NO_KEY='HARNESS_TYPECHECK_CMD=""'$'\n'   # 정상 판독 · 슬롯 키 부재
 MNA_OUT_FILE=''   # 직전 run_mna 의 stdout 파일(바이트 비교용)
+# run_mna 가 payload·환경에 더 싣는 것(케이스가 `local` 로 잠깐 바꾼다 — 기본은 없음).
+MNA_CWD=''        # 비어 있지 않으면 payload 의 cwd
+MNA_FAIL=0        # 1 이면 PostToolUseFailure 모양(error 필드)
+MNA_NOHOME=0      # 1 이면 HOME 을 지우고 훅을 돌린다
 
 #######################################
 # 완료 게이트 훅이 설치된 프로젝트를 만들어 MNA_PROJ 에 담는다(src/ 포함).
@@ -73,27 +77,35 @@ make_window() {
 #   TMPROOT, BASH (읽음) · OUT, ERR, RC, DID_RUN, MNA_OUT_FILE (씀)
 # Arguments:
 #   $1 — 프로젝트, $2 — edit|bash, $3 — 편집 경로 또는 명령,
-#   $4 — closed 면 stdout 을 닫고 돌린다(출력 실패 주입)
+#   $4 — closed 면 stdout 을 닫고 돌린다(출력 실패 주입).
+#   MNA_CWD · MNA_FAIL · MNA_NOHOME 전역도 읽는다(위 선언 주석).
 #######################################
 run_mna() {
-  local p="$1" kind="$2" arg="$3" mode="${4:-}" payf errf
+  local p="$1" kind="$2" arg="$3" mode="${4:-}" payf errf unset_home=''
   payf="$TMPROOT/mpay.$$"
   errf="$TMPROOT/merr.$$"
   OUT=''; ERR=''; RC=999; DID_RUN=1
   MNA_OUT_FILE="$TMPROOT/mout.$RANDOM.$$"
   python3 -c 'import json, sys
 key = "file_path" if sys.argv[1] == "edit" else "command"
+body = {"tool_input": {key: sys.argv[2]}}
+if sys.argv[4]:
+    body["cwd"] = sys.argv[4]
+if sys.argv[5] == "1":
+    body["hook_event_name"] = "PostToolUseFailure"
+    body["error"] = "Exit code 1"
 with open(sys.argv[3], "w", encoding="utf-8") as fh:
-    fh.write(json.dumps({"tool_input": {key: sys.argv[2]}}))' \
-    "$kind" "$arg" "$payf"
+    fh.write(json.dumps(body))' \
+    "$kind" "$arg" "$payf" "$MNA_CWD" "$MNA_FAIL"
+  [[ "$MNA_NOHOME" == 1 ]] && unset_home='-u HOME'
   if [[ "$mode" == closed ]]; then
-    (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS \
+    (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS $unset_home \
       CLAUDE_PROJECT_DIR="$p" "$BASH" "$p/.claude/hooks/mark-needs-audit.sh" \
       <"$payf" >&- 2>"$errf")
     RC=$?
     : > "$MNA_OUT_FILE"
   else
-    (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS \
+    (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS $unset_home \
       CLAUDE_PROJECT_DIR="$p" "$BASH" "$p/.claude/hooks/mark-needs-audit.sh" \
       <"$payf" >"$MNA_OUT_FILE" 2>"$errf")
     RC=$?

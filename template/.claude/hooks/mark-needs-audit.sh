@@ -71,6 +71,8 @@ MSG_NEWLINE="편집 경로에 개행이 있어 게이트 플래그를 기록하�
 MSG_GIT_UNAVAILABLE="git 이 저장소 정보를 돌려주지 못해(소유권 거부·권한·손상) 하네스 정본 여부를 판정하지 못했다. 앵커 밖 파일에는 게이트가 서지 않았으니 수동으로 확인하라."
 MSG_SWEEP_TRUNCATED="이 명령이 바꾼 파일이 너무 많아 일부만 게이트에 기록했다. 나머지에는 게이트가 서지 않았으니 수동으로 확인하라."
 MSG_SWEEP_PARTIAL="이 명령이 바꾼 파일 중 일부는 게이트에 기록하지 못했다(경로에 개행이 있거나 기록에 실패). 그 파일들은 수동으로 확인하라."
+# 슬롯이 켜졌을 때만: 명령문 경로가 상한을 넘었거나 홈 경로 토큰을 읽지 못해 뿌리를 다 못 훑음.
+MSG_SWEEP_ROOT_CAP="이 명령이 가리킨 경로가 많거나 그 경로를 읽지 못해 일부 저장소·작업 공간만 훑었을 수 있다. 나머지에서 바꾼 파일에는 게이트가 서지 않았을 수 있으니 수동으로 확인하라."
 # 추가 관할 폴더 슬롯(ADR-0026)을 쓸 수 없을 때의 알림 머리. 사유 문구는 _common.sh 의
 # extra_problem_text 가 뒤에 붙는다 — 모듈이 없어도 나가야 하기 때문이다.
 MSG_EXTRA_HEAD="추가 관할 폴더 슬롯(harness.env 의 HARNESS_EXTRA_GATE_DIRS)을 쓸 수 없다 — 고칠 때까지 세션 루트 밖 저장소 편집에 게이트가 서지 않고 리뷰 자리도 기록되지 않는다. 사유: "
@@ -376,6 +378,11 @@ existing_ancestor() {
 }
 EXISTING=""
 
+# abs_path_tokens <명령문> — 명령문의 절대경로 토큰(탐색 힌트 — 명령 해석이 아니다).
+abs_path_tokens() {
+  printf '%s' "$1" | grep -o '/[A-Za-z0-9_./~@+-]\{2,\}' 2>/dev/null | sort -u
+}
+
 # sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 한 줄에 하나씩.
 # 프로젝트는 언제나 포함한다. 하네스 정본은 **다른 클론**에서 고쳐지는 일이 잦으므로
 # (이 파일 머리 주석의 2026-08-04 실사고), 명령문에 등장한 절대경로의 git 루트도 훑는다.
@@ -389,7 +396,13 @@ sweep_roots() {
   if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ] && checkout_root_of "$HARNESS_CWD"; then
     [ "$CHECKOUT_ROOT" = "$proj" ] || printf '%s\n' "$CHECKOUT_ROOT"
   fi
-  for tok in $(printf '%s' "$cmd" | grep -o '/[A-Za-z0-9_./~@+-]\{2,\}' 2>/dev/null | sort -u); do
+  for tok in $(abs_path_tokens "$cmd"); do
+    # 상한에 닿은 뒤에도 토큰이 남았으면, 슬롯이 켜졌을 때만 표지 줄을 남긴다(알림용 —
+    # 키가 없으면 출력은 예전 그대로).
+    if [ "$n" -ge "$SWEEP_MAX_ROOTS" ]; then
+      [ "$EXTRA_ON" -eq 1 ] && printf '%s\n' "$SWEEP_CAP_MARK"
+      break
+    fi
     # 지워진 경로(`rm <파일>`)는 남은 가장 가까운 조상으로, 디렉토리 토큰(`git -C <경로>`)은
     # 부모가 아니라 자신으로 조회한다 — git_toplevel 은 파일 경로의 dirname 을 묻는다([cx] r1).
     existing_ancestor "$tok"
@@ -401,13 +414,175 @@ sweep_roots() {
     [ "$root" = "$proj" ] && continue
     printf '%s\n' "$root"
     n=$((n + 1))
-    [ "$n" -ge "$SWEEP_MAX_ROOTS" ] && break
+  done
+}
+
+# --- 추가 관할 폴더 스윕 뿌리 (슬롯이 켜졌을 때만 — ADR-0026) --------------------------
+#
+# 위 뿌리에 더한다: cwd 의 슬롯 저장소(세션 루트가 git 밖이면 위 cwd 뿌리가 못 잡는다),
+# 홈 기준 토큰(~/ 꼴)의 슬롯 저장소, cwd·토큰의 가장 가까운 _workspace* 조상(작업 공간
+# 뿌리 — 물리화), 그리고 쌍(저장소 T ↔ 형제 _workspace_T). 넓히는 곳은 슬롯 안·세션
+# 루트 밖뿐이다 — 슬롯 전체는 훑지 않는다(I4: 다른 트랙의 쓰기를 잡지 않게).
+SWEEP_CAP_MARK='?'      # sweep_roots 의 상한 표지 줄(절대경로가 될 수 없다)
+SLOT_REPO_ROOTS=""      # 더할 저장소 뿌리(LF 줄 목록)
+SLOT_WS_ROOTS=""        # 작업 공간 뿌리(LF 줄 목록, 물리 경로)
+SWEEP_ROOTS_PARTIAL=0   # 뿌리를 다 훑지 못했다(명령문 경로 상한 · 홈 토큰 추출 실패)
+SLOT_HOME_ROOTS=0       # 홈 토큰으로 더한 저장소 뿌리 수(SWEEP_MAX_ROOTS 상한)
+JUDGED=""               # 작업 공간 뿌리에서 판정한 경로(LF 줄 목록)
+
+# listed_same <목록> <경로> — LF 줄 목록에 같은 파일·폴더(-ef)가 있는가. 표기와 무관하다.
+listed_same() {
+  local rest="$1" d
+  while [ -n "$rest" ]; do
+    d="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+    [ -n "$d" ] && [ "$d" -ef "$2" ] && return 0
+  done
+  return 1
+}
+
+#######################################
+# 경로가 속한 git 저장소의 최상위가 슬롯 안·세션 루트 밖이면 저장소 뿌리로 더한다.
+# 지워진 경로는 남은 가장 가까운 조상으로 묻는다(sweep_roots 와 같은 관용구).
+# Globals:
+#   EXISTING (existing_ancestor 가 씀) · SLOT_REPO_ROOTS (씀)
+# Arguments:
+#   $1 — 경로, $2 — 이미 있는 저장소 뿌리 목록(중복 확인용)
+# Returns:
+#   0 더함 · 1 해당 없음 · 2 이미 있음
+#######################################
+add_slot_repo() {
+  local q top
+  existing_ancestor "$1"
+  [ -n "$EXISTING" ] || return 1
+  q="$EXISTING"
+  [ -d "$q" ] && q="$q/."
+  top="$(git_toplevel "$q")" || return 1
+  [ -n "$top" ] && is_slot_entry "$top" "$proj" || return 1
+  listed_same "$2$SLOT_REPO_ROOTS" "$top" && return 2
+  SLOT_REPO_ROOTS="$SLOT_REPO_ROOTS$top"$'\n'
+}
+
+#######################################
+# 경로의 가장 가까운 _workspace·_workspace_* 조상(대소문자 무관)을 물리화해, 슬롯 안·
+# 세션 루트 밖이면 작업 공간 뿌리로 더한다. 물리화가 먼저다 — 시작점이 심링크면 find 가
+# 따라가지 않고, 슬롯 안 링크가 슬롯 밖을 가리키면 뿌리가 아니다.
+# Globals:
+#   SLOT_WS_ROOTS (씀)
+# Arguments:
+#   $1 — 경로
+#######################################
+add_slot_ws() {
+  local p="$1" w="" was_set=0
+  shopt -q nocasematch && was_set=1
+  shopt -s nocasematch
+  while [ -n "$p" ]; do
+    case "${p##*/}" in
+      _workspace | _workspace_*) w="$p"; break ;;
+    esac
+    p="${p%/*}"
+  done
+  [ "$was_set" -eq 1 ] || shopt -u nocasematch
+  [ -n "$w" ] || return 1
+  w="$(CDPATH='' cd -P -- "$w" 2>/dev/null && pwd -P)" || return 1
+  [ -n "$w" ] && is_slot_entry "$w" "$proj" || return 1
+  listed_same "$SLOT_WS_ROOTS" "$w" && return 0
+  SLOT_WS_ROOTS="$SLOT_WS_ROOTS$w"$'\n'
+}
+
+#######################################
+# 슬롯 스윕 뿌리를 정한다(본 셸에서 — 전역에 담는다). 후보는 cwd · 절대경로 토큰 ·
+# 홈 토큰이다. 홈 토큰 추출이 실패하면(rc 2) 빈 성공으로 받지 않고 알림 표시를 세운다.
+# Globals:
+#   HARNESS_CWD, SWEEP_MAX_ROOTS (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS,
+#   SWEEP_ROOTS_PARTIAL, SLOT_HOME_ROOTS (씀)
+# Arguments:
+#   $1 — 명령문, $2 — sweep_roots 가 낸 저장소 뿌리(LF 줄 목록)
+#######################################
+slot_sweep_roots() {
+  local cmd="$1" base="$2" toks tok rest
+  SLOT_REPO_ROOTS=""
+  SLOT_WS_ROOTS=""
+  SLOT_HOME_ROOTS=0
+  if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ]; then
+    add_slot_repo "$HARNESS_CWD" "$base"
+    add_slot_ws "$HARNESS_CWD"
+  fi
+  for tok in $(abs_path_tokens "$cmd"); do
+    add_slot_ws "$tok"
+  done
+  toks="$(home_path_tokens "$cmd")" || SWEEP_ROOTS_PARTIAL=1
+  rest="$toks"$'\n'
+  while [ -n "$rest" ]; do
+    tok="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+    [ -n "$tok" ] || continue
+    add_slot_ws "$tok"
+    if [ "$SLOT_HOME_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
+      SWEEP_ROOTS_PARTIAL=1
+      continue
+    fi
+    add_slot_repo "$tok" "$base" && SLOT_HOME_ROOTS=$((SLOT_HOME_ROOTS + 1))
+  done
+  slot_pair_roots "$base"
+}
+
+#######################################
+# 쌍 뿌리(X5) — 슬롯 안 저장소 뿌리 T 의 형제 작업 공간과, 작업 공간 뿌리 W 의 형제
+# 저장소(git 최상위가 바로 그 폴더일 때)를 더한다. 쌍은 상한에 세지 않는다.
+# Globals:
+#   SLOT_REPO_ROOTS, SLOT_WS_ROOTS (읽고 씀)
+# Arguments:
+#   $1 — sweep_roots 가 낸 저장소 뿌리(LF 줄 목록)
+#######################################
+slot_pair_roots() {
+  local rest="$1$SLOT_REPO_ROOTS" r t top
+  while [ -n "$rest" ]; do
+    r="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+    [ -n "$r" ] && [ "$r" != "$SWEEP_CAP_MARK" ] && is_slot_entry "$r" "$proj" \
+      || continue
+    t="$(sibling_workspace_of "$r")" && [ -d "$t" ] && add_slot_ws "$t"
+  done
+  rest="$SLOT_WS_ROOTS"
+  while [ -n "$rest" ]; do
+    r="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+    t="$(sibling_repo_of "$r")" && [ -d "$t" ] || continue
+    top="$(git_toplevel "$t/.")" && [ "$top" -ef "$t" ] || continue
+    add_slot_repo "$t" "$1"
+  done
+}
+
+#######################################
+# 작업 공간 뿌리를 먼저 돈다 — 설계 모양만 판정하고 무시·status 판정을 돌리지 않는다
+# (바깥 저장소의 경로를 그 저장소 판정으로 읽지 않게, cc8). 판정한 경로는 JUDGED 에
+# 모아 저장소 뿌리가 다시 판정하지 않게 한다.
+# 호출자(sweep_bash_writes)의 지역 변수 n · truncated · file_msg 를 갱신한다(bash 동적
+# 범위 — 판정 수 상한을 저장소 뿌리와 함께 센다).
+# Globals:
+#   SLOT_WS_ROOTS, SWEEP_MAX (읽음) · JUDGED (씀)
+#######################################
+sweep_workspace_roots() {
+  local rest="$SLOT_WS_ROOTS" root f
+  while [ -n "$rest" ]; do
+    root="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+    [ -n "$root" ] || continue
+    while IFS= read -r -d '' f; do
+      is_design_shaped "$f" || continue
+      n=$((n + 1))
+      if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; return 0; fi
+      judge_file "$f"
+      [ -n "$JUDGE_MSG" ] && file_msg=1
+      JUDGED="$JUDGED$f"$'\n'
+    done < <(sweep_find "$root")
   done
 }
 
 # sweep_bash_writes <명령문자열> — 표식 이후 바뀐 파일을 찾아 judge_file 로 판정한다.
 sweep_bash_writes() {
-  local cmd="$1" root f n=0 seen="" truncated=0 file_msg=0 st
+  local cmd="$1" root f n=0 seen="" truncated=0 file_msg=0 st base
 
   # **가장 오래된 창을 소비한다.** 병렬 Bash 에서 창이 여럿일 수 있는데, 짝을 정확히
   # 맞출 방법이 없으므로 **가장 넓은 창**을 쓴다 — 남의 호출이 쓴 파일까지 잡는 과탐은
@@ -425,8 +600,18 @@ sweep_bash_writes() {
   BASH_WINDOW="$WINDOW_DIR/$BASH_WINDOW"
   [ -f "$BASH_WINDOW" ] || return 0
 
-  while IFS= read -r root; do
+  base="$(sweep_roots "$cmd")"$'\n'   # 명령 치환이 지운 끝 개행을 되붙인다(목록 이음)
+  if [ "$EXTRA_ON" -eq 1 ]; then
+    case $'\n'"$base"$'\n' in
+      *$'\n'"$SWEEP_CAP_MARK"$'\n'*) SWEEP_ROOTS_PARTIAL=1 ;;
+    esac
+    slot_sweep_roots "$cmd" "$base"
+    sweep_workspace_roots
+  fi
+
+  [ "$truncated" -eq 1 ] || while IFS= read -r root; do
     [ -n "$root" ] || continue
+    [ "$root" = "$SWEEP_CAP_MARK" ] && continue
     # 구분자로 문자열 집합을 만들면 경로에 그 구분자가 들어갔을 때 접두 충돌한다
     # (codex r1 MEDIUM). 개행은 git 루트 경로에 못 들어가므로 안전한 구분자다.
     case "$seen" in *"$root"$'\n'*) continue ;; esac
@@ -438,6 +623,18 @@ sweep_bash_writes() {
     # 든 파일명에서 다시 깨진다. 대상이 보통 몇 개라 비용보다 정확성을 택했다.
     while IFS= read -r -d '' f; do
       [ -n "$f" ] || continue
+      # 슬롯: 루트 밖·슬롯 안의 설계 모양은 무시 판정 앞에서 판정한다(무시된 트랙 작업
+      # 공간도 잡는다). 작업 공간 뿌리가 이미 판정했으면 건너뛴다(중복 판정 없음).
+      if [ "$EXTRA_ON" -eq 1 ] && is_design_shaped "$f"; then
+        listed_same "$JUDGED" "$f" && continue
+        if is_slot_entry "$f" "$proj"; then
+          n=$((n + 1))
+          if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
+          judge_file "$f"
+          [ -n "$JUDGE_MSG" ] && file_msg=1
+          continue
+        fi
+      fi
       git -C "$root" check-ignore -q -- "$f" 2>/dev/null && continue
       n=$((n + 1))
       if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
@@ -473,7 +670,8 @@ sweep_bash_writes() {
       [ -n "$JUDGE_MSG" ] && file_msg=1
     done < <(git -C "$root" status --porcelain -z 2>/dev/null)
   done <<EOF
-$(sweep_roots "$cmd")
+$base
+$SLOT_REPO_ROOTS
 EOF
 
   # 창을 소비했으니 지운다. 이 줄이 없으면 위 주석의 벽돌 상태가 된다.
@@ -486,6 +684,9 @@ EOF
     SWEEP_MSG="$MSG_SWEEP_TRUNCATED"
   elif [ "$file_msg" -eq 1 ]; then
     SWEEP_MSG="$MSG_SWEEP_PARTIAL"
+  fi
+  if [ "$EXTRA_ON" -eq 1 ] && [ "$SWEEP_ROOTS_PARTIAL" -eq 1 ]; then
+    SWEEP_MSG="${SWEEP_MSG:+$SWEEP_MSG }$MSG_SWEEP_ROOT_CAP"
   fi
   # 파일 하나의 판정 알림은 위 집계로 접혔다. 남겨 두면 마지막 파일의 알림이 출구에서
   # 집계와 섞여 키가 없을 때의 바이트가 달라진다.
@@ -768,19 +969,23 @@ review_record_end() {
 }
 
 #######################################
-# 기록 함수의 rc 를 RECORD_MSG 로 옮긴다. 영구(값에 US·LF)가 회복 가능보다 앞선다.
+# 기록 함수의 rc 를 RECORD_MSG 로 옮긴다. 회복 가능(쓰기 실패)과 영구(값에 US·LF)는
+# 안내가 달라, 한 스윕에 둘 다 생기면 둘 다 싣는다(같은 문구는 한 번).
 # Globals:
 #   MSG_RECORD_FAIL, MSG_RECORD_PERMANENT (읽음) · RECORD_MSG (씀)
 # Arguments:
 #   $1 — record_review_pending · record_review_dirs 의 rc
 #######################################
 note_record_rc() {
+  local add
   case "$1" in
-    0) ;;
-    2) RECORD_MSG="$MSG_RECORD_PERMANENT" ;;
-    *)
-      [ "$RECORD_MSG" = "$MSG_RECORD_PERMANENT" ] \
-        || RECORD_MSG="$MSG_RECORD_FAIL" ;;
+    0) return 0 ;;
+    2) add="$MSG_RECORD_PERMANENT" ;;
+    *) add="$MSG_RECORD_FAIL" ;;
+  esac
+  case "$RECORD_MSG" in
+    *"$add"*) ;;
+    *) RECORD_MSG="${RECORD_MSG:+$RECORD_MSG }$add" ;;
   esac
 }
 

@@ -54,13 +54,37 @@ case "$tool" in
     ;;
 esac
 
+# 추가 관할 폴더 슬롯(ADR-0026): 리뷰 자리 기록이 있고 키가 있으면(UNTRUSTED 포함) ② 는 세션
+# 루트 _workspace 와 기록된 리뷰 자리를 함께 본다(WINDOW 기준 그대로). 기록 파일 존재를 먼저
+# 내장 검사로 본다 — 없으면 키도 읽지 않는다(기존 바이트). 기록을 읽지 못하면(모듈 없음·사망·
+# 파일 종류) 세션 루트만 보고(거부 쪽) 사유 한 줄을 붙인다. 형식은 모듈이 정본이다.
+slot_mode=0
+slot_dirs=""
+slot_note=""
+if [ -e "$REVIEW_DIRS_FILE" ] || [ -L "$REVIEW_DIRS_FILE" ]; then
+  extra_gate_key_state
+  if [ "$?" -ne 3 ]; then
+    slot_mode=1
+    if ! slot_dirs="$(
+      { . "$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"; } 2>/dev/null || exit 9
+      read_review_dirs 2>/dev/null
+    )"; then
+      slot_dirs=""
+      slot_note="슬롯 리뷰 자리 기록을 읽지 못해(모듈·기록 파일) 세션 루트 _workspace 만 보았다."
+    fi
+  fi
+fi
+# 안내 문구의 리뷰 자리 — 모드일 때만 슬롯 자리를 덧붙인다(아니면 기존 바이트).
+review_where='_workspace/*codex*.md'
+[ "$slot_mode" -eq 1 ] && review_where='_workspace/*codex*.md 또는 슬롯 리뷰 자리의 *codex*.md'
+
 deny() {  # $1 = 첫 줄 사유, $2 = 해야 할 일(여러 줄 허용)
   {
     echo "[발행 차단] $1"
     echo
     printf '%s\n' "$2"
     echo
-    echo "이 훅이 보는 것: ① .needs-dualreview 미해소 여부 ② 최근 리뷰 산출물(_workspace/*codex*.md) 실존."
+    echo "이 훅이 보는 것: ① .needs-dualreview 미해소 여부 ② 최근 리뷰 산출물(${review_where}) 실존."
     echo "내용 일치·위조는 검증하지 않는다(훅 머리 공시) — 그 판단은 리뷰·감사가 한다."
     echo "탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"
   } >&2
@@ -72,7 +96,7 @@ if [ -s "$DUALREVIEW_FLAG" ]; then
   deny "이 턴의 변경이 아직 codex 듀얼 리뷰 전입니다 — 리뷰를 앞질러 발행할 수 없습니다." \
 "해야 할 일:
   1. 대상 변경/산출물을 codex 듀얼 리뷰한다 (모델·effort 는 guard-codex-invocation 규정).
-  2. 결과를 _workspace/*codex*.md 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다).
+  2. 결과를 ${review_where} 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다).
   3. 그 다음 발행을 다시 시도한다."
 fi
 
@@ -99,29 +123,38 @@ esac
 now=$((10#$now))
 
 recent=""
-for f in "$PROJECT_DIR/_workspace"/*codex*.md; do
-  [ -f "$f" ] || continue
-  m="$(stat -f %m "$f" 2>/dev/null)" || m=""
-  [ -n "$m" ] || { m="$(stat -c %Y "$f" 2>/dev/null)" || m=""; }
-  case "$m" in ''|*[!0-9]*) continue ;; esac
-  m=$((10#$m))
-  age=$(( now - m ))
-  # 미래 mtime(시계 어긋난 머신에서 복사된 파일 등)은 "최근"으로 치지 않는다 —
-  # 음수 나이를 통과시키면 그 시각까지 창이 사실상 무한이 된다([cx] r1 MEDIUM).
-  [ "$age" -ge 0 ] || continue
-  if [ "$age" -le $(( WINDOW_MIN * 60 )) ]; then
-    recent="$f"
-    break
-  fi
+# 세션 루트 _workspace 가 첫 자리이고, 모드일 때 기록된 리뷰 자리가 뒤따른다(줄 목록 —
+# 자리는 판정자가 개행 없는 경로로만 기록한다).
+review_dirs="$PROJECT_DIR/_workspace"$'\n'"$slot_dirs"
+while [ -z "$recent" ] && [ -n "$review_dirs" ]; do
+  d="${review_dirs%%$'\n'*}"
+  case "$review_dirs" in *$'\n'*) review_dirs="${review_dirs#*$'\n'}" ;; *) review_dirs="" ;; esac
+  [ -n "$d" ] || continue
+  for f in "$d"/*codex*.md; do
+    [ -f "$f" ] || continue
+    m="$(stat -f %m "$f" 2>/dev/null)" || m=""
+    [ -n "$m" ] || { m="$(stat -c %Y "$f" 2>/dev/null)" || m=""; }
+    case "$m" in ''|*[!0-9]*) continue ;; esac
+    m=$((10#$m))
+    age=$(( now - m ))
+    # 미래 mtime(시계 어긋난 머신에서 복사된 파일 등)은 "최근"으로 치지 않는다 —
+    # 음수 나이를 통과시키면 그 시각까지 창이 사실상 무한이 된다([cx] r1 MEDIUM).
+    [ "$age" -ge 0 ] || continue
+    if [ "$age" -le $(( WINDOW_MIN * 60 )) ]; then
+      recent="$f"
+      break
+    fi
+  done
 done
 
 if [ -z "$recent" ]; then
-  deny "최근 ${WINDOW_MIN}분 안의 codex 리뷰 산출물(_workspace/*codex*.md)이 없습니다 — 리뷰 없이 발행할 수 없습니다. (2026-08-14 실사고: 판정 4건이 리뷰 없이 Jira·위키로 나갔고 4건 전부 사후 변경요청)" \
+  deny "최근 ${WINDOW_MIN}분 안의 codex 리뷰 산출물(${review_where})이 없습니다 — 리뷰 없이 발행할 수 없습니다. (2026-08-14 실사고: 판정 4건이 리뷰 없이 Jira·위키로 나갔고 4건 전부 사후 변경요청)" \
 "해야 할 일:
   1. 발행하려는 내용(판정·결론·문서)을 codex 듀얼 리뷰한다.
-  2. 결과를 _workspace/*codex*.md 로 저장한다.
+  2. 결과를 ${review_where} 로 저장한다.
   3. 발행을 다시 시도한다 — 저장 직후면 이 게이트는 통과한다.
-  창 조정(사용자): harness.env 의 HARNESS_PUBLISH_REVIEW_WINDOW_MIN=<분> (기본 180)."
+  창 조정(사용자): harness.env 의 HARNESS_PUBLISH_REVIEW_WINDOW_MIN=<분> (기본 180).${slot_note:+
+  참고: $slot_note}"
 fi
 
 exit 0

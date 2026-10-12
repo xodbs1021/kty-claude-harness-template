@@ -15,6 +15,8 @@
 #                                      중복 계수·접미 충돌·홈 토큰 알림·표식·동시 출력)
 #   extra-gate-dirs.closing.cases.sh   종결 r2 처분(없는 사용자 ~ · 비ASCII 홈 토큰 ·
 #                                      홈 토큰 중복 계수 · 상대 cwd · 표식 EFBIG · 경계)
+#   extra-gate-dirs.release.cases.sh   듀얼리뷰 해제(Stop 3.5)의 슬롯 리뷰 자리 판정
+#   extra-gate-dirs.life.cases.sh      기록 수명(소속 변경·결속 순서·기록 장애)·발행 ②
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -210,7 +212,9 @@ for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.sweep.cases.sh \
                   extra-gate-dirs.bound.cases.sh \
                   extra-gate-dirs.capture.cases.sh \
-                  extra-gate-dirs.closing.cases.sh; do
+                  extra-gate-dirs.closing.cases.sh \
+                  extra-gate-dirs.release.cases.sh \
+                  extra-gate-dirs.life.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -221,7 +225,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=142
+EXPECTED_CASES=176
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -235,6 +239,9 @@ f01 f02 f03 f04 f05 s_pair1 s_pair2 s_nonpair s_rec h_unset
 b01 b02 b03 b04 b05 l01 l02 l03 w01 w02 d01 d02 d03
 k01 k02 k03 k04 k05 k06 k07 k08 k09 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23
 k24 k25 k26 k27 k28 k29 k30 k31 k32 k33 k34 k35 k36 k37 k38 k39 k40 k41 k42 k43
+c01 c02 c03 t01 t02 t03 t04 t07 t08 t09
+r01_absent r01_empty r01b r02 r02e r03 r04 r05 r06 r07 r07b r09 e12w
+x1a x1b x1c x1d x1e x1f x1g x1h p01 p02 p03
 '
 
 #######################################

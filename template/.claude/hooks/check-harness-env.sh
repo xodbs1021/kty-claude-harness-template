@@ -26,7 +26,8 @@ set -uo pipefail
 HOOK_ID="post:edit:harness-env"
 hook_disabled "$HOOK_ID" && exit 0
 
-KNOWN_KEYS="HARNESS_TYPECHECK_CMD HARNESS_STYLECHECK_CMD HARNESS_KNOWLEDGE_GATE HARNESS_PUBLISH_REVIEW_WINDOW_MIN"
+KNOWN_KEYS="HARNESS_TYPECHECK_CMD HARNESS_STYLECHECK_CMD \
+HARNESS_KNOWLEDGE_GATE HARNESS_PUBLISH_REVIEW_WINDOW_MIN $EXTRA_GATE_KEY"
 
 payload="$(cat)"
 bind_session_state "$(printf '%s' "$payload" | json_get session_id)"   # 세션 루트(.root)를 찾으려고
@@ -79,14 +80,43 @@ for key in $KNOWN_KEYS; do
     *)   bad_keys="${bad_keys}${key} " ;;  # 못 믿음 — 경고 대상
   esac
 done
-[ -z "$bad_keys" ] && exit 0
 
 # 키 이름은 [A-Z_] 뿐이라 JSON 이스케이프가 필요 없다. 경로는 넣지 않는다 —
 # 넣는 순간 이스케이프 기계장치가 딸려온다(mark-needs-audit 의 메시지 계약과 동일).
 # 결과 안내는 키 종류별로 정직하게 — 검사 명령 키는 검사가 생략되지만, 게이트 스위치
 # 키는 안전측(켜짐)으로 동작한다(fail-closed). "생략된다"로 뭉치면 스위치 키에서
-# 실물과 반대인 안내가 된다(구현 검수 [cx]).
+# 실물과 반대인 안내가 된다(구현 검수 [cx]). 셋째 종류인 관할 폴더 키는 슬롯이 꺼진다
+# — 그 안내는 그 키가 나열됐을 때만 붙인다(없으면 기존 바이트 그대로).
 # 안내문에 키 이름을 예시로 넣지 않는다 — 나열된 키만 키 이름이어야 "정상 키가 불량으로
 # 나열됐다" 단언(c02·c03)이 성립한다.
-printf '{"systemMessage":"harness.env 판독 경고: %s— 이 키의 값을 믿을 수 없습니다(중복 선언·지원 문법 밖·닫히지 않은 따옴표·읽기 실패 중 하나). 판독기는 이런 값을 미설정으로 취급합니다 — 검사 명령 키는 검사가 조용히 생략되고, 게이트 스위치 키는 안전측인 켜짐으로 동작합니다. 파일 첫머리의 문법 규칙을 확인하세요."}\n' "$bad_keys"
+msg=""
+if [[ -n "$bad_keys" ]]; then
+  slot_note=""
+  case " $bad_keys" in
+    *" $EXTRA_GATE_KEY "*)
+      slot_note=" 관할 폴더 키는 슬롯이 꺼져 세션 루트 밖 저장소 편집에 게이트가 서지 않습니다."
+      ;;
+  esac
+  msg="harness.env 판독 경고: ${bad_keys}— 이 키의 값을 믿을 수 없습니다(중복 선언·지원 문법 밖·닫히지 않은 따옴표·읽기 실패 중 하나). 판독기는 이런 값을 미설정으로 취급합니다 — 검사 명령 키는 검사가 조용히 생략되고, 게이트 스위치 키는 안전측인 켜짐으로 동작합니다.${slot_note} 파일 첫머리의 문법 규칙을 확인하세요."
+fi
+
+# 관할 폴더 값은 읽혀도 쓸 수 없을 수 있다(형식·없는 폴더·모듈 유실) — 그러면 슬롯이
+# 꺼지므로 같은 줄에 알린다. 검증은 슬롯 모듈의 것을 그대로 쓴다(규칙의 사본 금지).
+# 모듈이 없으면 사유 문구는 _common.sh 에서 나간다.
+if extra_gate_key_state "$envfile"; then
+  problem=""
+  slot_module="$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"
+  if ! { . "$slot_module"; } 2>/dev/null; then
+    problem="module"
+  elif ! validate_extra_gate_dir "$EXTRA_GATE_RAW" 2>/dev/null; then
+    problem="${EXTRA_GATE_PROBLEM:-module}"
+  fi
+  if [[ -n "$problem" ]]; then
+    slot_msg="harness.env 추가 관할 폴더 경고: $(extra_problem_text "$problem")."
+    slot_msg="$slot_msg 슬롯이 꺼져 세션 루트 밖 저장소 편집에 게이트가 서지 않습니다."
+    msg="${msg:+$msg }$slot_msg"
+  fi
+fi
+[[ -z "$msg" ]] && exit 0
+printf '{"systemMessage":"%s"}\n' "$msg"
 exit 0

@@ -11,6 +11,8 @@
 #   extra-gate-dirs.sweep.cases.sh     Bash 스윕의 슬롯 저장소·작업 공간 뿌리
 #   extra-gate-dirs.bound.cases.sh     그 스윕의 경계(시간 예산·뿌리 상한·개행 경로·
 #                                      슬롯 경계·순회 입력 유실)
+#   extra-gate-dirs.release.cases.sh   듀얼리뷰 해제(Stop 3.5)의 슬롯 리뷰 자리 판정
+#   extra-gate-dirs.life.cases.sh      기록 수명(소속 변경·결속 순서·기록 장애)·발행 ②
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -204,7 +206,9 @@ for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.notice.cases.sh \
                   extra-gate-dirs.judge.cases.sh \
                   extra-gate-dirs.sweep.cases.sh \
-                  extra-gate-dirs.bound.cases.sh; do
+                  extra-gate-dirs.bound.cases.sh \
+                  extra-gate-dirs.release.cases.sh \
+                  extra-gate-dirs.life.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -215,7 +219,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=99
+EXPECTED_CASES=133
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -227,6 +231,9 @@ e20 e21 e22 e23 e24 e25
 s01 s02 s03 s04 s05 s06 s07 s08 s09 s10 s11 s12
 f01 f02 f03 f04 f05 s_pair1 s_pair2 s_nonpair s_rec h_unset
 b01 b02 b03 b04 b05 l01 l02 l03 w01 w02 d01 d02 d03
+c01 c02 c03 t01 t02 t03 t04 t07 t08 t09
+r01_absent r01_empty r01b r02 r02e r03 r04 r05 r06 r07 r07b r09 e12w
+x1a x1b x1c x1d x1e x1f x1g x1h p01 p02 p03
 '
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이

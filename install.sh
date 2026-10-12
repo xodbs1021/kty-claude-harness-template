@@ -279,8 +279,8 @@ warn() { printf '%s\n' "$1" >&2 || :; }
 CODEX_CFG="$HOME/.codex/config.toml"
 if [ ! -f "$CODEX_CFG" ]; then
   mkdir -p "$HOME/.codex"
-  printf 'model = "gpt-6-sol"\nmodel_reasoning_effort = "xhigh"\n' > "$CODEX_CFG"
-  echo "   codex 기본값 ✓  ~/.codex/config.toml 스캐폴드 (gpt-6-sol / xhigh)"
+  printf 'model = "gpt-6.1-sol"\nmodel_reasoning_effort = "xhigh"\n' > "$CODEX_CFG"
+  echo "   codex 기본값 ✓  ~/.codex/config.toml 스캐폴드 (gpt-6.1-sol / xhigh)"
 else
   # grep 은 TOML 을 모른다 — [profiles.*] 하위 model 오인·따옴표 변형 오탐([cx]).
   # tomllib 로 최상위 model + effort 둘 다 본다(effort 미검사도 [cx] 지적).
@@ -291,16 +291,16 @@ try:
         cfg = tomllib.load(f)
 except Exception:
     print("parse-error"); sys.exit(0)
-model_ok = cfg.get("model") == "gpt-6-sol"
-effort_ok = cfg.get("model_reasoning_effort") in ("high", "xhigh")
+model_ok = cfg.get("model") == "gpt-6.1-sol"
+effort_ok = cfg.get("model_reasoning_effort") == "xhigh"
 print("ok" if model_ok and effort_ok else
       "model" if not model_ok else "effort")
 PYEOF
 )" || codex_cfg_state="parse-error"
   case "$codex_cfg_state" in
     ok)     echo "   codex 기본값    ~/.codex/config.toml 확인됨 (기존 유지)" ;;
-    model)  warn "   ⚠ ~/.codex/config.toml 최상위 model 이 gpt-6-sol 이 아님 — 가드의 '생략 = 안전' 전제가 깨집니다(사용자 파일이라 안 덮음)." ;;
-    effort) warn "   ⚠ ~/.codex/config.toml 의 model_reasoning_effort 가 high/xhigh 가 아님(또는 없음) — 생략 호출이 규정보다 약하게 돕니다(사용자 파일이라 안 덮음)." ;;
+    model)  warn "   ⚠ ~/.codex/config.toml 최상위 model 이 gpt-6.1-sol 이 아님 — 가드의 '생략 = 안전' 전제가 깨집니다(사용자 파일이라 안 덮음)." ;;
+    effort) warn "   ⚠ ~/.codex/config.toml 의 model_reasoning_effort 가 xhigh 가 아님(또는 없음) — 생략 호출이 규정보다 약하게 돕니다(사용자 파일이라 안 덮음)." ;;
     *)      warn "   ⚠ ~/.codex/config.toml 파싱 실패 — 내용을 직접 확인하세요(사용자 파일이라 안 덮음)." ;;
   esac
 fi

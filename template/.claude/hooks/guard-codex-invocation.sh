@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # codex 호출 규율 훅 (2026-08-01 kty 지시)
-# 모든 `codex exec` 호출은 모델 gpt-6-sol + effort high 고정.
+# 모든 `codex exec` 호출은 모델 gpt-6.1-sol + effort xhigh 고정.
+# 2026-09-27 kty 지시로 high → xhigh — high 는 이제 하향이다.
+# 2026-09-28 kty 지시로 모델을 gpt-6-sol 에서 gpt-5.6-sol 로 되돌렸다.
+# 2026-10-01 kty 지시로 모델을 gpt-5.6-sol 에서 gpt-6.1-sol 로 올렸다.
 # 오케스트레이터가 "작업이 작다/비용" 이유로 임의 하향한 사고의 재발을 기계로 차단한다.
 # 변경이 필요하면 이 훅과 하네스 SKILL.md를 함께 고친다 — 사용자 승인 필수.
 #
@@ -26,19 +29,19 @@ except Exception:
 if not cmd:
     print("OK"); sys.exit(0)
 
-MODEL_TOKEN = re.compile(r"^[\x27\x22]?gpt-6-sol[\x27\x22]?$")
-# 값 전체 인용(-c "model_reasoning_effort=high")도 허용 — 앞 인용부호 미허용은 오탐이었다(3차 [cx])
-EFFORT_TOKEN = re.compile(r"^[\x27\x22]?model_reasoning_effort=[\x27\x22]?high[\x27\x22]?$")
+MODEL_TOKEN = re.compile(r"^[\x27\x22]?gpt-6\.1-sol[\x27\x22]?$")
+# 값 전체 인용(-c "model_reasoning_effort=xhigh")도 허용 — 앞 인용부호 미허용은 오탐이었다(3차 [cx])
+EFFORT_TOKEN = re.compile(r"^[\x27\x22]?model_reasoning_effort=[\x27\x22]?xhigh[\x27\x22]?$")
 EFFORT_ANY = re.compile(r"^[\x27\x22]?model_reasoning_effort=")
 
 def check_calls(calls):
     # 옵션은 토큰 쌍(-m 값 / -c 값)으로 검사한다 — 문자열 부분 일치는 프롬프트 본문에
-    # 들어 있는 "model_reasoning_effort=high" 문구를 옵션으로 오인했다(2차 [cx] 지적).
+    # 들어 있는 "model_reasoning_effort=xhigh" 문구를 옵션으로 오인했다(2차 [cx] 지적).
     for seg in calls:
         ok_model = any(seg[k] == "-m" and MODEL_TOKEN.match(seg[k + 1])
                        for k in range(len(seg) - 1))
-        # effort는 "high 지정이 하나 있다"가 아니라 "effort 지정 전부가 high"여야 한다
-        # — 중복 -c(…high -c …low)는 마지막 값이 이겨 하향 통과였다(3차 [cx])
+        # effort는 "xhigh 지정이 하나 있다"가 아니라 "effort 지정 전부가 xhigh"여야 한다
+        # — 중복 -c(…xhigh -c …high)는 마지막 값이 이겨 하향 통과였다(3차 [cx])
         effort_vals = [seg[k + 1] for k in range(len(seg) - 1)
                        if seg[k] == "-c" and EFFORT_ANY.match(seg[k + 1])]
         ok_effort = bool(effort_vals) and all(EFFORT_TOKEN.match(v) for v in effort_vals)
@@ -104,10 +107,10 @@ print(check_calls(calls))
 
 case "$verdict" in
   MODEL)
-    echo '[Hook 차단] codex exec 는 -m gpt-6-sol 필수 — kty 고정 지시. 모델 교체는 사용자 승인 + 훅·SKILL.md 동시 갱신으로만. (연쇄 명령이면 모든 codex exec 호출 각각에 옵션을 명시할 것)' >&2
+    echo '[Hook 차단] codex exec 는 -m gpt-6.1-sol 필수 — kty 고정 지시. 모델 교체는 사용자 승인 + 훅·SKILL.md 동시 갱신으로만. (연쇄 명령이면 모든 codex exec 호출 각각에 옵션을 명시할 것)' >&2
     exit 2 ;;
   EFFORT)
-    echo '[Hook 차단] codex exec 는 -c model_reasoning_effort="high" 필수 — kty 고정 지시, 임의 하향 금지. 낮춰야 할 사유가 있으면 사용자에게 먼저 승인받을 것. (연쇄 명령이면 모든 codex exec 호출 각각에 옵션을 명시할 것)' >&2
+    echo '[Hook 차단] codex exec 는 -c model_reasoning_effort="xhigh" 필수 — kty 고정 지시(2026-09-27 high → xhigh), 임의 하향 금지(high 도 하향이다). 낮춰야 할 사유가 있으면 사용자에게 먼저 승인받을 것. (연쇄 명령이면 모든 codex exec 호출 각각에 옵션을 명시할 것)' >&2
     exit 2 ;;
 esac
 exit 0

@@ -204,7 +204,7 @@ classify() {
 # append 를 중괄호로 감싸는 것도 필수다: 리다이렉트 **열기** 실패는 셸이 보고하는데,
 # printf 뒤에 붙인 2>/dev/null 은 그 시점에 아직 적용되지 않아 stderr 가 샌다(실측).
 record_flag() {
-  mkdir -p "$STATE_DIR" 2>/dev/null
+  mkdir -p "$(dirname "$1")" 2>/dev/null
   if grep -qxF -- "$2" "$1" 2>/dev/null; then
     # [cx] 같은 경로 재편집도 플래그 mtime 을 갱신해야 한다 — 안 하면 이전 리뷰
     # 산출물이 플래그보다 "새로워서" 미리뷰 편집이 자동 해제된다(stale review 우회).
@@ -229,7 +229,7 @@ record_flag() {
 # **판정은 재호출로 위임한다.** 찾은 파일마다 이 스크립트를 file_path 페이로드로 다시
 # 부른다. classify 의 사본을 만들지 않으려는 것이다 — 사본을 두는 순간 두 판정이
 # 어긋나는 날이 온다(이 저장소가 반복해서 배운 것).
-WINDOW_DIR="$STATE_DIR/.bash-windows"
+WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"   # 입력을 읽은 뒤 세션 폴더로 다시 잡는다
 BASH_WINDOW=""         # 이번 스윕이 쓸 창. sweep_bash_writes 가 고른다.
 SWEEP_MAX=200          # 병적인 명령(대량 생성)에서 재호출이 폭주하지 않게
 SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
@@ -258,7 +258,13 @@ sweep_find() {
 # 통과시킨다.** 실측: `say"hi".go`·`back\slash.go` 가 플래그에 안 잡혔다([cc] r1 CRITICAL).
 # json.dumps 가 이스케이프의 유일 정본이다 — 우리가 규칙을 다시 쓰지 않는다.
 payload_for_path() {
-  python3 -c 'import json,sys; print(json.dumps({"tool_input":{"file_path":sys.argv[1]}}))' "$1" 2>/dev/null
+  # 세션 번호를 넘기지 않으면 재호출된 훅이 공유 경로에 적는다 — 격리가 스윕에서만 샌다.
+  python3 -c '
+import json, sys
+d = {"tool_input": {"file_path": sys.argv[1]}}
+if sys.argv[2]:
+    d["session_id"] = sys.argv[2]
+print(json.dumps(d))' "$1" "$HARNESS_SESSION_ID" 2>/dev/null
 }
 
 # sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 한 줄에 하나씩.
@@ -367,6 +373,8 @@ EOF
 # --- 판정 -----------------------------------------------------------------
 
 payload="$(cat)"
+bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
+WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"
 # json_get 결과를 **센티널로** 받는다. 명령 치환은 후행 개행을 전부 지우므로 그냥 받으면
 # 경로 끝의 개행이 아래 가드에 닿기도 전에 사라지고, 경고 없이 **다른 파일** 경로가
 # 기록된다("src/app.ts" + LF → "src/app.ts"). X 를 붙여 받고 도로 뗀 뒤, json_get 자신이

@@ -24,10 +24,12 @@ set -uo pipefail
 HOOK_ID="pre:bash:window"
 hook_disabled "$HOOK_ID" && exit 0
 
-# 페이로드를 읽어 버린다 — 읽지 않으면 파이프가 막힐 수 있다.
-cat >/dev/null 2>&1
+# 페이로드는 반드시 끝까지 읽는다 — 읽지 않으면 파이프가 막힐 수 있다. 세션 번호만 쓴다:
+# 창이 세션마다 따로여야 다른 세션의 PostToolUse 가 이 창을 소비하지 않는다(2026-10-01 실사고).
+payload="$(cat 2>/dev/null)"
+bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
 
-WINDOW_DIR="$STATE_DIR/.bash-windows"
+WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"
 mkdir -p "$WINDOW_DIR" 2>/dev/null || exit 0
 
 # 짝이 안 맞아 남은 창을 치운다(도구가 차단돼 PostToolUse 가 안 돈 경우). 1시간이면

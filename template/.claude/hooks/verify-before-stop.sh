@@ -16,6 +16,7 @@ HOOK_ID="stop:verify"
 hook_disabled "$HOOK_ID" && exit 0
 
 payload="$(cat)"
+bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
 stop_active="$(printf '%s' "$payload" | json_get stop_hook_active)"
 # 대화 기록 경로. 결정 게이트(3.2)가 이 턴의 발화를 읽는 데 쓴다. 비어 있거나 못 읽으면
 # 그 게이트만 생략되고 **사유가 마지막 게이트 메시지에 실린다** — 조용히 사라지지 않는
@@ -648,7 +649,7 @@ if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
       echo "  2. 결과를 _workspace/ 에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
       echo "  3. 산출물을 저장하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
       echo "     codex 미설치·호출 실패로 생략하는 경우에만 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을"
-      echo "     명시하고:  rm -f .claude/.needs-dualreview"
+      echo "     명시하고:  rm -f $(flag_hint "$DUALREVIEW_FLAG" .needs-dualreview)"
       echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
       echo
       emit_decision_note
@@ -672,7 +673,7 @@ if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
     echo
     echo "해야 할 일:"
     echo "  1. change-explainer 에이전트로 실제 diff 기반 사용자용 변경 설명을 낸다."
-    echo "  2. 설명을 낸 뒤에만:  rm -f .claude/.needs-explain"
+    echo "  2. 설명을 낸 뒤에만:  rm -f $(flag_hint "$EXPLAIN_FLAG" .needs-explain)"
     echo "     설명 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
     echo
     emit_decision_note
@@ -705,7 +706,7 @@ if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
     echo "     판단을 만든 **근거(raw)** 도 규약이 정한 자리에 함께 남긴다 — 요약만 남기면"
     echo "     \"왜 그렇게 정했나\"가 복원 불가능해진다."
     echo "  3. 반영할 지식이 없으면(순수 버그픽스·기계적 수정) 불요 사유를 _workspace/progress.md 에 기록한다."
-    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f .claude/.needs-knowledge"
+    echo "  4. 2 또는 3을 마친 뒤에만:  rm -f $(flag_hint "$KNOWLEDGE_FLAG" .needs-knowledge)"
     echo "     completion-auditor 가 그 증거(또는 불요 사유의 타당성)를 검증한다."
     echo "  5. 지식 저장소를 아예 쓰지 않는 환경이면 harness.env 의 HARNESS_KNOWLEDGE_GATE 를 비운다."
     echo
@@ -760,7 +761,7 @@ gate_budget "audit"
   echo
   echo "해야 할 일:"
   echo "  1. completion-auditor 에이전트로 완료 주장을 1차 증거로 검증한다."
-  echo "  2. 검증을 통과했을 때만:  rm -f .claude/.needs-audit"
+  echo "  2. 검증을 통과했을 때만:  rm -f $(flag_hint "$AUDIT_FLAG" .needs-audit)"
   echo "     감사 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
   echo
   echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=$HOOK_ID"

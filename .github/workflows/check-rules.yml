@@ -66,5 +66,9 @@ jobs:
       # Bash 로 고친 세션이 통째로 무게이트로 끝났다 — 그 재발을 막는다.
       - name: Bash 쓰기 스윕 회귀 테스트
         run: ./tests/bash-write-sweep.test.sh
+      # 게이트 상태의 세션 격리(2026-10-01). 워크트리 세션들이 메인 체크아웃의 플래그 하나를
+      # 같이 써서 서로의 종료를 막은 실사고의 재발 방지 — 변이 6개가 이 시험에서 적색이다.
+      - name: 게이트 상태 세션 격리 회귀 테스트
+        run: ./tests/session-state-isolation.test.sh
       - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
         run: ./scripts/check-layer-boundary.sh

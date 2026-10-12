@@ -41,6 +41,7 @@ HOOK_ID="pre:publish:review"
 hook_disabled "$HOOK_ID" && exit 0
 
 payload="$(cat)"
+bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
 
 # Artifact 도구는 조회(action:"list")가 있다 — 조회는 발행이 아니므로 통과.
 # action 판독 불가(페이로드 손상·python3 부재)면 발행으로 취급한다(fail-closed).

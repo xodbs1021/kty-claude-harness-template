@@ -23,6 +23,75 @@ RETRIEVAL_FLAG="$STATE_DIR/.needs-retrieval"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"
 BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플래그 상태) — 진전 인지 리셋용
 
+# 세션 격리 (2026-10-01 실사고). 위 경로들은 **세션 번호가 없을 때의 기본값**이다.
+#
+# 왜: 데스크톱 앱은 워크트리 세션에도 CLAUDE_PROJECT_DIR 로 **메인 체크아웃**을 넘긴다.
+# 상태 폴더가 그 아래 하나뿐이라 동시에 도는 세션들이 같은 플래그·Bash 창·차단 카운터를 썼다.
+# 한 세션의 Stop 이 다른 세션의 산출물로 세 번 막혔고, 첫 읽기 전용 Bash 가 남의 창을 소비해
+# 체크아웃 파일 197개를 듀얼리뷰 대상으로 적었다.
+#
+# 그래서 훅 입력에 session_id 가 있으면 상태 파일을 $STATE_DIR/.sessions/<키>/ 로 옮긴다.
+# 서브에이전트의 도구 호출도 부모와 같은 session_id 를 싣는다 — 2026-10-01 실측: 서브에이전트가
+# Write 한 설계 산출물이 **부모 세션 폴더**에 플래그를 세웠다. 그래서 서브에이전트가 만든 변경을
+# 부모의 Stop 이 그대로 본다. 폴더 이름은 session_id 의 SHA-256 앞 32자다 — 원문을 경로에
+# 넣지 않는다(문자 집합을 우리가 정하지 않는다). cksum(32비트)은 쓰지 않는다: 실제 UUID 두 개가
+# 같은 값으로 충돌하는 실례가 나왔다([cx] r1 — 6ded9ae6-… · b91b66ff-…).
+#
+# session_id 가 없는 입력(옛 클라이언트·시험 픽스처)은 위 공유 경로를 그대로 쓴다.
+# 공유 경로에 남은 옛 플래그는 **지우지 않고 읽지도 않는다**(kty 2026-10-01) — 어느 세션의
+# 것인지 가릴 수 없어서다. 버려진 세션 폴더의 정리는 두지 않았다(YAGNI — 쌓이면 그때).
+#
+# 공시된 한계 둘:
+#   ① 세션 번호가 바뀌면 남은 의무는 승계되지 않는다 — 예: 코드를 고친 턴을 중단한 뒤 /clear
+#      로 새 세션을 열면, 옛 세션 폴더의 게이트를 새 세션의 Stop 이 보지 않는다(격리의 대가).
+#   ② 격리되는 것은 **상태 파일뿐**이다. _workspace 의 리뷰 산출물(*codex*.md)과 Bash 스윕의
+#      시간 창은 여전히 프로젝트 공유다 — 다른 세션의 리뷰 산출물이 이 세션의 듀얼리뷰 게이트를
+#      풀 수 있고(신선도 비교), 스윕은 창이 열린 동안 다른 세션이 쓴 파일도 잡는다(과탐).
+SESSION_STATE_DIR="$STATE_DIR"
+
+# bind_session_state <session_id> — 각 훅이 입력을 읽은 **직후** 부른다. 빈 값이면 아무것도
+# 바꾸지 않는다. 폴더를 못 만들어도 경로는 바꾼다 — 쓰기 쪽(record_flag)이 실패를 보고하고,
+# 공유 경로로 조용히 되돌아가면 격리가 소리 없이 사라지기 때문이다.
+bind_session_state() {
+  local sid="$1" key
+  [ -n "$sid" ] || return 0
+  key="$(session_key "$sid")"
+  [ -n "$key" ] || return 0
+  SESSION_STATE_DIR="$STATE_DIR/.sessions/$key"
+  mkdir -p "$SESSION_STATE_DIR" 2>/dev/null
+  AUDIT_FLAG="$SESSION_STATE_DIR/.needs-audit"
+  EXPLAIN_FLAG="$SESSION_STATE_DIR/.needs-explain"
+  KNOWLEDGE_FLAG="$SESSION_STATE_DIR/.needs-knowledge"
+  DUALREVIEW_FLAG="$SESSION_STATE_DIR/.needs-dualreview"
+  RETRIEVAL_FLAG="$SESSION_STATE_DIR/.needs-retrieval"
+  BLOCK_COUNT="$SESSION_STATE_DIR/.stop-block-count"
+  BLOCK_FP="$SESSION_STATE_DIR/.stop-block-fp"
+  HARNESS_SESSION_ID="$sid"
+}
+HARNESS_SESSION_ID=""
+
+# session_key <session_id> — 세션 폴더 이름. python3 의 SHA-256 앞 32자(json_get 과 같은 의존이다
+# — 그것이 없으면 session_id 도 못 읽으므로 의존이 늘지 않는다). python3 가 실패하면 cksum 으로
+# 물러선다 — 충돌 위험은 있지만 공유 경로로 돌아가는 것보다 낫다.
+#
+# 공시된 한계 ③: 같은 세션 안에서 **한 훅 프로세스만** 키 생성이나 session_id 읽기에 일시
+# 실패하면(fork·exec 자원 고갈 등) 그 훅은 엉뚱한 곳을 본다 — session_id 읽기가 실패하면 공유 경로를,
+# SHA-256 만 실패하면 cksum 키의 **다른 세션 폴더**를. Stop 이 그러면 자기 게이트를 놓친다.
+# 모든 훅은 같은 환경을 물려받으므로 도구가 **없을** 때는 전 훅이 함께 공유 경로로 떨어져 게이트가
+# 유지된다. 남는 것은 프로세스별 일시 실패뿐이라 막지 않고 공시한다([cx] r1 #1 → 교차 검증 강등).
+session_key() {
+  local k
+  k="$(printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:32])' 2>/dev/null)"
+  [ -n "$k" ] || k="$(printf '%s' "$1" | cksum 2>/dev/null | cut -d' ' -f1)"
+  printf '%s' "$k"
+}
+
+# flag_hint <플래그경로> <옛 이름> — Stop 메시지의 "지울 경로" 표기. 세션 입력이면 실제 경로를
+# 따옴표로, 세션 번호가 없으면 **옛 문구 그대로**(.claude/.needs-x) — 하위 호환([cx] r1 #4).
+flag_hint() {
+  if [ -n "$HARNESS_SESSION_ID" ]; then printf '"%s"' "$1"; else printf '.claude/%s' "$2"; fi
+}
+
 # Stop 훅이 "같은 지점에서 진전 없이" 최대 몇 번까지 막을 수 있는가. 소진되면 통과시킨다
 # (세션 벽돌 방지). 차단 지문이 바뀌면(=게이트를 하나 지웠으면) 카운터는 리셋되므로,
 # 게이트 개수가 늘어도 이 상수를 올릴 필요가 없다.

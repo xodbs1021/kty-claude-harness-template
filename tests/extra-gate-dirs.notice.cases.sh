@@ -29,6 +29,9 @@ MNA_OUT_FILE=''   # 직전 run_mna 의 stdout 파일(바이트 비교용)
 MNA_CWD=''        # 비어 있지 않으면 payload 의 cwd
 MNA_FAIL=0        # 1 이면 PostToolUseFailure 모양(error 필드)
 MNA_NOHOME=0      # 1 이면 HOME 을 지우고 훅을 돌린다
+MNA_ENV=''        # 비어 있지 않으면 훅 환경에 더할 할당 하나(NAME=값 — 시간 예산 주입)
+MNA_FSIZE0=0      # 1 이면 `ulimit -f 0`(SIGXFSZ 무시) 아래서 돈다 — 임시 파일·파일 쓰기
+                  # 실패 주입. stdout 은 파이프로 받는다(파일이면 그 쓰기도 막힌다).
 
 #######################################
 # 완료 게이트 훅이 설치된 프로젝트를 만들어 MNA_PROJ 에 담는다(src/ 포함).
@@ -78,7 +81,7 @@ make_window() {
 # Arguments:
 #   $1 — 프로젝트, $2 — edit|bash, $3 — 편집 경로 또는 명령,
 #   $4 — closed 면 stdout 을 닫고 돌린다(출력 실패 주입).
-#   MNA_CWD · MNA_FAIL · MNA_NOHOME 전역도 읽는다(위 선언 주석).
+#   MNA_CWD · MNA_FAIL · MNA_NOHOME · MNA_ENV · MNA_FSIZE0 전역도 읽는다(위 선언 주석).
 #######################################
 run_mna() {
   local p="$1" kind="$2" arg="$3" mode="${4:-}" payf errf unset_home=''
@@ -104,9 +107,18 @@ with open(sys.argv[3], "w", encoding="utf-8") as fh:
       <"$payf" >&- 2>"$errf")
     RC=$?
     : > "$MNA_OUT_FILE"
+  elif [[ "$MNA_FSIZE0" == 1 ]]; then
+    (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS $unset_home \
+      ${MNA_ENV:+"$MNA_ENV"} CLAUDE_PROJECT_DIR="$p" "$BASH" -c \
+      'trap "" XFSZ; ulimit -f 0; exec "$0" "$1"' \
+      "$BASH" "$p/.claude/hooks/mark-needs-audit.sh" <"$payf" 2>/dev/null \
+      | cat >"$MNA_OUT_FILE"
+      exit "${PIPESTATUS[0]}")
+    RC=$?
   else
     (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS $unset_home \
-      CLAUDE_PROJECT_DIR="$p" "$BASH" "$p/.claude/hooks/mark-needs-audit.sh" \
+      ${MNA_ENV:+"$MNA_ENV"} CLAUDE_PROJECT_DIR="$p" \
+      "$BASH" "$p/.claude/hooks/mark-needs-audit.sh" \
       <"$payf" >"$MNA_OUT_FILE" 2>"$errf")
     RC=$?
   fi

@@ -351,6 +351,12 @@ WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"   # 입력을 읽은 뒤 세션 �
 BASH_WINDOW=""         # 이번 스윕이 쓸 창. sweep_bash_writes 가 고른다.
 SWEEP_MAX=200          # 병적인 명령(대량 생성)에서 판정이 폭주하지 않게
 SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
+# 슬롯이 켜졌을 때 스윕이 쓰는 시간(초, 훅 시작부터 — SECONDS). Bash 훅 상한(30 s, I8)에
+# 걸려 취소되면 알림도 창 소비도 없이 다음 Bash 마다 같은 창을 다시 돈다 — 그 전에 끊고
+# 절단을 알린다. 키가 없으면 쓰지 않는다(I2 — 187398c 와 같은 동작).
+SWEEP_BUDGET=20
+SWEEP_END='.'          # 순회 입력의 끝 표지(find 경로·status 레코드가 될 수 없다)
+SWEEP_KEEP_WINDOW=0    # 순회 입력을 다 읽지 못했다 — 창을 남겨 다음 Bash 가 다시 훑는다
 
 # find 의 prune 목록. **성능을 위한 것만 남긴다.**
 # 예전엔 dist·build·target·vendor 도 잘라냈는데, 그것들이 **git 에 추적 중**이면
@@ -359,11 +365,18 @@ SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
 # 무엇이 산출물인지는 아래 git check-ignore 가 판정한다. 여기서 다시 정하지 않는다.
 SWEEP_PRUNE='-name .git -o -name node_modules -o -name .venv -o -name __pycache__'
 
-# sweep_find <뿌리> — 표식 이후 바뀐 파일을 **NUL 구분**으로.
+# sweep_find <뿌리> [ws] — 표식 이후 바뀐 파일을 **NUL 구분**으로.
 # 개행이 든 파일명을 줄 단위로 읽으면 **두 개의 가짜 경로**로 쪼개져, 엉뚱한 경로가
 # 플래그에 박히고 정작 그 파일은 무게이트가 된다([cc] r1 지적). find 의 -print0 과
 # read -d '' 조합이 그 부류를 통째로 없앤다.
+# ws 면 그 폴더 바로 아래만 본다(작업 공간 뿌리) — 설계물은 부모가 그 작업 공간인
+# 파일이다. 더 깊은 _workspace* 는 다른 작업 공간(다른 트랙일 수 있다)이라, 가리켜졌을
+# 때 그 뿌리로 따로 훑는다(I4).
 sweep_find() {
+  if [ "${2:-}" = ws ]; then
+    find "$1" -maxdepth 1 -type f -newer "$BASH_WINDOW" -print0 2>/dev/null
+    return
+  fi
   # SWEEP_PRUNE 은 find 의 인자 목록이라 의도적으로 인용하지 않는다.
   # shellcheck disable=SC2086
   find "$1" \( $SWEEP_PRUNE \) -prune -o -type f -newer "$BASH_WINDOW" -print0 2>/dev/null
@@ -383,24 +396,35 @@ abs_path_tokens() {
   printf '%s' "$1" | grep -o '/[A-Za-z0-9_./~@+-]\{2,\}' 2>/dev/null | sort -u
 }
 
-# sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 한 줄에 하나씩.
+# sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 SWEEP_BASE(LF 줄 목록)에 정한다.
 # 프로젝트는 언제나 포함한다. 하네스 정본은 **다른 클론**에서 고쳐지는 일이 잦으므로
 # (이 파일 머리 주석의 2026-08-04 실사고), 명령문에 등장한 절대경로의 git 루트도 훑는다.
 # 이건 명령 해석이 아니라 **탐색 범위 힌트**다 — 틀려도 프로젝트 스캔은 그대로 돈다.
 # 훅 입력의 cwd 가 **같은 저장소의 다른 체크아웃**이면 그것도 훑는다. 세션 루트는 고정이라
 # (_common.sh) 명령이 상대 cd 로 다른 체크아웃에 가서 쓴 파일은 루트 스캔에 안 걸리고, 그
 # 경로가 명령문에 절대경로로 나오지도 않는다.
+# 본 셸에서 돈다(전역에 담는다) — 명령문 경로 뿌리 수를 슬롯 상한이 이어 쓴다. 키가 없으면
+# 목록은 예전 출력 그대로다(I2). 슬롯이 켜졌으면 최상위를 root_top 으로 받아 개행이 든
+# 것은 빼고, 상한을 넘긴 토큰과 함께 SWEEP_ROOTS_PARTIAL 로 알린다.
+SWEEP_BASE=""          # 저장소 뿌리(LF 줄 목록 — 세션 루트가 늘 첫 줄)
+SWEEP_TOKEN_ROOTS=0    # 그중 명령문 절대경로에서 얻은 뿌리 수(SWEEP_MAX_ROOTS 상한)
+
 sweep_roots() {
-  local cmd="$1" tok root n=0
-  printf '%s\n' "$proj"
-  if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ] && checkout_root_of "$HARNESS_CWD"; then
-    [ "$CHECKOUT_ROOT" = "$proj" ] || printf '%s\n' "$CHECKOUT_ROOT"
+  local cmd="$1" tok root
+  SWEEP_BASE="$proj"$'\n'
+  SWEEP_TOKEN_ROOTS=0
+  if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ] && checkout_root_of "$HARNESS_CWD" \
+      && [ "$CHECKOUT_ROOT" != "$proj" ]; then
+    root="$CHECKOUT_ROOT"
+    if [ "$EXTRA_ON" -eq 1 ]; then
+      root=""
+      root_top "$HARNESS_CWD/." && root="$ROOT_OUT"
+    fi
+    [ -n "$root" ] && SWEEP_BASE="$SWEEP_BASE$root"$'\n'
   fi
   for tok in $(abs_path_tokens "$cmd"); do
-    # 상한에 닿은 뒤에도 토큰이 남았으면, 슬롯이 켜졌을 때만 표지 줄을 남긴다(알림용 —
-    # 키가 없으면 출력은 예전 그대로).
-    if [ "$n" -ge "$SWEEP_MAX_ROOTS" ]; then
-      [ "$EXTRA_ON" -eq 1 ] && printf '%s\n' "$SWEEP_CAP_MARK"
+    if [ "$SWEEP_TOKEN_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
+      SWEEP_ROOTS_PARTIAL=1   # 알림은 슬롯이 켜졌을 때만 나간다(sweep_bash_writes 끝)
       break
     fi
     # 지워진 경로(`rm <파일>`)는 남은 가장 가까운 조상으로, 디렉토리 토큰(`git -C <경로>`)은
@@ -409,11 +433,16 @@ sweep_roots() {
     tok="$EXISTING"
     [ -n "$tok" ] || continue
     [ -d "$tok" ] && tok="$tok/."
-    root="$(git_toplevel "$tok")" || continue
+    if [ "$EXTRA_ON" -eq 1 ]; then
+      root_top "$tok" || continue
+      root="$ROOT_OUT"
+    else
+      root="$(git_toplevel "$tok")" || continue
+    fi
     [ -n "$root" ] || continue
     [ "$root" = "$proj" ] && continue
-    printf '%s\n' "$root"
-    n=$((n + 1))
+    SWEEP_BASE="$SWEEP_BASE$root"$'\n'
+    SWEEP_TOKEN_ROOTS=$((SWEEP_TOKEN_ROOTS + 1))
   done
 }
 
@@ -422,13 +451,18 @@ sweep_roots() {
 # 위 뿌리에 더한다: cwd 의 슬롯 저장소(세션 루트가 git 밖이면 위 cwd 뿌리가 못 잡는다),
 # 홈 기준 토큰(~/ 꼴)의 슬롯 저장소, cwd·토큰의 가장 가까운 _workspace* 조상(작업 공간
 # 뿌리 — 물리화), 그리고 쌍(저장소 T ↔ 형제 _workspace_T). 넓히는 곳은 슬롯 안·세션
-# 루트 밖뿐이다 — 슬롯 전체는 훑지 않는다(I4: 다른 트랙의 쓰기를 잡지 않게).
-SWEEP_CAP_MARK='?'      # sweep_roots 의 상한 표지 줄(절대경로가 될 수 없다)
-SLOT_REPO_ROOTS=""      # 더할 저장소 뿌리(LF 줄 목록)
-SLOT_WS_ROOTS=""        # 작업 공간 뿌리(LF 줄 목록, 물리 경로)
-SWEEP_ROOTS_PARTIAL=0   # 뿌리를 다 훑지 못했다(명령문 경로 상한 · 홈 토큰 추출 실패)
-SLOT_HOME_ROOTS=0       # 홈 토큰으로 더한 저장소 뿌리 수(SWEEP_MAX_ROOTS 상한)
-JUDGED=""               # 작업 공간 뿌리에서 판정한 경로(LF 줄 목록)
+# 루트 밖뿐이고 슬롯 자신은 뿌리가 아니다 — 슬롯 전체는 훑지 않는다(I4: 다른 트랙의
+# 쓰기를 잡지 않게).
+# 상한(r2 D4ⓑ — 상한 3 공유): 명령문 토큰에서 얻은 뿌리(절대경로 저장소 · 홈 토큰 저장소
+# · 작업 공간)는 SWEEP_MAX_ROOTS 하나를 함께 쓰고, 넘으면 알린다. 쌍은 원천 하나에 하나라
+# 따로 세지 않는다. cwd 에서 얻은 뿌리도 세지 않는다(저장소·작업 공간 하나씩뿐이다).
+# 뿌리 경로는 root_dir · root_top 으로만 얻는다 — 개행이 든 뿌리는 목록에 들어가지 않는다.
+SLOT_REPO_ROOTS=""      # 더할 저장소 뿌리(LF 줄 목록, 물리 경로 — 개행 없음)
+SLOT_WS_ROOTS=""        # 작업 공간 뿌리(LF 줄 목록, 물리 경로 — 개행 없음)
+SWEEP_ROOTS_PARTIAL=0   # 뿌리를 다 훑지 못했다(상한 · 홈 토큰 추출 실패 · 개행 · 입력 유실)
+SLOT_UNITS=0            # 상한에 센 뿌리 수(SWEEP_TOKEN_ROOTS 에서 시작)
+JUDGED=""               # 작업 공간 뿌리에서 판정한 경로(LF 줄 목록 — 개행 없는 것만)
+ROOT_OUT=""             # root_dir · root_top 의 결과
 
 # listed_same <목록> <경로> — LF 줄 목록에 같은 파일·폴더(-ef)가 있는가. 표기와 무관하다.
 listed_same() {
@@ -442,41 +476,128 @@ listed_same() {
 }
 
 #######################################
-# 경로가 속한 git 저장소의 최상위가 슬롯 안·세션 루트 밖이면 저장소 뿌리로 더한다.
-# 지워진 경로는 남은 가장 가까운 조상으로 묻는다(sweep_roots 와 같은 관용구).
+# 스윕 뿌리용 물리화 — 폴더를 물리 경로로 풀어 ROOT_OUT 에 담는다. 끝 개행까지 센티널로
+# 받는다: 명령 치환은 끝 개행을 지워 이름이 같은 다른 폴더(다른 트랙)를 가리키고, 가운데
+# 개행은 LF 줄 목록을 쪼갠다(C1 H-B 부류). 개행이 든 경로는 뿌리로 쓰지 않고 알린다.
 # Globals:
-#   EXISTING (existing_ancestor 가 씀) · SLOT_REPO_ROOTS (씀)
+#   ROOT_OUT, SWEEP_ROOTS_PARTIAL (씀)
 # Arguments:
-#   $1 — 경로, $2 — 이미 있는 저장소 뿌리 목록(중복 확인용)
+#   $1 — 폴더
 # Returns:
-#   0 더함 · 1 해당 없음 · 2 이미 있음
+#   0 · 1 풀 수 없음, 또는 개행(그때 SWEEP_ROOTS_PARTIAL=1)
+#######################################
+root_dir() {
+  local out
+  ROOT_OUT=""
+  out="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P && printf x)" || return 1
+  out="${out%x}"
+  out="${out%$'\n'}"
+  case "$out" in
+    *$'\n'*) SWEEP_ROOTS_PARTIAL=1; return 1 ;;
+  esac
+  [ -n "$out" ] || return 1
+  ROOT_OUT="$out"
+}
+
+#######################################
+# 스윕 뿌리용 git 최상위 — 그 경로가 속한 저장소의 최상위를 root_dir 로 물리화해 ROOT_OUT
+# 에 담는다. 묻는 폴더는 git_toplevel 과 같다(`/.git` 앞, 아니면 마지막 성분의 부모 —
+# 폴더는 `<폴더>/.` 로 넘긴다). git 출력도 센티널로 받는다.
+# Globals:
+#   ROOT_OUT, SWEEP_ROOTS_PARTIAL (root_dir 가 씀)
+# Arguments:
+#   $1 — 절대경로
+# Returns:
+#   0 · 1 저장소 아님·조회 실패, 또는 개행
+#######################################
+root_top() {
+  local dir top
+  ROOT_OUT=""
+  case "$1" in
+    */.git/*) dir="${1%%/.git/*}" ;;
+    */.git) dir="${1%/.git}" ;;
+    *) dir="${1%/*}" ;;
+  esac
+  top="$(git -C "${dir:-/}" rev-parse --show-toplevel 2>/dev/null && printf x)" \
+    || return 1
+  top="${top%x}"
+  top="${top%$'\n'}"
+  [ -n "$top" ] || return 1
+  root_dir "$top"
+}
+
+#######################################
+# 상한에 세는 뿌리면 자리가 남았는가. 넘으면 알림 표시를 세운다.
+# Globals:
+#   SLOT_UNITS, SWEEP_MAX_ROOTS (읽음) · SWEEP_ROOTS_PARTIAL (씀)
+# Arguments:
+#   $1 — 상한에 세는가(1 명령문 토큰 · 0 cwd·쌍)
+# Returns:
+#   0 더해도 됨 · 1 상한
+#######################################
+slot_room() {
+  [ "$1" -eq 1 ] || return 0
+  [ "$SLOT_UNITS" -lt "$SWEEP_MAX_ROOTS" ] && return 0
+  SWEEP_ROOTS_PARTIAL=1
+  return 1
+}
+
+#######################################
+# 저장소 최상위가 슬롯 안·세션 루트 밖이고 처음 보는 것이면 저장소 뿌리로 더한다.
+# Globals:
+#   proj, SWEEP_BASE (읽음) · SLOT_REPO_ROOTS, SLOT_UNITS (씀)
+# Arguments:
+#   $1 — 물리 최상위, $2 — 상한에 세는가(1 · 0)
+# Returns:
+#   0 더함·이미 있음 · 1 해당 없음·상한
+#######################################
+push_slot_repo() {
+  is_slot_entry "$1" "$proj" || return 1
+  listed_same "$SWEEP_BASE$SLOT_REPO_ROOTS" "$1" && return 0
+  slot_room "$2" || return 1
+  SLOT_REPO_ROOTS="$SLOT_REPO_ROOTS$1"$'\n'
+  [ "$2" -eq 0 ] || SLOT_UNITS=$((SLOT_UNITS + 1))
+}
+
+#######################################
+# 경로가 속한 git 저장소를 저장소 뿌리로 더한다(push_slot_repo). 지워진 경로는 남은 가장
+# 가까운 조상으로 묻는다(sweep_roots 와 같은 관용구).
+# Globals:
+#   EXISTING, ROOT_OUT (씀)
+# Arguments:
+#   $1 — 경로, $2 — 상한에 세는가(1 · 0)
+# Returns:
+#   0 더함·이미 있음 · 1 해당 없음·상한
 #######################################
 add_slot_repo() {
-  local q top
+  local q
   existing_ancestor "$1"
   [ -n "$EXISTING" ] || return 1
   q="$EXISTING"
   [ -d "$q" ] && q="$q/."
-  top="$(git_toplevel "$q")" || return 1
-  [ -n "$top" ] && is_slot_entry "$top" "$proj" || return 1
-  listed_same "$2$SLOT_REPO_ROOTS" "$top" && return 2
-  SLOT_REPO_ROOTS="$SLOT_REPO_ROOTS$top"$'\n'
+  root_top "$q" || return 1
+  push_slot_repo "$ROOT_OUT" "$2"
 }
 
 #######################################
-# 경로의 가장 가까운 _workspace·_workspace_* 조상(대소문자 무관)을 물리화해, 슬롯 안·
-# 세션 루트 밖이면 작업 공간 뿌리로 더한다. 물리화가 먼저다 — 시작점이 심링크면 find 가
-# 따라가지 않고, 슬롯 안 링크가 슬롯 밖을 가리키면 뿌리가 아니다.
+# 경로의 가장 가까운 _workspace·_workspace_* 조상(대소문자 무관)을 물리화해 작업 공간
+# 뿌리로 더한다. 조상 걸음은 슬롯 경계 안쪽에서 멈춘다 — 슬롯 자신은(이름이 _workspace*
+# 여도, 슬롯을 가리키는 링크여도) 작업 공간 뿌리가 아니다(I4 — 슬롯 전체 스윕 금지).
+# 물리화가 먼저다 — 시작점이 심링크면 find 가 따라가지 않고, 슬롯 안 링크가 슬롯 밖을
+# 가리키면 뿌리가 아니다.
 # Globals:
-#   SLOT_WS_ROOTS (씀)
+#   EXTRA_GATE_DIR, proj (읽음) · ROOT_OUT, SLOT_WS_ROOTS, SLOT_UNITS (씀)
 # Arguments:
-#   $1 — 경로
+#   $1 — 경로, $2 — 상한에 세는가(1 · 0)
+# Returns:
+#   0 더함·이미 있음 · 1 해당 없음·상한
 #######################################
 add_slot_ws() {
   local p="$1" w="" was_set=0
   shopt -q nocasematch && was_set=1
   shopt -s nocasematch
   while [ -n "$p" ]; do
+    [ "$p" -ef "$EXTRA_GATE_DIR" ] && break
     case "${p##*/}" in
       _workspace | _workspace_*) w="$p"; break ;;
     esac
@@ -484,32 +605,53 @@ add_slot_ws() {
   done
   [ "$was_set" -eq 1 ] || shopt -u nocasematch
   [ -n "$w" ] || return 1
-  w="$(CDPATH='' cd -P -- "$w" 2>/dev/null && pwd -P)" || return 1
-  [ -n "$w" ] && is_slot_entry "$w" "$proj" || return 1
-  listed_same "$SLOT_WS_ROOTS" "$w" && return 0
-  SLOT_WS_ROOTS="$SLOT_WS_ROOTS$w"$'\n'
+  root_dir "$w" || return 1
+  is_slot_entry "$ROOT_OUT" "$proj" || return 1
+  listed_same "$SLOT_WS_ROOTS" "$ROOT_OUT" && return 0
+  slot_room "$2" || return 1
+  SLOT_WS_ROOTS="$SLOT_WS_ROOTS$ROOT_OUT"$'\n'
+  [ "$2" -eq 0 ] || SLOT_UNITS=$((SLOT_UNITS + 1))
+}
+
+#######################################
+# 훅 입력의 cwd 를 끝 개행까지 다시 읽는다(센티널). 진입부의 명령 치환은 끝 개행을 지워
+# 이름이 같은 다른 폴더(다른 트랙)를 가리키고, 가운데 개행은 뿌리 목록을 쪼갠다 — 개행이
+# 든 cwd 는 이번 스윕의 뿌리 근원에서 빼고(HARNESS_CWD 를 비운다 — 스윕은 절대경로만
+# 판정한다) 알린다. 슬롯이 켜졌을 때만 부른다(I2).
+# Globals:
+#   payload (읽음) · HARNESS_CWD, SWEEP_ROOTS_PARTIAL (씀)
+#######################################
+slot_cwd_check() {
+  local raw
+  [ -n "$HARNESS_CWD" ] || return 0
+  raw="$(printf '%s' "$payload" | json_get cwd; printf x)"
+  raw="${raw%x}"
+  raw="${raw%$'\n'}"
+  case "$raw" in
+    *$'\n'*) HARNESS_CWD=""; SWEEP_ROOTS_PARTIAL=1 ;;
+  esac
 }
 
 #######################################
 # 슬롯 스윕 뿌리를 정한다(본 셸에서 — 전역에 담는다). 후보는 cwd · 절대경로 토큰 ·
 # 홈 토큰이다. 홈 토큰 추출이 실패하면(rc 2) 빈 성공으로 받지 않고 알림 표시를 세운다.
 # Globals:
-#   HARNESS_CWD, SWEEP_MAX_ROOTS (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS,
-#   SWEEP_ROOTS_PARTIAL, SLOT_HOME_ROOTS (씀)
+#   HARNESS_CWD, SWEEP_TOKEN_ROOTS (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS, SLOT_UNITS,
+#   SWEEP_ROOTS_PARTIAL (씀)
 # Arguments:
-#   $1 — 명령문, $2 — sweep_roots 가 낸 저장소 뿌리(LF 줄 목록)
+#   $1 — 명령문
 #######################################
 slot_sweep_roots() {
-  local cmd="$1" base="$2" toks tok rest
+  local cmd="$1" toks tok rest
   SLOT_REPO_ROOTS=""
   SLOT_WS_ROOTS=""
-  SLOT_HOME_ROOTS=0
+  SLOT_UNITS="$SWEEP_TOKEN_ROOTS"
   if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ]; then
-    add_slot_repo "$HARNESS_CWD" "$base"
-    add_slot_ws "$HARNESS_CWD"
+    add_slot_repo "$HARNESS_CWD" 0
+    add_slot_ws "$HARNESS_CWD" 0
   fi
   for tok in $(abs_path_tokens "$cmd"); do
-    add_slot_ws "$tok"
+    add_slot_ws "$tok" 1
   done
   toks="$(home_path_tokens "$cmd")" || SWEEP_ROOTS_PARTIAL=1
   rest="$toks"$'\n'
@@ -517,72 +659,179 @@ slot_sweep_roots() {
     tok="${rest%%$'\n'*}"
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     [ -n "$tok" ] || continue
-    add_slot_ws "$tok"
-    if [ "$SLOT_HOME_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
-      SWEEP_ROOTS_PARTIAL=1
-      continue
-    fi
-    add_slot_repo "$tok" "$base" && SLOT_HOME_ROOTS=$((SLOT_HOME_ROOTS + 1))
+    add_slot_ws "$tok" 1
+    add_slot_repo "$tok" 1
   done
-  slot_pair_roots "$base"
+  slot_pair_roots
 }
 
 #######################################
 # 쌍 뿌리(X5) — 슬롯 안 저장소 뿌리 T 의 형제 작업 공간과, 작업 공간 뿌리 W 의 형제
-# 저장소(git 최상위가 바로 그 폴더일 때)를 더한다. 쌍은 상한에 세지 않는다.
+# 저장소(git 최상위가 바로 그 폴더일 때)를 더한다. 쌍은 원천 하나에 하나라 상한에 세지
+# 않는다(원천이 상한 아래이므로 쌍도 그 아래다).
 # Globals:
-#   SLOT_REPO_ROOTS, SLOT_WS_ROOTS (읽고 씀)
-# Arguments:
-#   $1 — sweep_roots 가 낸 저장소 뿌리(LF 줄 목록)
+#   SWEEP_BASE (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS (읽고 씀) · ROOT_OUT (씀)
 #######################################
 slot_pair_roots() {
-  local rest="$1$SLOT_REPO_ROOTS" r t top
+  local rest="$SWEEP_BASE$SLOT_REPO_ROOTS" r t
   while [ -n "$rest" ]; do
     r="${rest%%$'\n'*}"
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
-    [ -n "$r" ] && [ "$r" != "$SWEEP_CAP_MARK" ] && is_slot_entry "$r" "$proj" \
-      || continue
-    t="$(sibling_workspace_of "$r")" && [ -d "$t" ] && add_slot_ws "$t"
+    [ -n "$r" ] && is_slot_entry "$r" "$proj" || continue
+    t="$(sibling_workspace_of "$r")" && [ -d "$t" ] && add_slot_ws "$t" 0
   done
   rest="$SLOT_WS_ROOTS"
   while [ -n "$rest" ]; do
     r="${rest%%$'\n'*}"
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     t="$(sibling_repo_of "$r")" && [ -d "$t" ] || continue
-    top="$(git_toplevel "$t/.")" && [ "$top" -ef "$t" ] || continue
-    add_slot_repo "$t" "$1"
+    root_top "$t/." && [ "$ROOT_OUT" -ef "$t" ] || continue
+    push_slot_repo "$ROOT_OUT" 0
   done
 }
 
 #######################################
-# 작업 공간 뿌리를 먼저 돈다 — 설계 모양만 판정하고 무시·status 판정을 돌리지 않는다
-# (바깥 저장소의 경로를 그 저장소 판정으로 읽지 않게, cc8). 판정한 경로는 JUDGED 에
-# 모아 저장소 뿌리가 다시 판정하지 않게 한다.
+# 슬롯이 켜졌고 시간 예산을 다 썼는가(훅 시작부터 — SECONDS).
+# Globals:
+#   EXTRA_ON, SECONDS, SWEEP_BUDGET (읽음)
+# Returns:
+#   0 다 씀 · 1 남음(키가 없으면 늘 1 — I2)
+#######################################
+sweep_budget_spent() {
+  [ "$EXTRA_ON" -eq 1 ] && [ "$SECONDS" -ge "$SWEEP_BUDGET" ]
+}
+
+#######################################
+# 순회 입력이 끝 표지 없이 끝났다(리다이렉트 실패 · 생산자 사망) — 그 뿌리를 다 못 훑었다.
+# 슬롯이 켜졌으면 알리고 창을 남겨 다음 Bash 가 다시 훑게 한다. 키가 없으면 예전처럼
+# 아무것도 하지 않는다(I2).
+# Globals:
+#   EXTRA_ON (읽음) · SWEEP_ROOTS_PARTIAL, SWEEP_KEEP_WINDOW (씀)
+#######################################
+sweep_stream_lost() {
+  [ "$EXTRA_ON" -eq 1 ] || return 0
+  SWEEP_ROOTS_PARTIAL=1
+  SWEEP_KEEP_WINDOW=1
+}
+
+# judged_in_ws <경로> — 작업 공간 뿌리 루프가 이미 판정한 경로인가. 정확히 같은 줄을 찾는다
+# — 두 루프의 경로는 같은 물리 표기다(뿌리는 pwd -P · git 이, 그 아래는 find 가 디스크
+# 이름으로 낸다). 개행이 든 경로는 JUDGED 에 없다.
+judged_in_ws() {
+  case "$1" in *$'\n'*) return 1 ;; esac
+  case $'\n'"$JUDGED" in *$'\n'"$1"$'\n'*) return 0 ;; esac
+  return 1
+}
+
+#######################################
+# 작업 공간 뿌리를 먼저 돈다 — 그 폴더 바로 아래의 설계 모양만 판정하고 무시·status 판정을
+# 돌리지 않는다(바깥 저장소의 경로를 그 저장소 판정으로 읽지 않게, cc8). 판정한 경로는
+# JUDGED 에 모아 저장소 뿌리가 다시 판정하지 않게 한다. 시간 예산·끝 표지는 저장소 뿌리
+# 루프와 같다.
 # 호출자(sweep_bash_writes)의 지역 변수 n · truncated · file_msg 를 갱신한다(bash 동적
 # 범위 — 판정 수 상한을 저장소 뿌리와 함께 센다).
 # Globals:
-#   SLOT_WS_ROOTS, SWEEP_MAX (읽음) · JUDGED (씀)
+#   SLOT_WS_ROOTS, SWEEP_MAX, SWEEP_END (읽음) · JUDGED (씀)
 #######################################
 sweep_workspace_roots() {
-  local rest="$SLOT_WS_ROOTS" root f
+  local rest="$SLOT_WS_ROOTS" root f ended
   while [ -n "$rest" ]; do
     root="${rest%%$'\n'*}"
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     [ -n "$root" ] || continue
+    ended=0
     while IFS= read -r -d '' f; do
+      [ "$f" = "$SWEEP_END" ] && { ended=1; break; }
       is_design_shaped "$f" || continue
       n=$((n + 1))
-      if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; return 0; fi
+      if [ "$n" -gt "$SWEEP_MAX" ] || sweep_budget_spent; then truncated=1; return 0; fi
       judge_file "$f"
       [ -n "$JUDGE_MSG" ] && file_msg=1
-      JUDGED="$JUDGED$f"$'\n'
-    done < <(sweep_find "$root")
+      case "$f" in *$'\n'*) ;; *) JUDGED="$JUDGED$f"$'\n' ;; esac
+    done < <(sweep_find "$root" ws; printf '%s\0' "$SWEEP_END")
+    [ "$ended" -eq 1 ] || sweep_stream_lost
   done
+}
+
+#######################################
+# 저장소 뿌리 하나를 훑는다 — 창 이후 바뀐 파일과 git 이 아는 삭제를 judge_file 로.
+# 호출자(sweep_bash_writes)의 지역 변수 n · truncated · file_msg 를 갱신한다(동적 범위).
+# 상한·시간 예산에 닿으면 truncated=1 로 돌아온다.
+# Globals:
+#   EXTRA_ON, JUDGED, proj, SWEEP_MAX, SWEEP_END (읽음)
+# Arguments:
+#   $1 — 저장소 뿌리
+#######################################
+sweep_repo_root() {
+  local root="$1" f st ended=0
+  # 목록을 **한 번만** 만든다. 예전엔 무시 목록용과 본 루프용으로 find 를 두 번 돌렸는데,
+  # 그 사이에 생긴 파일이 무시 목록에 없는 채로 본 루프에 잡혔다([cc] r1 지적).
+  # 무시 여부는 파일마다 git 에 직접 묻는다 — 목록을 문자열로 들고 다니면 개행·NUL 이
+  # 든 파일명에서 다시 깨진다. 대상이 보통 몇 개라 비용보다 정확성을 택했다.
+  # 끝 표지까지 읽어야 다 읽은 것이다 — 리다이렉트가 실패하면 0줄이다(C1 H-A 부류).
+  while IFS= read -r -d '' f; do
+    [ "$f" = "$SWEEP_END" ] && { ended=1; break; }
+    [ -n "$f" ] || continue
+    # 시간 예산은 무시 판정보다 먼저 본다 — check-ignore 도 시간을 쓴다(판정 수 상한에는
+    # 세지 않는다: 그 수는 판정 수이고, 키가 없을 때의 절단 시점이 바뀐다 — I2).
+    if sweep_budget_spent; then truncated=1; return 0; fi
+    # 슬롯: 루트 밖·슬롯 안의 설계 모양은 무시 판정 앞에서 판정한다(무시된 트랙 작업
+    # 공간도 잡는다). 작업 공간 뿌리가 이미 판정했으면 건너뛴다(중복 판정 없음).
+    if [ "$EXTRA_ON" -eq 1 ] && is_design_shaped "$f"; then
+      judged_in_ws "$f" && continue
+      if is_slot_entry "$f" "$proj"; then
+        n=$((n + 1))
+        if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; return 0; fi
+        judge_file "$f"
+        [ -n "$JUDGE_MSG" ] && file_msg=1
+        continue
+      fi
+    fi
+    git -C "$root" check-ignore -q -- "$f" 2>/dev/null && continue
+    n=$((n + 1))
+    if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; return 0; fi
+    # 판정이 낸 알림을 **버리지 않는다.** 개행이 든 경로처럼 "기록을 포기했다"는 알림이
+    # 있는데, 삼키면 이 훅의 fail-loud 계약이 스윕 경로에서만 사라진다. 파일마다 내면
+    # stdout 에 여러 줄이 나가므로(PostToolUse 는 한 줄 계약) **있었다는 사실만** 모아
+    # 아래에서 한 번 알린다.
+    judge_file "$f"
+    [ -n "$JUDGE_MSG" ] && file_msg=1
+  done < <(sweep_find "$root"; printf '%s\0' "$SWEEP_END")
+  [ "$ended" -eq 1 ] || sweep_stream_lost
+
+  # **삭제는 find 로 못 본다** — `-type f` 는 없는 파일을 찾을 수 없다(codex r1 CRITICAL).
+  # `rm src/auth.go` 가 게이트를 그대로 통과하던 구멍이다. git 이 아는 삭제만 잡는다:
+  # 추적되지 않던 파일의 삭제는 어차피 아무도 모른다.
+  # 시간 창을 못 걸므로 **이전에 생긴 미커밋 삭제도 잡힌다** — 과탐이지만, 미커밋 삭제가
+  # 남아 있다는 것 자체가 감사가 필요한 상태라 그대로 둔다.
+  #
+  # **-z 가 필수다.** 기본 porcelain 은 특수문자 경로를 따옴표로 감싸고 이스케이프한다.
+  # 실측: `src/say"hi".go` → `"src/say\"hi\".go"`, 한글 경로 → `"src/\355\225\234…"`.
+  # 그대로 쓰면 **존재하지 않는 경로**가 플래그에 박히고 실제 파일은 무게이트다 —
+  # 한국어 파일명을 쓰는 저장소에서는 상시 조건이다(codex r2 지적, [cc] 실측).
+  # -z 는 인용 없이 NUL 로 끊어 준다. 레코드 = 상태 2글자 + 공백 + 경로.
+  # git 이 실패해도(저장소 아님) 끝 표지는 온다 — 표지가 없을 때만 입력 유실이다.
+  ended=0
+  while IFS= read -r -d '' st; do
+    [ "$st" = "$SWEEP_END" ] && { ended=1; break; }
+    case "$st" in
+      ' D '*|'D  '*|'AD '*|'MD '*) ;;
+      *) continue ;;
+    esac
+    f="${st:3}"
+    [ -n "$f" ] || continue
+    if sweep_budget_spent; then truncated=1; return 0; fi
+    n=$((n + 1))
+    if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; return 0; fi
+    judge_file "$root/$f"
+    [ -n "$JUDGE_MSG" ] && file_msg=1
+  done < <(git -C "$root" status --porcelain -z 2>/dev/null; printf '%s\0' "$SWEEP_END")
+  [ "$ended" -eq 1 ] || sweep_stream_lost
 }
 
 # sweep_bash_writes <명령문자열> — 표식 이후 바뀐 파일을 찾아 judge_file 로 판정한다.
 sweep_bash_writes() {
-  local cmd="$1" root f n=0 seen="" truncated=0 file_msg=0 st base
+  local cmd="$1" root n=0 seen="" truncated=0 file_msg=0 rest
 
   # **가장 오래된 창을 소비한다.** 병렬 Bash 에서 창이 여럿일 수 있는데, 짝을 정확히
   # 맞출 방법이 없으므로 **가장 넓은 창**을 쓴다 — 남의 호출이 쓴 파일까지 잡는 과탐은
@@ -600,82 +849,32 @@ sweep_bash_writes() {
   BASH_WINDOW="$WINDOW_DIR/$BASH_WINDOW"
   [ -f "$BASH_WINDOW" ] || return 0
 
-  base="$(sweep_roots "$cmd")"$'\n'   # 명령 치환이 지운 끝 개행을 되붙인다(목록 이음)
+  [ "$EXTRA_ON" -eq 1 ] && slot_cwd_check
+  sweep_roots "$cmd"
   if [ "$EXTRA_ON" -eq 1 ]; then
-    case $'\n'"$base"$'\n' in
-      *$'\n'"$SWEEP_CAP_MARK"$'\n'*) SWEEP_ROOTS_PARTIAL=1 ;;
-    esac
-    slot_sweep_roots "$cmd" "$base"
+    slot_sweep_roots "$cmd"
     sweep_workspace_roots
   fi
 
-  [ "$truncated" -eq 1 ] || while IFS= read -r root; do
+  # 뿌리 목록은 매개변수 확장으로 돈다 — 히어독은 임시 파일이라 그것을 못 만들면(디스크
+  # 참·ulimit) 0회 돌고 창만 소비해 무기록·무알림이 된다(C1 H-A 부류).
+  # 목록과 seen 은 LF 줄 목록이다. 개행은 경로에 들 수 있다 — 슬롯이 켜졌을 때는 개행이 든
+  # 뿌리가 목록에 들어가지 않고(root_dir · root_top), 키가 없으면 예전 동작 그대로다(I2).
+  rest="$SWEEP_BASE$SLOT_REPO_ROOTS"
+  [ "$truncated" -eq 1 ] && rest=""
+  while [ -n "$rest" ]; do
+    root="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     [ -n "$root" ] || continue
-    [ "$root" = "$SWEEP_CAP_MARK" ] && continue
-    # 구분자로 문자열 집합을 만들면 경로에 그 구분자가 들어갔을 때 접두 충돌한다
-    # (codex r1 MEDIUM). 개행은 git 루트 경로에 못 들어가므로 안전한 구분자다.
     case "$seen" in *"$root"$'\n'*) continue ;; esac
     seen="$seen$root"$'\n'
+    sweep_repo_root "$root"
+    [ "$truncated" -eq 1 ] && break
+  done
 
-    # 목록을 **한 번만** 만든다. 예전엔 무시 목록용과 본 루프용으로 find 를 두 번 돌렸는데,
-    # 그 사이에 생긴 파일이 무시 목록에 없는 채로 본 루프에 잡혔다([cc] r1 지적).
-    # 무시 여부는 파일마다 git 에 직접 묻는다 — 목록을 문자열로 들고 다니면 개행·NUL 이
-    # 든 파일명에서 다시 깨진다. 대상이 보통 몇 개라 비용보다 정확성을 택했다.
-    while IFS= read -r -d '' f; do
-      [ -n "$f" ] || continue
-      # 슬롯: 루트 밖·슬롯 안의 설계 모양은 무시 판정 앞에서 판정한다(무시된 트랙 작업
-      # 공간도 잡는다). 작업 공간 뿌리가 이미 판정했으면 건너뛴다(중복 판정 없음).
-      if [ "$EXTRA_ON" -eq 1 ] && is_design_shaped "$f"; then
-        listed_same "$JUDGED" "$f" && continue
-        if is_slot_entry "$f" "$proj"; then
-          n=$((n + 1))
-          if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
-          judge_file "$f"
-          [ -n "$JUDGE_MSG" ] && file_msg=1
-          continue
-        fi
-      fi
-      git -C "$root" check-ignore -q -- "$f" 2>/dev/null && continue
-      n=$((n + 1))
-      if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
-      # 판정이 낸 알림을 **버리지 않는다.** 개행이 든 경로처럼 "기록을 포기했다"는 알림이
-      # 있는데, 삼키면 이 훅의 fail-loud 계약이 스윕 경로에서만 사라진다. 파일마다 내면
-      # stdout 에 여러 줄이 나가므로(PostToolUse 는 한 줄 계약) **있었다는 사실만** 모아
-      # 아래에서 한 번 알린다.
-      judge_file "$f"
-      [ -n "$JUDGE_MSG" ] && file_msg=1
-    done < <(sweep_find "$root")
-
-    # **삭제는 find 로 못 본다** — `-type f` 는 없는 파일을 찾을 수 없다(codex r1 CRITICAL).
-    # `rm src/auth.go` 가 게이트를 그대로 통과하던 구멍이다. git 이 아는 삭제만 잡는다:
-    # 추적되지 않던 파일의 삭제는 어차피 아무도 모른다.
-    # 시간 창을 못 걸므로 **이전에 생긴 미커밋 삭제도 잡힌다** — 과탐이지만, 미커밋 삭제가
-    # 남아 있다는 것 자체가 감사가 필요한 상태라 그대로 둔다.
-    #
-    # **-z 가 필수다.** 기본 porcelain 은 특수문자 경로를 따옴표로 감싸고 이스케이프한다.
-    # 실측: `src/say"hi".go` → `"src/say\"hi\".go"`, 한글 경로 → `"src/\355\225\234…"`.
-    # 그대로 쓰면 **존재하지 않는 경로**가 플래그에 박히고 실제 파일은 무게이트다 —
-    # 한국어 파일명을 쓰는 저장소에서는 상시 조건이다(codex r2 지적, [cc] 실측).
-    # -z 는 인용 없이 NUL 로 끊어 준다. 레코드 = 상태 2글자 + 공백 + 경로.
-    while IFS= read -r -d '' st; do
-      case "$st" in
-        ' D '*|'D  '*|'AD '*|'MD '*) ;;
-        *) continue ;;
-      esac
-      f="${st:3}"
-      [ -n "$f" ] || continue
-      n=$((n + 1))
-      if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
-      judge_file "$root/$f"
-      [ -n "$JUDGE_MSG" ] && file_msg=1
-    done < <(git -C "$root" status --porcelain -z 2>/dev/null)
-  done <<EOF
-$base
-$SLOT_REPO_ROOTS
-EOF
-
-  # 창을 소비했으니 지운다. 이 줄이 없으면 위 주석의 벽돌 상태가 된다.
-  rm -f "$BASH_WINDOW" 2>/dev/null
+  # 창을 소비했으니 지운다. 이 줄이 없으면 위 주석의 벽돌 상태가 된다. 단 순회 입력을
+  # 다 읽지 못했으면(sweep_stream_lost) 남긴다 — 다음 Bash 가 같은 창으로 다시 훑는다.
+  [ "$SWEEP_KEEP_WINDOW" -eq 1 ] || rm -f "$BASH_WINDOW" 2>/dev/null
 
   # 조용히 끊으면 사용자는 게이트가 다 섰다고 믿는데 실제로는 아니다 — 이 훅이 위음성을
   # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **하나로** 정하고, 출력은 finish_hook 이

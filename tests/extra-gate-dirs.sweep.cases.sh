@@ -358,10 +358,14 @@ s_pair2() { # cwd=작업 공간 `_workspace_T` 에서 형제 저장소 `../T/` �
 }
 
 s_nonpair() { # 쌍이 아닌 형제 clone 을 상대경로로 고치면 못 잡는다(공시 고정 — cc2).
-  local name='s-nonpair cwd=T · ../B/x.go(쌍 아님) → 0 (공시 고정)' why='' b v
+               # 이름이 쌍 꼴이어도(S/_workspace_L 옆 S/L) L 의 git 최상위가 L 자신이
+               # 아니면 쌍이 아니다 — L 이 다른 저장소 B 의 하위 폴더를 가리키는 링크여도
+               # B 를 훑지 않는다(I4 — 다른 트랙의 쓰기를 잡지 않게).
+  local name='s-nonpair 쌍 아닌 형제(../B · 쌍 꼴 링크 L→B/sub) → 0' why='' b v d
   slot_fixture || { report "$name" ''; return; }
   b="$C3_S/B"
-  mkdir -p "$b" && printf 'k\n' > "$b/keep.txt" && commit_repo "$b" \
+  mkdir -p "$b/sub" "$C3_S/_workspace_L" && printf 'k\n' > "$b/sub/keep.txt" \
+    && commit_repo "$b" && ln -s "$b/sub" "$C3_S/L" \
     || { report "$name" ''; return; }
   find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
     || { FIXTURE_FAIL='창'; report "$name" ''; return; }
@@ -370,6 +374,17 @@ s_nonpair() { # 쌍이 아닌 형제 clone 을 상대경로로 고치면 못 잡
   new_file "$v" || { report "$name" ''; return; }
   run_mna "$C3_R" bash 'printf x > ../B/x.go'
   why="$(expect_flags "$C3_R" 0 "$v")"
+  if [[ -z "$why" ]]; then
+    make_window "$C3_R" || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+    MNA_CWD="$C3_S/_workspace_L"
+    d="$C3_S/_workspace_L/00_design.md"
+    v="$b/y.go"
+    new_file "$d" && new_file "$v" || { report "$name" ''; return; }
+    run_mna "$C3_R" bash 'cat > 00_design.md'
+    why="$(expect_flags "$C3_R" 3 "$d")"
+    [[ -z "$why" ]] && why="$(expect_flags "$C3_R" 0 "$v")"
+    [[ -n "$why" ]] && why="[쌍 꼴 링크 L → B/sub] $why"
+  fi
   report "$name" "$why"
 }
 

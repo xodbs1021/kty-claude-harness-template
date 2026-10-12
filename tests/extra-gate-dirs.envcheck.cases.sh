@@ -205,3 +205,22 @@ h05() { # 모듈 없음 + 새 키 값 → module 문구. 문구는 _common.sh �
   fi
   report "$name" "$why"
 }
+
+h06() { # H-B — 값의 실제 경로가 개행으로 끝나면(심링크 대상) 사유 newline 으로 알린다.
+        # 옛 판은 명령 치환이 개행을 지워 이름이 같은 다른 폴더를 조용히 승인했다.
+  local name='h06 실제 경로 끝 개행 → 사유(개행) 알림' why='' fix p
+  fix="$(new_dir h06)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
+  mkdir -p "$fix/nl"$'\n' "$fix/nl" && ln -s "$fix/nl"$'\n' "$fix/link" \
+    || { FIXTURE_FAIL='개행 이름 폴더·심링크'; report "$name" ''; return; }
+  new_env_project 1 "HARNESS_EXTRA_GATE_DIRS=\"$fix/link\""$'\n' \
+    || { report "$name" ''; return; }
+  p="$ENV_PROJ"
+  run_env_hook "$p"
+  why="$(env_hook_broken)"
+  if [[ -n "$why" ]]; then :
+  elif ! json_message_ok "$ENV_OUT_FILE"; then why="JSON 한 줄이 아니다: [$OUT]"
+  elif ! contains "$OUT" "$TOK_SLOT_WARN"; then why="슬롯 경고가 없다: [$OUT]"
+  elif ! contains "$OUT" '개행이 있다'; then why="개행 사유 문구가 없다: [$OUT]"
+  fi
+  report "$name" "$why"
+}

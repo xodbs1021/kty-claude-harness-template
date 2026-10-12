@@ -776,8 +776,9 @@ PY
 #######################################
 # 추가 관할 폴더 키의 판독 상태(ADR-0026). 판독기 stderr 는 막는다(훅이 대신 알린다).
 # 부재(rc=3)면 자리를 셸 내장 검사로 다시 본다 — 일반 파일이거나, 없고 가장 가까운
-# 조상이 탐색 가능한 폴더면 ABSENT(기존 바이트, I2). 디렉터리·끊긴 심링크·탐색 불가
-# 폴더·더 줄일 수 없는 상대경로는 읽을 수 없는 자리라 UNTRUSTED 다.
+# 조상이 탐색 가능한 폴더면 ABSENT(기존 바이트, I2). 디렉터리·끊긴 심링크(그 자리든
+# 조상이든 — `-e` 는 끊긴 링크를 "없음"으로 본다)·탐색 불가 폴더·더 줄일 수 없는
+# 상대경로는 읽을 수 없는 자리라 UNTRUSTED 다.
 # Globals:
 #   EXTRA_GATE_KEY, HARNESS_ENV_FILE (읽음) · EXTRA_GATE_RAW (씀 — VALUE 의 원문)
 # Arguments:
@@ -796,9 +797,10 @@ extra_gate_key_state() {
   EXTRA_GATE_RAW=''
   [[ "$rc" -eq 3 ]] || return 1
   [[ -f "$file" ]] && return 3
-  [[ -e "$file" || -L "$file" ]] && return 1
+  [[ -e "$file" ]] && return 1
   p="$file"
   while [[ ! -e "$p" ]]; do
+    [[ -L "$p" ]] && return 1
     q="${p%/*}"
     [[ "$q" != "$p" ]] || return 1
     p="${q:-/}"
@@ -812,7 +814,7 @@ EXTRA_GATE_RAW=""
 # 슬롯 사유 코드의 문구(경로·`"`·`\`·개행 없음 — JSON 에 그대로 싣는다). 모듈이
 # 없어도(사유 module) 나가야 해서 여기 둔다.
 # Arguments:
-#   $1 — untrusted|module|colon|tilde|relative|missing|root
+#   $1 — untrusted|module|colon|tilde|relative|missing|newline|root
 # Outputs:
 #   문구(개행 없음)
 # Returns:
@@ -827,6 +829,7 @@ extra_problem_text() {
     tilde) printf '%s' '~ 를 펼칠 수 없다(~사용자 형식이거나 홈 경로를 모른다)' ;;
     relative) printf '%s' '절대경로가 아니다 — / 또는 ~/ 로 시작해야 한다' ;;
     missing) printf '%s' '그 폴더가 없거나 들어갈 수 없다' ;;
+    newline) printf '%s' '그 폴더의 실제 경로에 개행이 있다 — 줄 단위 기록에 쓸 수 없다' ;;
     root) printf '%s' '/ 는 관할 폴더로 쓸 수 없다' ;;
     *) return 1 ;;
   esac

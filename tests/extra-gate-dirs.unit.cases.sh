@@ -319,3 +319,150 @@ z4c() { # Z4 — 끊긴 심링크는 "존재하지만 일반 파일이 아님" �
   fi
   report "$name" "$why"
 }
+
+# --- 수정 커밋(C1 r1 HIGH): 실패가 성공으로 새는 자리 ----------------------
+
+u03() { # H-A — 판정기 입력을 끝까지 읽지 못하면 "충족"(rc 0)이 아니라 평가 실패다.
+        # 주입: 서브셸에서 `ulimit -f 0`(SIGXFSZ 무시) — 히어독 임시 파일을 못 만든다.
+        # 판별력: bash 3.2 는 히어독을 늘 임시 파일로 만든다. bash 5.1 이상은 파이프
+        # 용량보다 작은 히어독을 파이프로 만들어 주입이 닿지 않으므로, 판정기 입력을
+        # 64KiB 넘게 키운다(값 16개 × 약 6000바이트 — 5.2 실측: 70000바이트부터 임시
+        # 파일). 고친 판은 임시 파일이 필요 없거나(rc 3) 실패를 알린다(rc 2) — 둘 다
+        # 맞다. stderr 는 단언하지 않는다(주입 아래 셸 경고가 날 수 있다).
+  local name='u03 판정 입력 순회 실패 → rc 0(충족) 금지 (bash 3.2·5.2 모두 판별)'
+  local why='' fix long i
+  fix="$(new_dir u03)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
+  mkdir -p "$fix/root/_workspace"
+  long="$(printf '%6000s' '' | tr ' ' a)"
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16; do
+    printf '%s\n' "/s/$long/$i.go" >> "$fix/flag"
+    printf '%s%s!\n' "/s/$long/$i.go" "$US" >> "$fix/rec"
+  done
+  touch -t 202001010000 "$fix/flag"
+  run_module '
+DUALREVIEW_FLAG="$FIX/flag"; REVIEW_DIRS_FILE="$FIX/rec"; EXTRA_GATE_DIR=/s
+out="$(read_review_verdict "$FIX/root")"; rc=$?
+echo "ctl=$rc $(printf "%s\n" "$out" | head -n 1)"
+out="$(trap "" XFSZ; ulimit -f 0; read_review_verdict "$FIX/root")"; rc=$?
+echo "inj=$rc $(printf "%s\n" "$out" | head -n 1)"' FIX="$fix"
+  if [[ "$RC" -eq 90 ]]; then why='모듈 적재 실패'
+  elif [[ "$RC" -ne 0 ]]; then why="셸 rc=$RC"
+  elif ! contains "$OUT" 'ctl=3 missing-record'; then
+    why="대조(주입 없음)가 미충족이 아니다: [$(flat "$OUT")]"
+  elif ! contains "$OUT" 'inj=2' && ! contains "$OUT" 'inj=3 missing-record'
+  then
+    why="주입 아래 평가 실패가 충족·다른 판정으로 샜다: [$(flat "$OUT")]"
+  fi
+  report "$name" "$why"
+}
+
+u04() { # H-B — 명령 치환이 후행 개행을 지워 다른 폴더가 승인되는 경로를 막는다.
+        # HOME 끝 개행 · 개행으로 끝나는 폴더를 가리키는 심링크(같은 이름의 개행 없는
+        # 폴더가 실재 — 옛 판은 그쪽을 승인했다) · 형제 규칙 입력의 개행.
+  local name='u04 경로 끝 개행 → 거부(HOME · 심링크 대상 · 형제 규칙)' why=''
+  local fix want
+  fix="$(new_dir u04)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
+  mkdir -p "$fix/home" "$fix/nl"$'\n' "$fix/nl" \
+    && ln -s "$fix/nl"$'\n' "$fix/link" \
+    || { FIXTURE_FAIL='개행 이름 폴더·심링크'; report "$name" ''; return; }
+  run_module '
+HOME="$H"
+validate_extra_gate_dir "~"; echo "home=$? $EXTRA_GATE_PROBLEM"
+expand_home_path "~" >/dev/null; echo "exp=$?"
+HOME="$FIX/home"
+validate_extra_gate_dir "~"; echo "ctl=$? [$EXTRA_GATE_DIR]"
+validate_extra_gate_dir "$FIX/link"
+echo "link=$? $EXTRA_GATE_PROBLEM [$EXTRA_GATE_DIR]"
+sibling_workspace_of "$FIX/T$LF" >/dev/null; echo "sw=$?"
+sibling_repo_of "$FIX/_workspace_T$LF" >/dev/null; echo "sr=$?"' \
+    FIX="$fix" H="$fix/home"$'\n' LF=$'\n'
+  if [[ "$RC" -eq 90 ]]; then why='모듈 적재 실패'
+  elif [[ "$RC" -ne 0 || -n "$ERR" ]]; then why="셸 rc=$RC stderr=[$ERR]"
+  fi
+  for want in 'home=1 tilde' 'exp=1' "ctl=0 [$fix/home]" 'link=1 newline []' \
+              'sw=1' 'sr=1'; do
+    [[ -n "$why" ]] && break
+    contains "$OUT" "$want" || why="기대 [$want] 없음: [$(flat "$OUT")]"
+  done
+  report "$name" "$why"
+}
+
+u05() { # 부류 닫기 — 홈 토큰 추출이 실패하면(도구 부재 주입) 빈 출력 + rc 0 으로
+        # 숨지 않고 rc 2 를 낸다. 대조: 정상이면 홈 토큰만 펼친다.
+  local name='u05 홈 토큰 추출 실패 → rc 2 (빈 성공으로 숨지 않음)' why='' want
+  run_module '
+HOME=/h
+toks="$(home_path_tokens "cat ~/a \$HOME/b ~bob/c \$PATH/d" | sort)"
+echo "tok=[$(printf "%s" "$toks" | tr "\n" " ") ]"
+home_path_tokens "cat ~/a" >/dev/null; echo "ok=$?"
+PATH=/nonexistent-extra-gate-dirs
+home_path_tokens "cat ~/a" >/dev/null; echo "fail=$?"'
+  if [[ "$RC" -eq 90 ]]; then why='모듈 적재 실패'
+  elif [[ "$RC" -ne 0 || -n "$ERR" ]]; then why="셸 rc=$RC stderr=[$ERR]"
+  fi
+  for want in 'tok=[/h/a /h/b ]' 'ok=0' 'fail=2'; do
+    [[ -n "$why" ]] && break
+    contains "$OUT" "$want" || why="기대 [$want] 없음: [$(flat "$OUT")]"
+  done
+  report "$name" "$why"
+}
+
+z4d() { # H-C — 조상이 끊긴 심링크면(그 자리든 여러 단계 위든) UNTRUSTED. 조상 걸음이
+        # `-e` 로만 멈추면 끊긴 링크를 "없음"으로 지나쳐 ABSENT 로 조용히 꺼진다.
+        # 대조: 실재 폴더를 가리키는 심링크 harness 는 정상(ABSENT).
+  local name='z4d 끊긴 심링크 조상(.claude/harness · .claude) → UNTRUSTED' why='' p
+  p="$(z4_project)" || { FIXTURE_FAIL='프로젝트'; report "$name" ''; return; }
+  rmdir "$p/.claude/harness" && mkdir "$p/real" \
+    && printf 'HARNESS_TYPECHECK_CMD=""\n' > "$p/real/harness.env" \
+    && ln -s "$p/real" "$p/.claude/harness" \
+    || { FIXTURE_FAIL='심링크 harness'; report "$name" ''; return; }
+  z4_state "$p"
+  why="$(z4_expect 3 '대조(실재 폴더 심링크)')"
+  if [[ -z "$why" ]]; then
+    rm -f "$p/.claude/harness" && ln -s "$p/gone" "$p/.claude/harness"
+    z4_state "$p"
+    why="$(z4_expect 1 '.claude/harness 가 끊긴 심링크')"
+  fi
+  if [[ -z "$why" ]]; then
+    p="$(new_dir z4d)" && ln -s "$p/gone" "$p/.claude" \
+      || { FIXTURE_FAIL='끊긴 .claude'; report "$name" ''; return; }
+    z4_state "$p"
+    why="$(z4_expect 1 '.claude 가 끊긴 심링크(두 단계 위)')"
+  fi
+  report "$name" "$why"
+}
+
+z4e() { # H-C·I2 — 조상이 여러 단계 없어도 가장 가까운 존재 조상이 탐색 가능하면
+        # ABSENT 다(harness 폴더 없는 프로젝트 · .claude 없는 프로젝트). 직계 부모만
+        # 보면 이 둘이 UNTRUSTED 로 바뀌어 키를 안 쓰는 설치본에 알림이 생긴다.
+  local name='z4e harness 폴더·.claude 없는 프로젝트 → ABSENT(출력 0)' why='' p
+  p="$(new_dir z4e)" && mkdir "$p/.claude" \
+    || { FIXTURE_FAIL='프로젝트'; report "$name" ''; return; }
+  z4_state "$p"
+  why="$(z4_expect 3 '.claude/harness 없음')"
+  if [[ -z "$why" ]]; then
+    p="$(new_dir z4e)" || { FIXTURE_FAIL='프로젝트'; report "$name" ''; return; }
+    z4_state "$p"
+    why="$(z4_expect 3 '.claude 없음')"
+  fi
+  report "$name" "$why"
+}
+
+z4f() { # L10 — 슬래시 없는 상대경로처럼 조상을 더 줄일 수 없으면 UNTRUSTED 로 끝난다
+        # (무한 반복 금지 — 시간 상한으로 잰다). 대조: 실재 상대 조상은 ABSENT.
+  local name='z4f 상대경로 조상 걸음 종료(L10) → UNTRUSTED, 상한 안' why='' fix
+  fix="$(new_dir z4f)" && mkdir "$fix/proj" \
+    || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
+  run_common_bounded 10 '
+cd "$FIX" || exit 91
+extra_gate_key_state nope.env; echo "a=$?"
+extra_gate_key_state nope/.claude/harness/harness.env; echo "b=$?"
+extra_gate_key_state proj/.claude/harness/harness.env; echo "c=$?"' FIX="$fix"
+  if [[ "$RC" -eq 124 ]]; then why='상한(10초) 안에 끝나지 않았다 — 조상 걸음 무한 반복'
+  elif [[ "$RC" -eq 90 ]]; then why='_common.sh 적재 실패'
+  elif [[ "$RC" -ne 0 || -n "$ERR" ]]; then why="셸 rc=$RC stderr=[$ERR]"
+  elif [[ "$(flat "$OUT")" != 'a=1 b=1 c=3' ]]; then
+    why="[$(flat "$OUT")] (기대 a=1 b=1 c=3)"
+  fi
+  report "$name" "$why"
+}

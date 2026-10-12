@@ -39,7 +39,7 @@
 #   평가 실패로 막힌다.
 
 EXTRA_GATE_DIR=''          # 켜졌을 때 슬롯의 물리 절대경로(validate_extra_gate_dir)
-EXTRA_GATE_PROBLEM=''      # 불량 사유 코드: colon|tilde|relative|missing|root
+EXTRA_GATE_PROBLEM=''      # 불량 사유: colon|tilde|relative|missing|newline|root
 REVIEW_RECORD_SEP=$'\037'  # 기록 형식의 필드 구분자(US)
 REVIEW_VERDICT_REASONS=''  # read_review_verdict 가 쌓는 사유 코드(공백 구분)
 REVIEW_VERDICT_LINES=''    # read_review_verdict 가 쌓는 W·M 줄(LF 구분)
@@ -98,8 +98,12 @@ END { if (mode == "dirs" && NR > 0 && !torn) emit_dirs(held) }
 #   EXTRA_GATE_DIR, EXTRA_GATE_PROBLEM (씀)
 # Arguments:
 #   $1 — harness.env 에서 판독된 원문 값
+# 경로는 센티널(`x`)을 붙여 받는다 — 명령 치환은 후행 개행을 전부 지워, 개행으로
+# 끝나는 폴더가 이름이 같은 다른 폴더로 바뀐다(check-harness-env 의 관용구와 같다).
+# 개행이 든 경로는 줄 단위 기록에 쓸 수 없어 거부한다.
 # Returns:
-#   0 정상 · 1 불량(EXTRA_GATE_PROBLEM = colon|tilde|relative|missing|root)
+#   0 정상 · 1 불량(EXTRA_GATE_PROBLEM =
+#   colon|tilde|relative|missing|newline|root)
 #######################################
 validate_extra_gate_dir() {
   local raw="${1:-}" path phys
@@ -108,16 +112,26 @@ validate_extra_gate_dir() {
   case "$raw" in
     *:*) EXTRA_GATE_PROBLEM='colon'; return 1 ;;
     '~'*)
-      path="$(expand_home_path "$raw")" \
-        || { EXTRA_GATE_PROBLEM='tilde'; return 1; } ;;
+      path="$(expand_home_path "$raw" && printf x)"
+      if [[ "$path" != *x ]]; then
+        EXTRA_GATE_PROBLEM='tilde'
+        return 1
+      fi
+      path="${path%x}"
+      path="${path%$'\n'}" ;;
     /*) path="$raw" ;;
     *) EXTRA_GATE_PROBLEM='relative'; return 1 ;;
   esac
-  phys="$(CDPATH='' cd -P -- "$path" 2>/dev/null && pwd -P)"
-  if [[ -z "$phys" ]]; then
+  phys="$(CDPATH='' cd -P -- "$path" 2>/dev/null && pwd -P && printf x)"
+  if [[ "$phys" != *x ]]; then
     EXTRA_GATE_PROBLEM='missing'
     return 1
   fi
+  phys="${phys%x}"
+  phys="${phys%$'\n'}"
+  case "$phys" in
+    *$'\n'*) EXTRA_GATE_PROBLEM='newline'; return 1 ;;
+  esac
   if [[ "$phys" == '/' ]]; then
     EXTRA_GATE_PROBLEM='root'
     return 1
@@ -134,9 +148,10 @@ validate_extra_gate_dir() {
 # Arguments:
 #   $1 — 토큰
 # Outputs:
-#   펼친 경로 한 줄
+#   펼친 경로 한 줄. 개행을 품지 않는다 — 품으면 받는 쪽의 명령 치환이 끝 개행을
+#   지워 다른 경로가 되므로 내지 않는다.
 # Returns:
-#   0 펼침 · 1 펼칠 수 없음(`~사용자`, 홈이 비었거나 절대경로가 아님) ·
+#   0 펼침 · 1 펼칠 수 없음(`~사용자`, 홈이 비었거나 절대경로가 아님, 결과에 개행) ·
 #   2 홈 기준 토큰이 아님
 #######################################
 expand_home_path() {
@@ -150,6 +165,9 @@ expand_home_path() {
   esac
   [[ "$home" == /* ]] || return 1
   out="${home%/}$rest"
+  case "$out" in
+    *$'\n'*) return 1 ;;
+  esac
   printf '%s\n' "${out:-/}"
 }
 
@@ -219,31 +237,34 @@ is_design_shaped() {
 
 #######################################
 # 형제 규칙 ① — 저장소 최상위 T 옆의 작업 공간 `<T 부모>/_workspace_<T 이름>`.
+# 개행이 든 입력은 거부한다(출력이 받는 쪽 명령 치환에서 다른 경로가 된다).
 # Arguments:
 #   $1 — 저장소 최상위(물리 절대경로, `/` 아님)
 # Outputs:
 #   작업 공간 경로 한 줄
 # Returns:
-#   0 · 1 절대경로가 아니거나 `/`
+#   0 · 1 절대경로가 아니거나 `/` 이거나 개행을 품음
 #######################################
 sibling_workspace_of() {
   local t="${1:-}"
-  [[ "$t" == /?* ]] || return 1
+  [[ "$t" == /?* && "$t" != *$'\n'* ]] || return 1
   printf '%s/_workspace_%s\n' "${t%/*}" "${t##*/}"
 }
 
 #######################################
 # 형제 규칙 ② — 작업 공간 W(`_workspace_<n>`) 옆의 저장소 `<W 부모>/<n>`.
+# 개행이 든 입력은 거부한다(형제 규칙 ①과 같은 이유).
 # Arguments:
 #   $1 — 작업 공간(물리 절대경로)
 # Outputs:
 #   저장소 경로 한 줄
 # Returns:
-#   0 · 1 절대경로가 아니거나 이름이 `_workspace_<비지 않은 n>` 이 아님
+#   0 · 1 절대경로가 아니거나 개행을 품거나 이름이 `_workspace_<비지 않은 n>` 이
+#   아님
 #######################################
 sibling_repo_of() {
   local w="${1:-}" name
-  [[ "$w" == /* ]] || return 1
+  [[ "$w" == /* && "$w" != *$'\n'* ]] || return 1
   name="${w##*/}"
   case "$name" in
     _workspace_?*) printf '%s/%s\n' "${w%/*}" "${name#_workspace_}" ;;
@@ -254,19 +275,35 @@ sibling_repo_of() {
 #######################################
 # 명령문의 홈 기준 토큰을 펼쳐 낸다(Bash 스윕의 탐색 힌트 — 명령 해석이 아니다).
 # 후보는 `~` 나 `$` 로 시작하는 낱말이고, 홈 기준인지는 expand_home_path 가 가른다.
+# 후보 추출기(awk)는 끝에 표지 줄 `.` 을 낸다(후보는 `~`·`$` 로 시작해 겹치지
+# 않는다). 표지가 없으면 추출이 실패한 것이다 — 빈 출력 + rc 0 으로 숨기지 않는다.
+# 순회는 매개변수 확장으로 한다(임시 파일·프로세스 치환 없음).
 # Arguments:
 #   $1 — 명령문
 # Outputs:
 #   펼친 절대경로, 한 줄에 하나
 # Returns:
-#   0
+#   0 · 2 후보 추출 실패(출력 없음)
 #######################################
 home_path_tokens() {
-  local tok
-  while IFS= read -r tok; do
+  local toks tok nl=$'\n'
+  toks="$(printf '%s\n' "${1:-}" | LC_ALL=C awk '
+    {
+      s = $0
+      while (match(s, "[~$][-A-Za-z0-9_./~@+{}]*")) {
+        t = substr(s, RSTART, RLENGTH)
+        if (!(t in seen)) { seen[t] = 1; print t }
+        s = substr(s, RSTART + RLENGTH)
+      }
+    }
+    END { print "." }' 2>/dev/null)"
+  [[ "$toks" == '.' || "$toks" == *"$nl." ]] || return 2
+  toks="${toks%.}"
+  while [[ -n "$toks" ]]; do
+    tok="${toks%%"$nl"*}"
+    toks="${toks#*"$nl"}"
     [[ -n "$tok" ]] && expand_home_path "$tok"
-  done < <(printf '%s' "${1:-}" \
-    | grep -oE '[~$][A-Za-z0-9_./~@+{}-]*' 2>/dev/null | sort -u)
+  done
   return 0
 }
 
@@ -450,26 +487,36 @@ read_review_verdict() {
 
 #######################################
 # 판독기 줄들로 항목별 충족을 가리고 결과를 낸다(read_review_verdict 의 뒷단).
+# 입력 끝에 표지 줄(`.` — 판독기 줄은 늘 US 를 품으므로 겹치지 않는다)을 붙이고,
+# 그 표지를 읽어야 끝까지 읽은 것으로 친다. 히어독은 임시 파일일 수 있다(bash 3.2
+# 는 늘, 5.1 이상은 큰 입력일 때). 그 파일을 못 만들면 루프가 한 번도 돌지 않는데,
+# 그대로 두면 "미충족 0개 = 전부 충족"으로 샌다.
 # Globals:
 #   REVIEW_RECORD_SEP (읽음) · REVIEW_VERDICT_REASONS, REVIEW_VERDICT_LINES (씀)
 # Arguments:
 #   $1 — 물리 세션 루트, $2 — 판독기 줄(LF 구분)
 # Outputs:
-#   read_review_verdict 와 같다
+#   read_review_verdict 와 같다(rc 2 이면 없음)
 # Returns:
-#   0 전부 충족 · 3 미충족
+#   0 전부 충족 · 3 미충족 · 2 입력을 끝까지 읽지 못함(평가 실패)
 #######################################
 judge_review_rows() {
-  local root="${1:-}" line unmet=0
+  local root="${1:-}" line unmet=0 complete=0
   REVIEW_VERDICT_REASONS=''
   REVIEW_VERDICT_LINES=''
   while IFS= read -r line; do
+    if [[ "$line" == '.' ]]; then
+      complete=1
+      continue
+    fi
     [[ -n "$line" ]] || continue
     review_item_met "${line%%"$REVIEW_RECORD_SEP"*}" \
       "${line#*"$REVIEW_RECORD_SEP"}" "$root" || unmet=1
   done <<EOF
 ${2:-}
+.
 EOF
+  ((complete)) || return 2
   printf '%s\n%s' "$REVIEW_VERDICT_REASONS" "$REVIEW_VERDICT_LINES"
   ((unmet)) && return 3
   return 0

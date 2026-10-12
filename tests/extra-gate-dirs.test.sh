@@ -142,6 +142,41 @@ run_common() {
   rm -f "$errf"
 }
 
+#######################################
+# _common.sh 를 source 한 셸을 시간 상한 안에서 돌린다 — 끝나지 않는 결함(무한
+# 루프)도 적색으로 남기기 위해서다. 상한을 넘기면 강제로 끝내고 RC=124.
+# Globals:
+#   COMMON, BASH, TMPROOT (읽음) · OUT, ERR, RC, DID_RUN (씀)
+# Arguments:
+#   $1 — 상한(초), $2 — 스니펫, $3... — 환경 할당(NAME=값)
+#######################################
+run_common_bounded() {
+  local secs="$1" snippet="$2" outf="$TMPROOT/bout.$$" errf="$TMPROOT/berr.$$"
+  local pid ticks=0
+  shift 2
+  OUT=''; ERR=''; RC=999; DID_RUN=1
+  env -i PATH="$PATH" ${@+"$@"} "$BASH" -c 'set -u; . "$0" || exit 90
+'"$snippet" "$COMMON" >"$outf" 2>"$errf" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if ((ticks >= secs * 10)); then
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      RC=124
+      break
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if [[ "$RC" -ne 124 ]]; then
+    wait "$pid"
+    RC=$?
+  fi
+  OUT="$(cat "$outf" 2>/dev/null)"
+  ERR="$(cat "$errf" 2>/dev/null)"
+  rm -f "$outf" "$errf"
+}
+
 # is_root — 권한 제거 픽스처가 성립하지 않는 실행자인가.
 is_root() { [[ "$(id -u)" == '0' ]]; }
 
@@ -169,10 +204,11 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=14
+EXPECTED_CASES=21
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
+u03 u04 u05 z4d z4e z4f h06
 '
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이

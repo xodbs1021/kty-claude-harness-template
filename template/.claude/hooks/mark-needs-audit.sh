@@ -69,6 +69,9 @@ MSG_NEWLINE="편집 경로에 개행이 있어 게이트 플래그를 기록하�
 MSG_GIT_UNAVAILABLE="git 이 저장소 정보를 돌려주지 못해(소유권 거부·권한·손상) 하네스 정본 여부를 판정하지 못했다. 앵커 밖 파일에는 게이트가 서지 않았으니 수동으로 확인하라."
 MSG_SWEEP_TRUNCATED="이 명령이 바꾼 파일이 너무 많아 일부만 게이트에 기록했다. 나머지에는 게이트가 서지 않았으니 수동으로 확인하라."
 MSG_SWEEP_PARTIAL="이 명령이 바꾼 파일 중 일부는 게이트에 기록하지 못했다(경로에 개행이 있거나 기록에 실패). 그 파일들은 수동으로 확인하라."
+# 추가 관할 폴더 슬롯(ADR-0026)을 쓸 수 없을 때의 알림 머리. 사유 문구는 _common.sh 의
+# extra_problem_text 가 뒤에 붙는다 — 모듈이 없어도 나가야 하기 때문이다.
+MSG_EXTRA_HEAD="추가 관할 폴더 슬롯(harness.env 의 HARNESS_EXTRA_GATE_DIRS)을 쓸 수 없다 — 고칠 때까지 세션 루트 밖 저장소 편집에 게이트가 서지 않고 리뷰 자리도 기록되지 않는다. 사유: "
 
 # --- 계약 함수 ------------------------------------------------------------
 
@@ -76,6 +79,82 @@ MSG_SWEEP_PARTIAL="이 명령이 바꾼 파일 중 일부는 게이트에 기록
 # JSON 을 만드는 **유일 지점**이다. 여기 말고 다른 곳에서 stdout 에 쓰면 안 된다.
 emit_message() {
   printf '{"systemMessage":"%s"}\n' "$1"
+}
+
+# --- 추가 관할 폴더 슬롯 알림 · 단일 출구 ----------------------------------
+#
+# stdout 은 호출마다 JSON 한 줄이 계약이다(PostToolUse). 판정·스윕·슬롯 알림이 각자
+# 내면 줄이 여럿이 되므로 모든 종료 경로가 finish_hook 하나를 지난다. 키가 없으면
+# (ABSENT) 알림이 없어 출력은 예전 바이트 그대로다(I2).
+EXTRA_ON=0       # 슬롯이 켜졌는가
+NOTICE_CODE=""   # 슬롯을 쓸 수 없는 사유 코드(빈 값이면 알릴 것 없음)
+SWEEP_MSG=""     # Bash 스윕의 최종 메시지(sweep_bash_writes 가 정한다)
+
+#######################################
+# 슬롯 키를 읽어 EXTRA_ON·NOTICE_CODE 를 정한다. 표식은 쓰지 않는다 — 출력이 성공한
+# 뒤에 finish_hook 이 쓴다. 부재이거나 정상이면 옛 표식을 지워, 다시 망가지면 다시
+# 알리게 한다. 부재일 때 하는 일은 판독 1회와 셸 내장 검사뿐이다(모듈 미적재).
+# Globals:
+#   EXTRA_NOTICE_FILE, EXTRA_GATE_RAW, EXTRA_GATE_PROBLEM (읽음) ·
+#   EXTRA_ON, NOTICE_CODE (씀)
+# Arguments:
+#   없음
+# Returns:
+#   0
+#######################################
+extra_gate_setup() {
+  local state module
+  EXTRA_ON=0
+  NOTICE_CODE=""
+  extra_gate_key_state
+  state=$?
+  if [[ "$state" -eq 3 ]]; then
+    [[ -e "$EXTRA_NOTICE_FILE" ]] && rm -f "$EXTRA_NOTICE_FILE" 2>/dev/null
+    return 0
+  fi
+  if [[ "$state" -ne 0 ]]; then
+    NOTICE_CODE="untrusted"
+    return 0
+  fi
+  module="$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"
+  if ! { . "$module"; } 2>/dev/null; then
+    NOTICE_CODE="module"
+  elif ! validate_extra_gate_dir "$EXTRA_GATE_RAW" 2>/dev/null; then
+    NOTICE_CODE="${EXTRA_GATE_PROBLEM:-module}"
+  else
+    EXTRA_ON=1
+    [[ -e "$EXTRA_NOTICE_FILE" ]] && rm -f "$EXTRA_NOTICE_FILE" 2>/dev/null
+  fi
+  return 0
+}
+
+#######################################
+# 이 훅의 유일한 출구. 분기의 최종 메시지 하나 앞에 슬롯 알림(그 사유를 이 세션에 아직
+# 알리지 않았으면)을 붙여 JSON 한 줄로 내고, 출력이 성공했을 때만 표식에 사유를
+# 적는다 — stdout 이 닫혀 못 낸 알림은 다음 호출이 다시 낸다.
+# Globals:
+#   NOTICE_CODE, EXTRA_NOTICE_FILE, MSG_EXTRA_HEAD (읽음)
+# Arguments:
+#   $1 — 분기의 최종 메시지(Edit = 판정 알림, Bash = 스윕 집계, 빈 명령 = 빈 값)
+# Outputs:
+#   알릴 것이 있으면 {"systemMessage":"…"} 한 줄
+# Returns:
+#   돌아오지 않는다(exit 0 — PostToolUse 는 차단하지 않는다)
+#######################################
+finish_hook() {
+  local msg="${1:-}" notice="" seen=""
+  if [[ -n "$NOTICE_CODE" ]]; then
+    { IFS= read -r seen < "$EXTRA_NOTICE_FILE"; } 2>/dev/null
+    [[ "$seen" == "$NOTICE_CODE" ]] \
+      || notice="$MSG_EXTRA_HEAD$(extra_problem_text "$NOTICE_CODE")."
+  fi
+  [[ -n "$notice" ]] && msg="$notice${msg:+ $msg}"
+  [[ -n "$msg" ]] || exit 0
+  emit_message "$msg" 2>/dev/null || exit 0
+  if [[ -n "$notice" ]]; then
+    { printf '%s\n' "$NOTICE_CODE" > "$EXTRA_NOTICE_FILE"; } 2>/dev/null
+  fi
+  exit 0
 }
 
 # physical_dir <디렉토리> — 심링크·`..`·`.` 를 푼 물리 절대경로를 stdout 에.
@@ -388,12 +467,16 @@ EOF
   rm -f "$BASH_WINDOW" 2>/dev/null
 
   # 조용히 끊으면 사용자는 게이트가 다 섰다고 믿는데 실제로는 아니다 — 이 훅이 위음성을
-  # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **한 줄만** 낸다(PostToolUse 계약).
+  # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **하나로** 정하고, 출력은 finish_hook 이
+  # 한 번만 한다(PostToolUse 계약 — JSON 한 줄).
   if [ "$truncated" -eq 1 ]; then
-    emit_message "$MSG_SWEEP_TRUNCATED"
+    SWEEP_MSG="$MSG_SWEEP_TRUNCATED"
   elif [ "$file_msg" -eq 1 ]; then
-    emit_message "$MSG_SWEEP_PARTIAL"
+    SWEEP_MSG="$MSG_SWEEP_PARTIAL"
   fi
+  # 파일 하나의 판정 알림은 위 집계로 접혔다. 남겨 두면 마지막 파일의 알림이 출구에서
+  # 집계와 섞여 키가 없을 때의 바이트가 달라진다.
+  JUDGE_MSG=""
   return 0
 }
 
@@ -571,15 +654,17 @@ file_path="${raw%$'\n'}"
 # proj 는 두 갈래가 다 쓴다(스윕의 기본 뿌리 · judge_file 의 상대경로 해석). 분기 전에 구한다.
 proj="$(physical_dir "$PROJECT_DIR")"
 
+# 추가 관할 폴더 슬롯. 분기 전에 정한다 — 어느 출구로 나가든 그 알림을 실어야 한다.
+extra_gate_setup
+
 # file_path 가 없으면 Bash 다. 명령이 무엇을 썼는지는 **결과로** 알아낸다(위 스윕 주석).
 if [ -z "$file_path" ]; then
   cmd_raw="$(printf '%s' "$payload" | json_get tool_input.command; printf 'X')"
   cmd_raw="${cmd_raw%X}"
-  [ -n "${cmd_raw%$'\n'}" ] || exit 0
+  [ -n "${cmd_raw%$'\n'}" ] || finish_hook ""
   sweep_bash_writes "${cmd_raw%$'\n'}"
-  exit 0
+  finish_hook "$SWEEP_MSG"
 fi
 
 judge_file "$file_path"
-[ -n "$JUDGE_MSG" ] && emit_message "$JUDGE_MSG"
-exit 0
+finish_hook "$JUDGE_MSG"

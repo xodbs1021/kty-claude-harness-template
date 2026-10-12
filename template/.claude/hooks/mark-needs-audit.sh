@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
 # PostToolUse(Edit|Write|MultiEdit): 편집된 파일이 완료 게이트 대상이면 플래그를 세운다.
+# PostToolUse(Bash) · PostToolUseFailure(Bash): Bash 가 바꾼 파일을 같은 판정으로 스윕한다.
+#
+# 왜 PostToolUseFailure(Bash) 에도 거는가 (2026-10-08 실측): Claude Code 가 도구 실패로
+# 처리한 Bash(예: `false`)에는 PostToolUse 가 아니라 PostToolUseFailure 가 발화한다(종료
+# 코드가 0 이 아니면 전부 그렇다고 단정하지 않는다 — 결과 분류는 Claude Code 몫이다).
+# PostToolUse 에만 걸려 있을 때는 mark-bash-window 가 찍은 창이 그런 호출마다 소비되지
+# 않고 남았다(`false` 한 번에 1개, 실세션 약 110개). 남은 옛 창이 "가장 오래된 창"이 되어
+# 리뷰·설명이 끝난 파일이 Bash 마다 다시 플래그에 오르고, record_flag 의 touch 로 플래그
+# mtime 이 계속 새로워져 리뷰 산출물에 의한 자동 해제가 영영 안 됐다. 실패 페이로드에는
+# tool_response 가 없고 error 가 있지만 이 훅은 둘 다 읽지 않으므로 이벤트 이름으로
+# 분기하지 않는다(같은 판정).
+# 남는 한계: 권한 거부·PreToolUse 차단으로 시작조차 안 한 호출과 실행 중 사용자 취소
+# (취소는 PostToolUseFailure 를 발화하지 않는다 — r2 리뷰 인용, 미대조)는 어느 Post
+# 이벤트도 발화하지 않아 창이 남는다. 스윕이 짝을 찾지 않고 가장 오래된 창을 쓰므로, 정상
+# Pre/Post 한 쌍은 창 하나를 만들고 옛 창 하나를 소비할 뿐 **잔류 창 수는 줄지 않는다**.
+# 그래서 잔류 창이 있는 동안 **모든 Bash 가 앞선 호출의 창 기준으로 스윕해** 리뷰가 끝난
+# 직전 변경을 다시 플래그한다(지연 오탐이 계속된다 — 몇 번 뒤 끝나지 않는다). 잔류 창을
+# 줄이는 것은 60분 만료 정리뿐이고, 그것도 타이머가 아니라 다음 PreToolUse(Bash) 때 도는
+# find 다. 호출이 잦으면 남는 창이 계속 새것으로 바뀌어 만료에 안 걸릴 수 있다. 상세·후속
+# (설계부터 별도)은 ADR-0024 후속 이력.
 #
 # 이 플래그는 completion-auditor 가 검증을 통과시킨 뒤에만 지워진다.
 # Stop 훅이 플래그를 보고 턴 종료를 막는다 → 감사자 호출이 강제된다.
@@ -22,8 +42,9 @@
 # 게이트 대상 여부와 상관이 없다 — 하네스 동작을 정의하는 파일인지가 상관있다.
 # 홈 디렉터리 예외는 삭제됐다. 되살리지 마라 (회귀 테스트가 정적으로 막는다).
 #
-# 기록값: 프로젝트 안은 상대경로, 밖은 **절대경로**. 밖 편집을 상대경로로 적으면
-#         프로젝트 쪽 동명 파일과 구분되지 않는다.
+# 기록값: 프로젝트(= 세션 루트, _common.sh) 안은 상대경로, 밖은 **절대경로**. 밖 편집을
+#         상대경로로 적으면 프로젝트 쪽 동명 파일과 구분되지 않는다. 같은 저장소의 다른
+#         체크아웃(메인·형제 워크트리)은 그 체크아웃 기준으로 분류하고 절대경로로 적는다.
 #
 # PostToolUse 는 절대 차단하지 않는다(도구는 이미 실행됨). 항상 exit 0.
 # 차단할 수 없으므로, 기록에 **실패**했거나 경로 때문에 기록을 **포기**했을 때는
@@ -226,12 +247,15 @@ record_flag() {
 # 스크립트 호출마다 새는 구멍을 만든다. 대신 **결과를 본다**: PreToolUse 가 찍어 둔 시각
 # 표식보다 새로 바뀐 파일을 찾는다. 명령이 어떻게 썼든 파일 mtime 은 거짓말하지 않는다.
 #
-# **판정은 재호출로 위임한다.** 찾은 파일마다 이 스크립트를 file_path 페이로드로 다시
-# 부른다. classify 의 사본을 만들지 않으려는 것이다 — 사본을 두는 순간 두 판정이
-# 어긋나는 날이 온다(이 저장소가 반복해서 배운 것).
+# **판정은 Edit 경로와 같은 함수(judge_file)에 맡긴다.** classify 의 사본을 만들지 않으려는
+# 것이다 — 사본을 두는 순간 두 판정이 어긋나는 날이 온다(이 저장소가 반복해서 배운 것).
+# 예전엔 파일마다 이 스크립트를 재호출했는데, 150파일에 훅 상한(15s)을 넘었고([cc] r1 #5),
+# 그것을 줄이려고 둔 환경 변수 진입 모드는 상속 환경 하나로 기록을 통째로 건너뛰는 무음
+# 스위치가 됐다([cc·cx] r2). 같은 프로세스 안에서 함수를 부르면 둘 다 없다 — 이 훅의 진입은
+# 언제나 실제 JSON 입력 하나다.
 WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"   # 입력을 읽은 뒤 세션 폴더로 다시 잡는다
 BASH_WINDOW=""         # 이번 스윕이 쓸 창. sweep_bash_writes 가 고른다.
-SWEEP_MAX=200          # 병적인 명령(대량 생성)에서 재호출이 폭주하지 않게
+SWEEP_MAX=200          # 병적인 명령(대량 생성)에서 판정이 폭주하지 않게
 SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
 
 # find 의 prune 목록. **성능을 위한 것만 남긴다.**
@@ -251,31 +275,35 @@ sweep_find() {
   find "$1" \( $SWEEP_PRUNE \) -prune -o -type f -newer "$BASH_WINDOW" -print0 2>/dev/null
 }
 
-# payload_for_path <절대경로> — 재호출용 JSON 한 줄.
-#
-# **문자열로 조립하지 않는다.** printf '…"%s"…' 로 끼우면 파일명의 `"` 나 `\` 가 JSON 을
-# 깨고, json_get 은 파싱 실패를 빈 출력으로 삼키므로 재호출된 훅이 그 파일을 **조용히
-# 통과시킨다.** 실측: `say"hi".go`·`back\slash.go` 가 플래그에 안 잡혔다([cc] r1 CRITICAL).
-# json.dumps 가 이스케이프의 유일 정본이다 — 우리가 규칙을 다시 쓰지 않는다.
-payload_for_path() {
-  # 세션 번호를 넘기지 않으면 재호출된 훅이 공유 경로에 적는다 — 격리가 스윕에서만 샌다.
-  python3 -c '
-import json, sys
-d = {"tool_input": {"file_path": sys.argv[1]}}
-if sys.argv[2]:
-    d["session_id"] = sys.argv[2]
-print(json.dumps(d))' "$1" "$HARNESS_SESSION_ID" 2>/dev/null
+# existing_ancestor <절대경로> — 그 경로가 있으면 그대로, 없으면 남아 있는 가장 가까운 조상을
+# EXISTING 에 담는다(서브셸 없이). 다 없으면 빈 값. 지워진 경로(`rm`·`rm -rf <폴더>`)로 git 을
+# 부르면 조회가 실패해 그 체크아웃의 의무가 무기록이 된다([cx] r1 · 확인 패스 1).
+existing_ancestor() {
+  EXISTING="$1"
+  while [ -n "$EXISTING" ] && [ ! -e "$EXISTING" ]; do EXISTING="${EXISTING%/*}"; done
 }
+EXISTING=""
 
 # sweep_roots <명령문자열> — 스캔할 저장소 뿌리를 한 줄에 하나씩.
 # 프로젝트는 언제나 포함한다. 하네스 정본은 **다른 클론**에서 고쳐지는 일이 잦으므로
 # (이 파일 머리 주석의 2026-08-04 실사고), 명령문에 등장한 절대경로의 git 루트도 훑는다.
 # 이건 명령 해석이 아니라 **탐색 범위 힌트**다 — 틀려도 프로젝트 스캔은 그대로 돈다.
+# 훅 입력의 cwd 가 **같은 저장소의 다른 체크아웃**이면 그것도 훑는다. 세션 루트는 고정이라
+# (_common.sh) 명령이 상대 cd 로 다른 체크아웃에 가서 쓴 파일은 루트 스캔에 안 걸리고, 그
+# 경로가 명령문에 절대경로로 나오지도 않는다.
 sweep_roots() {
   local cmd="$1" tok root n=0
   printf '%s\n' "$proj"
+  if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ] && checkout_root_of "$HARNESS_CWD"; then
+    [ "$CHECKOUT_ROOT" = "$proj" ] || printf '%s\n' "$CHECKOUT_ROOT"
+  fi
   for tok in $(printf '%s' "$cmd" | grep -o '/[A-Za-z0-9_./~@+-]\{2,\}' 2>/dev/null | sort -u); do
-    [ -e "$tok" ] || continue
+    # 지워진 경로(`rm <파일>`)는 남은 가장 가까운 조상으로, 디렉토리 토큰(`git -C <경로>`)은
+    # 부모가 아니라 자신으로 조회한다 — git_toplevel 은 파일 경로의 dirname 을 묻는다([cx] r1).
+    existing_ancestor "$tok"
+    tok="$EXISTING"
+    [ -n "$tok" ] || continue
+    [ -d "$tok" ] && tok="$tok/."
     root="$(git_toplevel "$tok")" || continue
     [ -n "$root" ] || continue
     [ "$root" = "$proj" ] && continue
@@ -285,9 +313,9 @@ sweep_roots() {
   done
 }
 
-# sweep_bash_writes <명령문자열> — 표식 이후 바뀐 파일을 찾아 자기 자신에게 넘긴다.
+# sweep_bash_writes <명령문자열> — 표식 이후 바뀐 파일을 찾아 judge_file 로 판정한다.
 sweep_bash_writes() {
-  local cmd="$1" self root f n=0 seen="" truncated=0 child_msg=0 child_out st
+  local cmd="$1" root f n=0 seen="" truncated=0 file_msg=0 st
 
   # **가장 오래된 창을 소비한다.** 병렬 Bash 에서 창이 여럿일 수 있는데, 짝을 정확히
   # 맞출 방법이 없으므로 **가장 넓은 창**을 쓴다 — 남의 호출이 쓴 파일까지 잡는 과탐은
@@ -304,7 +332,6 @@ sweep_bash_writes() {
   [ -n "$BASH_WINDOW" ] || return 0     # 창이 없으면(PreToolUse 미등록) 스윕하지 않는다
   BASH_WINDOW="$WINDOW_DIR/$BASH_WINDOW"
   [ -f "$BASH_WINDOW" ] || return 0
-  self="${BASH_SOURCE[0]}"
 
   while IFS= read -r root; do
     [ -n "$root" ] || continue
@@ -322,12 +349,12 @@ sweep_bash_writes() {
       git -C "$root" check-ignore -q -- "$f" 2>/dev/null && continue
       n=$((n + 1))
       if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
-      # 자식이 낸 systemMessage 를 **버리지 않는다.** 개행이 든 경로처럼 자식이 "기록을
-      # 포기했다"고 알리는 경우가 있는데, >/dev/null 로 삼키면 이 훅의 fail-loud 계약이
-      # 스윕 경로에서만 사라진다. 자식 JSON 을 그대로 흘리면 stdout 에 여러 줄이 나가므로
-      # (PostToolUse 는 한 줄 계약) **있었다는 사실만** 모아 아래에서 한 번 알린다.
-      child_out="$(payload_for_path "$f" | bash "$self" 2>/dev/null)"
-      [ -n "$child_out" ] && child_msg=1
+      # 판정이 낸 알림을 **버리지 않는다.** 개행이 든 경로처럼 "기록을 포기했다"는 알림이
+      # 있는데, 삼키면 이 훅의 fail-loud 계약이 스윕 경로에서만 사라진다. 파일마다 내면
+      # stdout 에 여러 줄이 나가므로(PostToolUse 는 한 줄 계약) **있었다는 사실만** 모아
+      # 아래에서 한 번 알린다.
+      judge_file "$f"
+      [ -n "$JUDGE_MSG" ] && file_msg=1
     done < <(sweep_find "$root")
 
     # **삭제는 find 로 못 본다** — `-type f` 는 없는 파일을 찾을 수 없다(codex r1 CRITICAL).
@@ -350,8 +377,8 @@ sweep_bash_writes() {
       [ -n "$f" ] || continue
       n=$((n + 1))
       if [ "$n" -gt "$SWEEP_MAX" ]; then truncated=1; break 2; fi
-      child_out="$(payload_for_path "$root/$f" | bash "$self" 2>/dev/null)"
-      [ -n "$child_out" ] && child_msg=1
+      judge_file "$root/$f"
+      [ -n "$JUDGE_MSG" ] && file_msg=1
     done < <(git -C "$root" status --porcelain -z 2>/dev/null)
   done <<EOF
 $(sweep_roots "$cmd")
@@ -364,7 +391,7 @@ EOF
   # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **한 줄만** 낸다(PostToolUse 계약).
   if [ "$truncated" -eq 1 ]; then
     emit_message "$MSG_SWEEP_TRUNCATED"
-  elif [ "$child_msg" -eq 1 ]; then
+  elif [ "$file_msg" -eq 1 ]; then
     emit_message "$MSG_SWEEP_PARTIAL"
   fi
   return 0
@@ -372,8 +399,166 @@ EOF
 
 # --- 판정 -----------------------------------------------------------------
 
+JUDGE_MSG=""   # judge_file 이 알릴 메시지(없으면 빈 값). 출력은 호출자가 한 번만 낸다.
+VALUE=""       # verdict_of 의 결과 — 기록값
+VERDICT=""     # verdict_of 의 결과 — gate · knowledge · skip
+
+# other_checkout <물리 절대경로> — 그 파일이 세션 루트($proj)가 아닌 **같은 저장소의 다른
+# 체크아웃**(메인·형제 워크트리) 안이면 CHECKOUT_ROOT 에 그 최상위를 담고 rc=0.
+#
+# 왜: 세션 루트는 하나로 고정된다(_common.sh). W 세션이 메인 파일을 고치면 그 파일은 루트 밖이라
+# "밖 + 정본 아님"으로 조용히 빠졌고([cc] r1 #2), M 세션이 <메인>/.claude/worktrees/ 아래 워크트리
+# 파일을 고치면 `.claude/*` 로 분류돼 빠졌다. 두 경우 모두 그 체크아웃 기준으로 분류하고 **이
+# 세션의 의무**로 적는다(kty 결정 2026-10-02 — 무기록 금지).
+# 루트 안 파일은 git 을 부르기 전에 조상의 `.git` 을 먼저 본다 — 스윕은 파일이 수백 개일 수 있다.
+other_checkout() {
+  local d
+  case "$1" in
+    "$proj"/*)
+      d="${1%/*}"
+      while [ "$d" != "$proj" ] && [ ! -e "$d/.git" ]; do d="${d%/*}"; done
+      [ "$d" != "$proj" ] || return 1
+      checkout_root_of "$d" && [ "$CHECKOUT_ROOT" = "$d" ] ;;
+    *)
+      existing_ancestor "${1%/*}"
+      [ -n "$EXISTING" ] && checkout_root_of "$EXISTING" && [ "$CHECKOUT_ROOT" != "$proj" ] ;;
+  esac
+}
+
+# verdict_of <물리 절대경로> — 기록값(VALUE)과 판정(VERDICT)을 정한다.
+# 기록값: 세션 루트 안은 상대경로, 밖(다른 체크아웃 포함)은 **절대경로**.
+verdict_of() {
+  local abs="$1" rel root
+  VALUE="$abs"
+  if other_checkout "$abs"; then
+    VERDICT="$(classify "${abs#"$CHECKOUT_ROOT"/}" "$CHECKOUT_ROOT")"
+  elif rel="$(project_rel "$abs")"; then
+    VALUE="$rel"
+    VERDICT="$(classify "$rel" "$proj")"
+  else
+    root="$(git_toplevel "$abs")" || root=''
+    if [ -n "$root" ] && is_harness_canonical "$root"; then
+      case "$abs" in
+        "$root"/*) rel="${abs#"$root"/}" ;;
+        *) rel="$abs" ;;
+      esac
+      VERDICT="$(classify "$rel" "$root")"
+    elif harness_anchor "$abs"; then
+      # 앵커 판정에 git 을 요구하지 않는다 — 홈에 설치된 .claude/agents/*.md 는
+      # 그 디렉토리가 git 저장소가 아니어도 하네스 동작을 정의한다.
+      VERDICT='gate'
+    else
+      VERDICT='skip'
+      # git 이 빈 값을 돌려줬는데 조상에 .git 이 있으면, 저장소가 아닌 게 아니라 git 이
+      # 거부한 것이다(safe.directory 소유권 거부·권한·손상). 그대로 두면 정본 저장소
+      # 전체가 앵커 밖 파일에 대해 무게이트 + 무신호로 조용히 감시 축소된다.
+      # 판정은 바꾸지 않는다(추측으로 게이트를 세우면 남의 저장소를 오탐한다) — 알리기만
+      # 한다. physical_path 가 fail-loud 인데 여기만 fail-silent 이던 비대칭을 없앤다.
+      [ -z "$root" ] && has_git_ancestor "$abs" && JUDGE_MSG="$MSG_GIT_UNAVAILABLE"
+    fi
+  fi
+  return 0
+}
+
+# judge_file <편집 경로> — 그 파일 하나를 판정해 플래그를 세운다. Edit 경로와 Bash 스윕이
+# **같은 함수**를 부른다. 알릴 것이 있으면 JUDGE_MSG 에 담는다(출력하지 않는다).
+judge_file() {
+  local file_path="$1" abs lower_abs dual_value dw flag write_failed
+  JUDGE_MSG=""
+  # 개행 가드는 **정규화보다 먼저**여야 한다. 디렉토리 컴포넌트가 개행으로 끝나면
+  # (…/sr<LF>/app.ts) physical_path 의 pwd -P 출력을 받는 명령 치환이 그 개행을 먹어
+  # 경로가 …/sr/app.ts 로 조용히 바뀐다 — 없는 파일이 게이트에 박히고 정작 편집한
+  # 파일은 무게이트가 된다. 플래그 파일은 줄 단위라 개행이 든 경로는 애초에 못 적는다.
+  case "$file_path" in
+    *$'\n'*) JUDGE_MSG="$MSG_NEWLINE"; return 0 ;;
+  esac
+
+  # 양쪽을 물리 경로로 맞춘 뒤에 비교한다. git 은 실제 경로를 돌려주는데 편집 경로는
+  # 심링크를 지나올 수 있고(macOS /var → /private/var), .. 로 되돌아올 수도 있다.
+  # 정규화 없이 자르면 접두사가 안 맞아 프로젝트 안 편집이 통째로 "밖"으로 샌다.
+  # PROJECT_DIR 은 디렉토리라 통째로 물리화한다(심링크 PROJECT_DIR — 케이스 11·12).
+  # 편집 경로는 파일이라 마지막 성분 이름을 보존하는 physical_path 를 쓴다 — 두 계약이
+  # 다르므로 함수도 둘이다. (proj 는 Bash 스윕도 쓰므로 진입부에서 **먼저** 구해 뒀다.)
+  # 상대 편집 경로는 **입력 cwd** 기준이다 — 세션 루트는 고정이라 cwd=M 에서 `src/a.ts` 를
+  # 고친 W 세션이 W 의 파일로 오인하면 안 된다([cx] r1). cwd 가 없으면 지금처럼 루트 기준.
+  # 스윕은 언제나 절대경로를 넘기므로 이 분기를 타지 않는다.
+  case "$file_path" in
+    /*) ;;
+    *)
+      case "$HARNESS_CWD" in
+        /*) file_path="$HARNESS_CWD/$file_path" ;;
+        *) file_path="$proj/$file_path" ;;
+      esac ;;
+  esac
+  abs="$(physical_path "$file_path")"
+
+  # 설계·계획 산출물은 위치·git 여부와 무관하게 듀얼리뷰 게이트만 세운다.
+  # **정규화 뒤**에 판정해야 한다: 상대경로 입력에는 선행 슬래시가 없어 아래 글롭에
+  # 걸리지 않고, .. 가 섞인 경로는 기록값이 .claude/../_workspace/… 로 남는다.
+  # 매칭만 소문자화하고 기록은 원본 대소문자로 한다.
+  lower_abs="$(printf '%s' "$abs" | tr '[:upper:]' '[:lower:]')"
+  # 설계·계획 산출물은 듀얼리뷰 **와 지식·머리 표명 게이트**를 세운다. 코드가 아니므로
+  # 타입체크·변경설명·감사는 과하지만, 설계가 나온 턴을 지식 저장소 반영 없이 끝내면
+  # "왜 그렇게 정했나"가 그 자리에서 사라진다 — 결정을 만든 근거가 정확히 이 파일들이다.
+  # 회수 플래그(ADR-0013·0015)는 머리 두 줄(`사전 결정 회수:`·`레퍼런스 조사:`) 표명을
+  # Stop 이 검사하고 지키면 스스로 지운다. 이름에 codex 가 든다고 빼는 식의 **이름 제외는 두지 않는다** —
+  # 관측되지 않은 재귀를 막으려고 실재하는 위음성(codex 를 다루는 정상 설계서의 무게이트)을
+  # 만들게 된다. 리뷰 산출물과의 재귀는 명명 계약(리뷰 산출물은 NN_design·NN_plan 앵커
+  # 금지 — 오케스트레이터 스킬)이 막는다.
+  # [0-9][0-9]_ 앵커(2026-08-17 감사): 조사 산출물이 00_·01_ 번호를 선점하면 계획서가 02_plan_… 이
+  # 되어 01_plan* 만 보던 글롭을 조용히 우회한다(POK-79 실측 — 게이트 미발동). 숫자 두 자리
+  # 바로 뒤에 _design/_plan 을 요구하므로 NN_codex_plan_review 류 리뷰 파일(출처 토큰이 번호
+  # 뒤에 옴)은 걸리지 않는다. 0?_ 로 쓰면 안 된다 — 글롭 ? 는 숫자가 아니라 **아무 문자
+  # 한 개**라 0a_plan 이 오탐되고 10_plan 이 위음성으로 샌다([cx] 2026-08-17, 케이스 78·79).
+  case "$lower_abs" in
+    */_workspace/[0-9][0-9]_design*.md|*/_workspace/[0-9][0-9]_plan*.md)
+      # 기록값 규칙은 verdict_of 와 같다 — 다른 체크아웃(세션 루트 아래 중첩 워크트리 포함)은 절대경로.
+      dual_value="$abs"
+      other_checkout "$abs" || dual_value="$(project_rel "$abs")" || dual_value="$abs"
+      dw=0
+      record_flag "$DUALREVIEW_FLAG" "$dual_value" || dw=1
+      record_flag "$KNOWLEDGE_FLAG"  "$dual_value" || dw=1
+      record_flag "$RETRIEVAL_FLAG"  "$dual_value" || dw=1
+      [ "$dw" -eq 1 ] && JUDGE_MSG="$MSG_WRITE_FAIL"
+      return 0 ;;
+  esac
+
+  verdict_of "$abs"
+
+  # 결정 문서는 지식 게이트 하나만. 코드가 아니므로 타입체크·변경설명·감사는 과하다.
+  if [ "$VERDICT" = 'knowledge' ]; then
+    record_flag "$KNOWLEDGE_FLAG" "$VALUE" || JUDGE_MSG="$MSG_WRITE_FAIL"
+    return 0
+  fi
+
+  [ "$VERDICT" = 'gate' ] || return 0
+
+  # 완료 게이트 4종을 동시에 세운다:
+  #   .needs-audit      → completion-auditor 강제 (Phase 6)
+  #   .needs-explain    → change-explainer 강제 (Phase 5)
+  #   .needs-knowledge  → 지식 저장소 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
+  #                       산문 규칙이 기억에만 의존해 세션 내내 0회 이행된 실사고의 재발 방지)
+  #   .needs-dualreview → codex 듀얼 리뷰 강제 (2026-08-03 kty)
+  # 각 게이트는 해당 작업이 실제로 끝난 뒤에만 수동으로 지워진다. Stop 훅이 넷 다 본다.
+  #
+  # 지식 게이트가 꺼져 있어도 여기서는 **기록한다.** 켜짐/꺼짐 판정은 harness.env 를 한 번
+  # 더 읽는 일인데 이 훅은 편집마다 돌고 Stop 훅은 턴에 한 번 돈다 — 판정은 Stop 쪽
+  # 한 곳(knowledge_gate_active)으로 모았다. 꺼져 있으면 이 파일은 아무 효력이 없다.
+  write_failed=0
+  for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG"; do
+    record_flag "$flag" "$VALUE" || write_failed=1
+  done
+  # 넷이 다 실패해도 메시지는 한 줄만 낸다.
+  [ "$write_failed" -eq 1 ] && JUDGE_MSG="$MSG_WRITE_FAIL"
+  return 0
+}
+
+# --- 진입 -----------------------------------------------------------------
+
 payload="$(cat)"
 bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
+# 세션 루트(_common.sh). 그 세션의 첫 호출이면 여기서 고정되고, 이후로는 cwd 와 무관하다.
+bind_project_dir "$(printf '%s' "$payload" | json_get cwd)"
 WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"
 # json_get 결과를 **센티널로** 받는다. 명령 치환은 후행 개행을 전부 지우므로 그냥 받으면
 # 경로 끝의 개행이 아래 가드에 닿기도 전에 사라지고, 경고 없이 **다른 파일** 경로가
@@ -383,7 +568,7 @@ raw="$(printf '%s' "$payload" | json_get tool_input.file_path; printf 'X')"
 raw="${raw%X}"
 file_path="${raw%$'\n'}"
 
-# proj 는 두 갈래가 다 쓴다(스윕의 기본 뿌리 · 아래 상대경로 해석). 분기 전에 구한다.
+# proj 는 두 갈래가 다 쓴다(스윕의 기본 뿌리 · judge_file 의 상대경로 해석). 분기 전에 구한다.
 proj="$(physical_dir "$PROJECT_DIR")"
 
 # file_path 가 없으면 Bash 다. 명령이 무엇을 썼는지는 **결과로** 알아낸다(위 스윕 주석).
@@ -395,106 +580,6 @@ if [ -z "$file_path" ]; then
   exit 0
 fi
 
-# 개행 가드는 **정규화보다 먼저**여야 한다. 디렉토리 컴포넌트가 개행으로 끝나면
-# (…/sr<LF>/app.ts) physical_path 의 pwd -P 출력을 받는 명령 치환이 그 개행을 먹어
-# 경로가 …/sr/app.ts 로 조용히 바뀐다 — 없는 파일이 게이트에 박히고 정작 편집한
-# 파일은 무게이트가 된다. 플래그 파일은 줄 단위라 개행이 든 경로는 애초에 못 적는다.
-case "$file_path" in
-  *$'\n'*) emit_message "$MSG_NEWLINE"; exit 0 ;;
-esac
-
-# 양쪽을 물리 경로로 맞춘 뒤에 비교한다. git 은 실제 경로를 돌려주는데 편집 경로는
-# 심링크를 지나올 수 있고(macOS /var → /private/var), .. 로 되돌아올 수도 있다.
-# 정규화 없이 자르면 접두사가 안 맞아 프로젝트 안 편집이 통째로 "밖"으로 샌다.
-# PROJECT_DIR 은 디렉토리라 통째로 물리화한다(심링크 PROJECT_DIR — 케이스 11·12).
-# 편집 경로는 파일이라 마지막 성분 이름을 보존하는 physical_path 를 쓴다 — 두 계약이
-# 다르므로 함수도 둘이다. (proj 는 Bash 스윕도 쓰므로 분기 **전에** 구해 뒀다.)
-case "$file_path" in
-  /*) ;;
-  *) file_path="$proj/$file_path" ;;
-esac
-abs="$(physical_path "$file_path")"
-
-# 설계·계획 산출물은 위치·git 여부와 무관하게 듀얼리뷰 게이트만 세운다.
-# **정규화 뒤**에 판정해야 한다: 상대경로 입력에는 선행 슬래시가 없어 아래 글롭에
-# 걸리지 않고, .. 가 섞인 경로는 기록값이 .claude/../_workspace/… 로 남는다.
-# 매칭만 소문자화하고 기록은 원본 대소문자로 한다.
-lower_abs="$(printf '%s' "$abs" | tr '[:upper:]' '[:lower:]')"
-# 설계·계획 산출물은 듀얼리뷰 **와 지식·머리 표명 게이트**를 세운다. 코드가 아니므로
-# 타입체크·변경설명·감사는 과하지만, 설계가 나온 턴을 지식 저장소 반영 없이 끝내면
-# "왜 그렇게 정했나"가 그 자리에서 사라진다 — 결정을 만든 근거가 정확히 이 파일들이다.
-# 회수 플래그(ADR-0013·0015)는 머리 두 줄(`사전 결정 회수:`·`레퍼런스 조사:`) 표명을
-# Stop 이 검사하고 지키면 스스로 지운다. 이름에 codex 가 든다고 빼는 식의 **이름 제외는 두지 않는다** —
-# 관측되지 않은 재귀를 막으려고 실재하는 위음성(codex 를 다루는 정상 설계서의 무게이트)을
-# 만들게 된다. 리뷰 산출물과의 재귀는 명명 계약(리뷰 산출물은 NN_design·NN_plan 앵커
-# 금지 — 오케스트레이터 스킬)이 막는다.
-# [0-9][0-9]_ 앵커(2026-08-17 감사): 조사 산출물이 00_·01_ 번호를 선점하면 계획서가 02_plan_… 이
-# 되어 01_plan* 만 보던 글롭을 조용히 우회한다(POK-79 실측 — 게이트 미발동). 숫자 두 자리
-# 바로 뒤에 _design/_plan 을 요구하므로 NN_codex_plan_review 류 리뷰 파일(출처 토큰이 번호
-# 뒤에 옴)은 걸리지 않는다. 0?_ 로 쓰면 안 된다 — 글롭 ? 는 숫자가 아니라 **아무 문자
-# 한 개**라 0a_plan 이 오탐되고 10_plan 이 위음성으로 샌다([cx] 2026-08-17, 케이스 78·79).
-case "$lower_abs" in
-  */_workspace/[0-9][0-9]_design*.md|*/_workspace/[0-9][0-9]_plan*.md)
-    dual_value="$(project_rel "$abs")" || dual_value="$abs"
-    dw=0
-    record_flag "$DUALREVIEW_FLAG" "$dual_value" || dw=1
-    record_flag "$KNOWLEDGE_FLAG"  "$dual_value" || dw=1
-    record_flag "$RETRIEVAL_FLAG"  "$dual_value" || dw=1
-    [ "$dw" -eq 1 ] && emit_message "$MSG_WRITE_FAIL"
-    exit 0 ;;
-esac
-
-if rel="$(project_rel "$abs")"; then
-  value="$rel"
-  verdict="$(classify "$rel" "$proj")"
-else
-  # 프로젝트 밖. 기록값은 절대경로다.
-  value="$abs"
-  root="$(git_toplevel "$abs")" || root=''
-  if [ -n "$root" ] && is_harness_canonical "$root"; then
-    case "$abs" in
-      "$root"/*) rel="${abs#"$root"/}" ;;
-      *) rel="$abs" ;;
-    esac
-    verdict="$(classify "$rel" "$root")"
-  elif harness_anchor "$abs"; then
-    # 앵커 판정에 git 을 요구하지 않는다 — 홈에 설치된 .claude/agents/*.md 는
-    # 그 디렉토리가 git 저장소가 아니어도 하네스 동작을 정의한다.
-    verdict='gate'
-  else
-    verdict='skip'
-    # git 이 빈 값을 돌려줬는데 조상에 .git 이 있으면, 저장소가 아닌 게 아니라 git 이
-    # 거부한 것이다(safe.directory 소유권 거부·권한·손상). 그대로 두면 정본 저장소
-    # 전체가 앵커 밖 파일에 대해 무게이트 + 무신호로 조용히 감시 축소된다.
-    # 판정은 바꾸지 않는다(추측으로 게이트를 세우면 남의 저장소를 오탐한다) — 알리기만
-    # 한다. physical_path 가 fail-loud 인데 여기만 fail-silent 이던 비대칭을 없앤다.
-    [ -z "$root" ] && has_git_ancestor "$abs" && emit_message "$MSG_GIT_UNAVAILABLE"
-  fi
-fi
-
-# 결정 문서는 지식 게이트 하나만. 코드가 아니므로 타입체크·변경설명·감사는 과하다.
-if [ "$verdict" = 'knowledge' ]; then
-  record_flag "$KNOWLEDGE_FLAG" "$value" || emit_message "$MSG_WRITE_FAIL"
-  exit 0
-fi
-
-[ "$verdict" = 'gate' ] || exit 0
-
-# 완료 게이트 4종을 동시에 세운다:
-#   .needs-audit      → completion-auditor 강제 (Phase 6)
-#   .needs-explain    → change-explainer 강제 (Phase 5)
-#   .needs-knowledge  → 지식 저장소 반영 또는 불요 사유 기록 강제 (2026-08-02 kty —
-#                       산문 규칙이 기억에만 의존해 세션 내내 0회 이행된 실사고의 재발 방지)
-#   .needs-dualreview → codex 듀얼 리뷰 강제 (2026-08-03 kty)
-# 각 게이트는 해당 작업이 실제로 끝난 뒤에만 수동으로 지워진다. Stop 훅이 넷 다 본다.
-#
-# 지식 게이트가 꺼져 있어도 여기서는 **기록한다.** 켜짐/꺼짐 판정은 harness.env 를 한 번
-# 더 읽는 일인데 이 훅은 편집마다 돌고 Stop 훅은 턴에 한 번 돈다 — 판정은 Stop 쪽
-# 한 곳(knowledge_gate_active)으로 모았다. 꺼져 있으면 이 파일은 아무 효력이 없다.
-write_failed=0
-for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG"; do
-  record_flag "$flag" "$value" || write_failed=1
-done
-# 넷이 다 실패해도 메시지는 한 줄만 낸다.
-[ "$write_failed" -eq 1 ] && emit_message "$MSG_WRITE_FAIL"
+judge_file "$file_path"
+[ -n "$JUDGE_MSG" ] && emit_message "$JUDGE_MSG"
 exit 0

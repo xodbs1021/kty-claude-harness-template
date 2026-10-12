@@ -28,6 +28,8 @@ hook_disabled "$HOOK_ID" && exit 0
 # 창이 세션마다 따로여야 다른 세션의 PostToolUse 가 이 창을 소비하지 않는다(2026-10-01 실사고).
 payload="$(cat 2>/dev/null)"
 bind_session_state "$(printf '%s' "$payload" | json_get session_id)"
+# 세션의 첫 훅 호출이 이것일 수 있다 — 세션 루트(.root)를 여기서도 고정한다(_common.sh).
+bind_project_dir "$(printf '%s' "$payload" | json_get cwd)"
 
 WINDOW_DIR="$SESSION_STATE_DIR/.bash-windows"
 mkdir -p "$WINDOW_DIR" 2>/dev/null || exit 0

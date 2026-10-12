@@ -24,6 +24,20 @@
 # 그래서 대상이 .claude/harness 인 조회·동기화 명령만 좁게 허용한다. 허용 판정은
 # **명령 문자열이 harness 를 가리키는지**만 보고, 그 밖의 명령은 그대로 막는다.
 #
+# **워크트리 세션에서도 켜진다 — kty 확정(2026-10-02).** 데스크톱 앱은 워크트리 세션에도
+# CLAUDE_PROJECT_DIR 로 메인 체크아웃을 넘기므로, 예전에는 대조 대상이 메인 자신이라 이 가드가
+# 한 번도 돌지 않았다. 이제 세션 루트가 워크트리로 고정되므로(_common.sh bind_project_dir)
+# 워크트리 사본을 메인과 대조한다. 그 결과 둘이 새로 생긴다:
+#   · **하네스 사본이 없는 새 워크트리는 첫 Bash 부터 막힌다.** 부트스트랩 명령(메인에서 복사)은
+#     하네스를 다루는 명령이라 통과한다 — 차단 메시지가 그 명령을 그대로 알려 준다.
+#   · **harness.env 는 대조에서 뺀다 — kty 확정(2026-10-02).** Stop 은 워크트리의
+#     harness.env 를 우선 쓰고 없으면 메인 것을 쓴다 — 워크트리별 설정(다른 타입체크 명령 등)은 지원되는 차이다. 그 파일까지 같기를
+#     요구하면 그 기능을 쓰는 순간 모든 Bash 가 막힌다. 나머지(프로필·원칙)는 판단의 전제라
+#     한 글자라도 다르면 막는다.
+# 공시된 위양성: `.claude/` 를 git 으로 추적하는 저장소에서 메인 체크아웃이 **다른 브랜치**에
+# 있으면 두 사본이 정당하게 다를 수 있다 — 이 가드는 방향을 모르므로 그것도 막는다. 그때는
+# 어느 쪽이 맞는지 사람이 정한다(아래 메시지 1~3).
+#
 # 셸 이식성: macOS 기본 bash 는 3.2 다. ${var,,}·mapfile·연관배열 금지.
 
 set -uo pipefail
@@ -34,9 +48,12 @@ HOOK_ID="pre:bash:harness-drift"
 hook_disabled "$HOOK_ID" && exit 0
 
 payload="$(cat)"
+bind_session_state "$(printf '%s' "$payload" | json_get session_id)"   # 세션 루트(.root)를 찾으려고
+bind_project_dir "$(printf '%s' "$payload" | json_get cwd)"
 cmd="$(printf '%s' "$payload" | json_get tool_input.command)"
 
-# 경로를 물리 경로로 정규화한다. _common.sh 는 CLAUDE_PROJECT_DIR 를 그대로 쓰므로
+# 경로를 물리 경로로 정규화한다. _common.sh 는 CLAUDE_PROJECT_DIR 를(워크트리 세션이면
+# bind_project_dir 이 고정한 세션 루트를) 그대로 쓰므로
 # 심볼릭 링크·후행 슬래시·`..` 가 섞이면 아래 패턴 판정이 빗나간다.
 REAL_DIR="$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P)"
 if [ -z "$REAL_DIR" ]; then
@@ -46,12 +63,16 @@ if [ -z "$REAL_DIR" ]; then
 fi
 
 # 워크트리에서만 의미가 있다. 본 저장소에서 일할 땐 대조 대상이 자기 자신이다.
+# 판정 둘: ① 경로 배치(<메인>/.claude/worktrees/…) — CLAUDE_PROJECT_DIR 자체가 워크트리인
+# 옛 설정도 덮는다. ② 체크아웃 관계 — 세션 루트가 원래 체크아웃과 **같은 저장소의 다른
+# 체크아웃**이면 어디에 있든(/tmp/project-wt 등) 원래 체크아웃과 대조한다([cx] r1).
 case "$REAL_DIR" in
-  */.claude/worktrees/*) : ;;
-  *) exit 0 ;;
+  */.claude/worktrees/*) MAIN_ROOT="${REAL_DIR%%/.claude/worktrees/*}" ;;
+  *)
+    [ "$REAL_DIR" != "$ORIG_ROOT" ] && checkout_root_of "$REAL_DIR" \
+      && [ "$CHECKOUT_ROOT" = "$REAL_DIR" ] || exit 0
+    MAIN_ROOT="$ORIG_ROOT" ;;
 esac
-
-MAIN_ROOT="${REAL_DIR%%/.claude/worktrees/*}"
 MAIN_HARNESS="$MAIN_ROOT/.claude/harness"
 WT_HARNESS="$REAL_DIR/.claude/harness"
 
@@ -66,24 +87,29 @@ esac
 #
 # ⚠ **이 분기가 중첩 경로를 막아 준다고 믿으면 안 된다(2026-08-21 감사 반증).**
 # settings.json 의 등록 명령은 `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/<이름>.sh"` 라서,
-# 그 변수가 워크트리 루트가 아닌 하위 폴더를 가리키면 **스크립트 파일을 못 찾아 exit 127**
-# 로 죽는다 — 차단(2)이 아니라 그냥 실행 실패다. 이건 이 훅만의 문제가 아니라 등록된
-# 아홉 훅 전부의 공통 노출이다(실측: guard-master-commit·guard-hook-disable 도 127).
-# 즉 "CLAUDE_PROJECT_DIR = 워크트리 루트"는 하네스 전체의 **전제**이고, 깨지면 하네스가
-# 통째로 조용히 사라진다. 이 분기는 스크립트가 실행되기만 했다면 잡아 주는 안전망일 뿐
-# 그 전제를 대신 보증하지 못한다. 최초 감사 보고는 스크립트를 직접 실행해 exit 2 를 보고
-# "중첩 경로 차단됨"이라 주장했는데, 등록 경로로는 성립하지 않는 주장이었다.
+# 그 변수가 하네스가 설치된 체크아웃이 아닌 하위 폴더를 가리키면 **스크립트 파일을 못 찾아
+# exit 127** 로 죽는다 — 차단(2)이 아니라 그냥 실행 실패다. 등록된 훅 전부의 공통 노출이다.
+# 즉 "CLAUDE_PROJECT_DIR = 하네스가 설치된 체크아웃 최상위"는 하네스 전체의 **전제**다(워크트리
+# 세션이면 앱이 넘기는 메인 체크아웃 — 루트를 워크트리로 옮기는 것은 그 뒤 세션 루트 고정이다).
+# 이 분기는 스크립트가 실행되기만 했다면 잡아 주는 안전망일 뿐 그 전제를 보증하지 못한다.
 if [ ! -d "$MAIN_HARNESS" ] || [ ! -d "$WT_HARNESS" ]; then
   {
-    echo "[하네스 드리프트] 대조할 하네스가 한쪽에 없습니다."
-    [ -d "$MAIN_HARNESS" ] || echo "  없음(본 저장소): $MAIN_HARNESS"
-    [ -d "$WT_HARNESS" ]   || echo "  없음(워크트리):  $WT_HARNESS"
-    echo
-    echo "CLAUDE_PROJECT_DIR 가 워크트리 루트가 아닌 하위 폴더를 가리키거나,"
-    echo "하네스가 아직 복사되지 않은 상태입니다. 대조를 못 했으므로 통과시키지 않습니다."
-    echo
-    echo "있는 쪽에서 없는 쪽으로 복사하십시오(하네스를 다루는 명령은 이 훅이 막지 않습니다)."
-    echo "  cp -R \"$MAIN_HARNESS\" \"$REAL_DIR/.claude/\""
+    if [ ! -d "$WT_HARNESS" ] && [ -d "$MAIN_HARNESS" ]; then
+      echo "[하네스 드리프트] 이 워크트리에 하네스 사본이 없습니다 (.claude/harness/)."
+      echo "  없음(워크트리): $WT_HARNESS"
+      echo
+      echo "새 워크트리는 메인 체크아웃의 사본을 받아야 합니다 — planner·architect·reviewer 가"
+      echo "'이 프로젝트의 사실'로 읽는 프로필이 여기 있습니다. 대조를 못 했으므로 통과시키지 않습니다."
+      echo
+      echo "부트스트랩(하네스를 다루는 명령이라 이 훅이 막지 않습니다):"
+      echo "  mkdir -p \"$REAL_DIR/.claude\" && cp -R \"$MAIN_HARNESS\" \"$REAL_DIR/.claude/\""
+    else
+      echo "[하네스 드리프트] 대조할 하네스가 한쪽에 없습니다."
+      [ -d "$MAIN_HARNESS" ] || echo "  없음(본 저장소): $MAIN_HARNESS"
+      [ -d "$WT_HARNESS" ]   || echo "  없음(워크트리):  $WT_HARNESS"
+      echo
+      echo "대조를 못 했으므로 통과시키지 않습니다. 있는 쪽에서 없는 쪽으로 복사하십시오."
+    fi
     echo
     echo "끄려면: ECC_DISABLED_HOOKS=$HOOK_ID"
   } >&2
@@ -92,7 +118,8 @@ fi
 
 # diff 종료 상태: 0=같음 · 1=다름 · 2이상=오류(권한·I/O). 초판은 `|| true` 로 셋을 뭉개
 # 오류를 "같음"으로 삼켰다. 오류는 "대조 못 했다"이지 "문제 없다"가 아니다.
-DRIFT="$(diff -rq "$MAIN_HARNESS" "$WT_HARNESS" 2>&1)"
+# harness.env 는 워크트리별 설정이라 대조에서 뺀다 — kty 확정(2026-10-02), 머리 주석.
+DRIFT="$(diff -rq -x harness.env "$MAIN_HARNESS" "$WT_HARNESS" 2>&1)"
 RC=$?
 
 [ "$RC" -eq 0 ] && exit 0
@@ -110,7 +137,7 @@ if [ "$RC" -ge 2 ]; then
 fi
 
 {
-  echo "[하네스 드리프트] 워크트리의 .claude/harness/ 가 본 저장소와 다릅니다."
+  echo "[하네스 드리프트] 이 워크트리의 하네스 사본이 메인과 다릅니다 (.claude/harness/ — harness.env 는 대조 밖)."
   echo
   echo "$DRIFT"
   echo
@@ -124,6 +151,7 @@ fi
   echo
   echo "2) 본 저장소가 맞으면 워크트리를 맞춥니다."
   echo "   ※ 덮어쓰기만 하면 워크트리에만 있는 잔재 파일이 남습니다. 지우고 다시 넣으십시오."
+  echo "   ※ 워크트리 전용 harness.env 를 쓰고 있으면 지우기 전에 옮겨 두고 되돌려 놓으십시오."
   echo "     rm -rf \"$WT_HARNESS\" && cp -R \"$MAIN_HARNESS\" \"$REAL_DIR/.claude/\""
   echo
   echo "3) 워크트리 쪽이 의도된 최신이면 본 저장소에 먼저 반영한 뒤 진행하십시오."

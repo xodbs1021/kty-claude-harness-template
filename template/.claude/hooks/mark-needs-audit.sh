@@ -33,6 +33,8 @@
 #                       듀얼리뷰+지식+**머리 표명 2종**(ADR-0013·0015 — 머리 두 줄
 #                       형식(회수·레퍼런스 조사)을 Stop 이 검사)
 #   결정 문서        — docs/decisions/*.md 는 문서 제외의 예외로 지식만
+#   추가 관할 폴더    — 슬롯(ADR-0026, 옵트인) 안·루트 밖: 최상위가 슬롯 안인 저장소를 그 기준으로
+#                       (⑤′), 설계 모양은 _workspace_*/ 아래도. 듀얼리뷰 판정은 리뷰 자리를 기록
 #
 # 왜 이렇게 넓나 (2026-08-04 실사고): 하네스 자신을 고치는 작업은 **늘** 별도 클론에서
 # 일어나는데 훅이 프로젝트 밖을 통째로 스킵해, 게이트가 프로젝트는 지키면서 정작 하네스
@@ -72,6 +74,9 @@ MSG_SWEEP_PARTIAL="이 명령이 바꾼 파일 중 일부는 게이트에 기록
 # 추가 관할 폴더 슬롯(ADR-0026)을 쓸 수 없을 때의 알림 머리. 사유 문구는 _common.sh 의
 # extra_problem_text 가 뒤에 붙는다 — 모듈이 없어도 나가야 하기 때문이다.
 MSG_EXTRA_HEAD="추가 관할 폴더 슬롯(harness.env 의 HARNESS_EXTRA_GATE_DIRS)을 쓸 수 없다 — 고칠 때까지 세션 루트 밖 저장소 편집에 게이트가 서지 않고 리뷰 자리도 기록되지 않는다. 사유: "
+# 리뷰 자리 기록(슬롯 수명 계약 ①·③) 실패 — 회복 가능(쓰기 실패)과 영구(경로에 US·LF).
+MSG_RECORD_FAIL="리뷰 자리 기록에 실패했다(세션 폴더 쓰기 확인). 그 파일을 다시 저장하라 — 그 전까지 그 값은 턴 종료에서 막히거나 옛 소속 자리 리뷰로 풀릴 수 있다."
+MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있어 리뷰 자리를 기록하지 못했다(영구) — 그 값은 턴 종료에서 막힌다. 파일 이름을 바꾸거나 사용자에게 알려 판단을 받아라."
 
 # --- 계약 함수 ------------------------------------------------------------
 
@@ -89,6 +94,7 @@ emit_message() {
 EXTRA_ON=0       # 슬롯이 켜졌는가
 NOTICE_CODE=""   # 슬롯을 쓸 수 없는 사유 코드(빈 값이면 알릴 것 없음)
 SWEEP_MSG=""     # Bash 스윕의 최종 메시지(sweep_bash_writes 가 정한다)
+RECORD_MSG=""    # 리뷰 자리 기록 실패 문구(슬롯이 켜졌을 때만 생긴다 — 판정 알림과 따로)
 
 #######################################
 # 슬롯 키를 읽어 EXTRA_ON·NOTICE_CODE 를 정한다. 표식은 쓰지 않는다 — 출력이 성공한
@@ -129,11 +135,12 @@ extra_gate_setup() {
 }
 
 #######################################
-# 이 훅의 유일한 출구. 분기의 최종 메시지 하나 앞에 슬롯 알림(그 사유를 이 세션에 아직
-# 알리지 않았으면)을 붙여 JSON 한 줄로 내고, 출력이 성공했을 때만 표식에 사유를
-# 적는다 — stdout 이 닫혀 못 낸 알림은 다음 호출이 다시 낸다.
+# 이 훅의 유일한 출구. 분기의 최종 메시지 하나 뒤에 리뷰 자리 기록 실패 문구를, 앞에
+# 슬롯 알림(그 사유를 이 세션에 아직 알리지 않았으면)을 붙여 JSON 한 줄로 내고, 출력이
+# 성공했을 때만 표식에 사유를 적는다 — stdout 이 닫혀 못 낸 알림은 다음 호출이 다시 낸다.
+# 기록 실패 문구는 슬롯이 켜졌을 때만 생기므로 키가 없으면 출력은 예전 바이트 그대로다.
 # Globals:
-#   NOTICE_CODE, EXTRA_NOTICE_FILE, MSG_EXTRA_HEAD (읽음)
+#   NOTICE_CODE, EXTRA_NOTICE_FILE, MSG_EXTRA_HEAD, RECORD_MSG (읽음)
 # Arguments:
 #   $1 — 분기의 최종 메시지(Edit = 판정 알림, Bash = 스윕 집계, 빈 명령 = 빈 값)
 # Outputs:
@@ -148,6 +155,7 @@ finish_hook() {
     [[ "$seen" == "$NOTICE_CODE" ]] \
       || notice="$MSG_EXTRA_HEAD$(extra_problem_text "$NOTICE_CODE")."
   fi
+  [[ -n "$RECORD_MSG" ]] && msg="${msg:+$msg }$RECORD_MSG"
   [[ -n "$notice" ]] && msg="$notice${msg:+ $msg}"
   [[ -n "$msg" ]] || exit 0
   emit_message "$msg" 2>/dev/null || exit 0
@@ -485,6 +493,9 @@ EOF
 JUDGE_MSG=""   # judge_file 이 알릴 메시지(없으면 빈 값). 출력은 호출자가 한 번만 낸다.
 VALUE=""       # verdict_of 의 결과 — 기록값
 VERDICT=""     # verdict_of 의 결과 — gate · knowledge · skip
+VERDICT_REPO=""  # verdict_of 의 결과 — 분류 기준 저장소 최상위(①③④⑤′, 없으면 빈 값)
+SLOT_TOP=""      # slot_repo_top 의 결과
+RECORDING=0      # 이번 판정이 리뷰 자리를 기록하는가(슬롯 켜짐 ∧ 절대 값)
 
 # other_checkout <물리 절대경로> — 그 파일이 세션 루트($proj)가 아닌 **같은 저장소의 다른
 # 체크아웃**(메인·형제 워크트리) 안이면 CHECKOUT_ROOT 에 그 최상위를 담고 rc=0.
@@ -508,12 +519,38 @@ other_checkout() {
   esac
 }
 
-# verdict_of <물리 절대경로> — 기록값(VALUE)과 판정(VERDICT)을 정한다.
+#######################################
+# ⑤′ 의 저장소 최상위 — 그 파일의 git 최상위가 슬롯 안이면 SLOT_TOP 에 담는다(③ 이 구한
+# 최상위를 재사용). 폴더째 지워진 파일은 남아 있는 가장 가까운 조상으로 묻는다
+# (other_checkout 과 같은 관용구).
+# Globals:
+#   EXISTING (existing_ancestor 가 씀) · SLOT_TOP (씀)
+# Arguments:
+#   $1 — 물리 절대경로, $2 — ③ 이 구한 최상위(빈 값일 수 있다)
+# Returns:
+#   0 최상위가 슬롯 안 · 1 아님
+#######################################
+slot_repo_top() {
+  SLOT_TOP="${2:-}"
+  if [ -z "$SLOT_TOP" ] && [ ! -d "${1%/*}" ]; then
+    existing_ancestor "${1%/*}"
+    [ -n "$EXISTING" ] || return 1
+    SLOT_TOP="$(git_toplevel "$EXISTING/.")" || return 1
+  fi
+  [ -n "$SLOT_TOP" ] && in_extra_gate_dir "$SLOT_TOP"
+}
+
+# verdict_of <물리 절대경로> — 기록값(VALUE)·판정(VERDICT)·분류 기준 저장소(VERDICT_REPO).
 # 기록값: 세션 루트 안은 상대경로, 밖(다른 체크아웃 포함)은 **절대경로**.
+# 순서가 계약이다: ① 다른 체크아웃 ② 세션 루트 안 ③ 밖 + 하네스 정본 ④ 밖 + .claude 앵커
+# ⑤′ 밖 + 추가 관할 폴더 저장소 ⑥ 그 밖 skip. ⑤′ 는 ④ 뒤에만 둔다 — 앞에 두면 슬롯
+# 저장소의 .claude/ 앵커 파일을 classify 가 `.claude/*` 로 빼서 조용히 사라진다(ADR-0007).
 verdict_of() {
   local abs="$1" rel root
   VALUE="$abs"
+  VERDICT_REPO=""
   if other_checkout "$abs"; then
+    VERDICT_REPO="$CHECKOUT_ROOT"
     VERDICT="$(classify "${abs#"$CHECKOUT_ROOT"/}" "$CHECKOUT_ROOT")"
   elif rel="$(project_rel "$abs")"; then
     VALUE="$rel"
@@ -521,6 +558,7 @@ verdict_of() {
   else
     root="$(git_toplevel "$abs")" || root=''
     if [ -n "$root" ] && is_harness_canonical "$root"; then
+      VERDICT_REPO="$root"
       case "$abs" in
         "$root"/*) rel="${abs#"$root"/}" ;;
         *) rel="$abs" ;;
@@ -528,8 +566,15 @@ verdict_of() {
       VERDICT="$(classify "$rel" "$root")"
     elif harness_anchor "$abs"; then
       # 앵커 판정에 git 을 요구하지 않는다 — 홈에 설치된 .claude/agents/*.md 는
-      # 그 디렉토리가 git 저장소가 아니어도 하네스 동작을 정의한다.
+      # 그 디렉토리가 git 저장소가 아니어도 하네스 동작을 정의한다. 분류 기준 저장소는
+      # 그 파일의 git 최상위다(git 밖이면 빈 값 — 리뷰 자리는 빈 집합, Y4).
+      VERDICT_REPO="$root"
       VERDICT='gate'
+    elif [ "$EXTRA_ON" -eq 1 ] && is_slot_entry "$abs" "$proj" \
+        && slot_repo_top "$abs" "$root"; then
+      # ⑤′ 추가 관할 폴더(사용자 옵트인 선언). 폴더 안 분류는 classify 가 한다.
+      VERDICT_REPO="$SLOT_TOP"
+      VERDICT="$(classify "${abs#"$SLOT_TOP"/}" "$SLOT_TOP")"
     else
       VERDICT='skip'
       # git 이 빈 값을 돌려줬는데 조상에 .git 이 있으면, 저장소가 아닌 게 아니라 git 이
@@ -547,6 +592,7 @@ verdict_of() {
 # **같은 함수**를 부른다. 알릴 것이 있으면 JUDGE_MSG 에 담는다(출력하지 않는다).
 judge_file() {
   local file_path="$1" abs lower_abs dual_value dw flag write_failed
+  local design=0 dok
   JUDGE_MSG=""
   # 개행 가드는 **정규화보다 먼저**여야 한다. 디렉토리 컴포넌트가 개행으로 끝나면
   # (…/sr<LF>/app.ts) physical_path 의 pwd -P 출력을 받는 명령 치환이 그 개행을 먹어
@@ -595,16 +641,28 @@ judge_file() {
   # 한 개**라 0a_plan 이 오탐되고 10_plan 이 위음성으로 샌다([cx] 2026-08-17, 케이스 78·79).
   case "$lower_abs" in
     */_workspace/[0-9][0-9]_design*.md|*/_workspace/[0-9][0-9]_plan*.md)
-      # 기록값 규칙은 verdict_of 와 같다 — 다른 체크아웃(세션 루트 아래 중첩 워크트리 포함)은 절대경로.
-      dual_value="$abs"
-      other_checkout "$abs" || dual_value="$(project_rel "$abs")" || dual_value="$abs"
-      dw=0
-      record_flag "$DUALREVIEW_FLAG" "$dual_value" || dw=1
-      record_flag "$KNOWLEDGE_FLAG"  "$dual_value" || dw=1
-      record_flag "$RETRIEVAL_FLAG"  "$dual_value" || dw=1
-      [ "$dw" -eq 1 ] && JUDGE_MSG="$MSG_WRITE_FAIL"
-      return 0 ;;
+      design=1 ;;
   esac
+  # 추가 관할 폴더: 슬롯 안·세션 루트 밖의 설계 모양은 _workspace_<이름>/ 아래도 같은
+  # 3종이다(쌍 형제 작업 공간 — 저장소 밖에 둔 트랙 설계서).
+  if [ "$design" -eq 0 ] && [ "$EXTRA_ON" -eq 1 ] \
+      && is_slot_entry "$abs" "$proj" && is_design_shaped "$abs"; then
+    design=1
+  fi
+  if [ "$design" -eq 1 ]; then
+    # 기록값 규칙은 verdict_of 와 같다 — 다른 체크아웃(세션 루트 아래 중첩 워크트리 포함)은 절대경로.
+    dual_value="$abs"
+    other_checkout "$abs" || dual_value="$(project_rel "$abs")" || dual_value="$abs"
+    review_record_begin "$dual_value"
+    dw=0
+    dok=1
+    record_flag "$DUALREVIEW_FLAG" "$dual_value" || { dw=1; dok=0; }
+    record_flag "$KNOWLEDGE_FLAG"  "$dual_value" || dw=1
+    record_flag "$RETRIEVAL_FLAG"  "$dual_value" || dw=1
+    [ "$dw" -eq 1 ] && JUDGE_MSG="$MSG_WRITE_FAIL"
+    review_record_end "$dual_value" "$dok" 1
+    return 0
+  fi
 
   verdict_of "$abs"
 
@@ -627,13 +685,82 @@ judge_file() {
   # 지식 게이트가 꺼져 있어도 여기서는 **기록한다.** 켜짐/꺼짐 판정은 harness.env 를 한 번
   # 더 읽는 일인데 이 훅은 편집마다 돌고 Stop 훅은 턴에 한 번 돈다 — 판정은 Stop 쪽
   # 한 곳(knowledge_gate_active)으로 모았다. 꺼져 있으면 이 파일은 아무 효력이 없다.
+  review_record_begin "$VALUE"
   write_failed=0
+  dok=1
   for flag in "$AUDIT_FLAG" "$EXPLAIN_FLAG" "$KNOWLEDGE_FLAG" "$DUALREVIEW_FLAG"; do
-    record_flag "$flag" "$VALUE" || write_failed=1
+    if ! record_flag "$flag" "$VALUE"; then
+      write_failed=1
+      [ "$flag" = "$DUALREVIEW_FLAG" ] && dok=0
+    fi
   done
   # 넷이 다 실패해도 메시지는 한 줄만 낸다.
   [ "$write_failed" -eq 1 ] && JUDGE_MSG="$MSG_WRITE_FAIL"
+  review_record_end "$VALUE" "$dok" 0
   return 0
+}
+
+# --- 리뷰 자리 기록 (수명 계약은 _extra_gate_dirs.sh 머리 주석) ----------------------
+# 한 판정 안의 순서: ① review_record_begin(갱신 표시) → ② 기존 record_flag 들 →
+# ③ review_record_end(현재 기록). 키가 없으면 아무것도 안 한다.
+
+#######################################
+# 결속 ① — 슬롯이 켜졌고 값이 절대경로면 갱신 표시 줄을 덧붙이고 RECORDING 을 켠다.
+# Globals:
+#   EXTRA_ON (읽음) · RECORDING, RECORD_MSG (씀)
+# Arguments:
+#   $1 — 플래그 값
+#######################################
+review_record_begin() {
+  RECORDING=0
+  [ "$EXTRA_ON" -eq 1 ] || return 0
+  case "$1" in /*) ;; *) return 0 ;; esac
+  RECORDING=1
+  record_review_pending "$1"
+  note_record_rc $?
+}
+
+#######################################
+# 결속 ③ — 그 값의 현재 기록 줄을 덧붙인다. 자리 규칙(Y4): 슬롯 항목인 설계물 → 그
+# 파일의 폴더 · 슬롯 항목이고 VERDICT_REPO 가 슬롯 안 → 그 저장소의 _workspace 와 형제
+# _workspace_<이름> · 그 밖(git 밖 앵커, 최상위가 슬롯 밖, 슬롯 밖 절대 항목) → 빈 집합.
+# 듀얼리뷰 플래그를 쓰지 못했으면 쓰지 않는다 — 의무 갱신과 현재 기록을 결속한다.
+# Globals:
+#   RECORDING, VERDICT_REPO, proj (읽음) · RECORD_MSG (씀)
+# Arguments:
+#   $1 — 플래그 값, $2 — 듀얼리뷰 플래그를 썼는가(1|0), $3 — 설계물인가(1|0)
+#######################################
+review_record_end() {
+  local v="$1" sibling
+  [ "$RECORDING" -eq 1 ] && [ "$2" -eq 1 ] || return 0
+  if ! is_slot_entry "$v" "$proj"; then
+    record_review_dirs "$v"
+  elif [ "$3" -eq 1 ]; then
+    record_review_dirs "$v" "${v%/*}"
+  elif [ -n "$VERDICT_REPO" ] && in_extra_gate_dir "$VERDICT_REPO" \
+      && sibling="$(sibling_workspace_of "$VERDICT_REPO")"; then
+    record_review_dirs "$v" "$VERDICT_REPO/_workspace" "$sibling"
+  else
+    record_review_dirs "$v"
+  fi
+  note_record_rc $?
+}
+
+#######################################
+# 기록 함수의 rc 를 RECORD_MSG 로 옮긴다. 영구(값에 US·LF)가 회복 가능보다 앞선다.
+# Globals:
+#   MSG_RECORD_FAIL, MSG_RECORD_PERMANENT (읽음) · RECORD_MSG (씀)
+# Arguments:
+#   $1 — record_review_pending · record_review_dirs 의 rc
+#######################################
+note_record_rc() {
+  case "$1" in
+    0) ;;
+    2) RECORD_MSG="$MSG_RECORD_PERMANENT" ;;
+    *)
+      [ "$RECORD_MSG" = "$MSG_RECORD_PERMANENT" ] \
+        || RECORD_MSG="$MSG_RECORD_FAIL" ;;
+  esac
 }
 
 # --- 진입 -----------------------------------------------------------------

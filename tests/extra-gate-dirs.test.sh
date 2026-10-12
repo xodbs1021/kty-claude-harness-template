@@ -7,6 +7,7 @@
 #   extra-gate-dirs.unit.cases.sh      모듈 함수 · 기록 형식 · 키 판독 상태
 #   extra-gate-dirs.envcheck.cases.sh  harness.env 편집 검증 훅(check-harness-env)
 #   extra-gate-dirs.notice.cases.sh    완료 게이트 훅의 알림·단일 출구·키 부재 바이트
+#   extra-gate-dirs.judge.cases.sh     슬롯 저장소·설계물 판정(⑤′)과 리뷰 자리 기록
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -43,6 +44,8 @@ US=$'\037'   # 기록 형식의 필드 구분자(모듈 머리 주석이 정본)
 # 모듈은 여기서 확인하지 않는다 — 없으면 케이스마다 "모듈 적재 실패"로 적색이 된다.
 command -v python3 >/dev/null 2>&1 \
   || { echo "✗ python3 이 필요합니다 (훅의 json_get 의존)" >&2; exit 1; }
+command -v git >/dev/null 2>&1 \
+  || { echo "✗ git 이 필요합니다 (슬롯 저장소 판정 고정틀)" >&2; exit 1; }
 for f in "$COMMON" "$ENV_HOOK" "$HOOKS/mark-needs-audit.sh"; do
   [[ -f "$f" ]] || { echo "✗ 훅을 찾지 못했습니다: $f" >&2; exit 1; }
 done
@@ -195,7 +198,8 @@ sys.exit(0 if isinstance(d, dict) and isinstance(d.get("systemMessage"), str)
 # (커밋에서 빠뜨리기 쉬운 파일이다).
 for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.envcheck.cases.sh \
-                  extra-gate-dirs.notice.cases.sh; do
+                  extra-gate-dirs.notice.cases.sh \
+                  extra-gate-dirs.judge.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -206,13 +210,14 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=41
+EXPECTED_CASES=58
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
 u03 u04 u05 z4d z4e z4f h06
 a01 a02 a03 a04 a05 a06 a07 g01 g02 g03
 n01 n02 n03 n04 n05 n06 n07 e03 e04 e16
+e01 e02 e05 e06 e07 e08 e09 e10 e11 e12 e13 e14 e15 e17 e18 e19 r08
 '
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이

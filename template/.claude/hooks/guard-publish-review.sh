@@ -165,4 +165,12 @@ if [ -z "$recent" ]; then
   참고: $slot_note}"
 fi
 
+# 기록을 읽지 못한 채 세션 루트 리뷰로 통과했으면 그 사실을 알린다 — 통과는 그대로 두되,
+# 슬롯 리뷰 자리를 보지 못했다는 것이 조용히 묻히지 않게 한다. slot_note 는 따옴표 ·
+# 역슬래시가 없는 상수라 JSON 문자열에 그대로 싣는다.
+if [ -n "$slot_note" ]; then
+  printf '{"systemMessage":"[발행 게이트] 세션 루트 리뷰로 통과했다 — %s"}\n' \
+    "$slot_note"
+fi
+
 exit 0

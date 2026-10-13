@@ -626,8 +626,9 @@ fi
 # --- 3.5 의 추가 관할 폴더 슬롯 판정 (ADR-0026) ---------------------------------------
 # 슬롯 리뷰 자리 기록의 형식은 _extra_gate_dirs.sh 가 정본이고, Stop 은 형식을 모른다 —
 # 키 판독 상태 · 기록 파일의 존재 · 평가의 rc · 사유 코드 · W/M 줄만 안다(설계 2.4 Y3).
-DR_MODE=""     # loop 기존 루프 · met 슬롯 판정으로 해제 · unmet 슬롯 판정으로 막음
-DR_OUT=""      # 평가 출력: on|off 한 줄 · 사유 코드 한 줄 · W <자리> · M <값> 줄
+DR_MODE=""     # loop 기존 루프 · met 슬롯 판정으로 해제 · unmet 슬롯 판정으로 막음 ·
+               # root 슬롯 판정으로 막되 남은 것이 세션 루트 자리뿐(기존 막음 안내)
+DR_OUT=""      # 평가 출력: 슬롯 상태 한 줄 · 사유 코드 한 줄 · W <자리> · M <값> 줄
 DR_RC=0        # 평가 rc: 0 충족 · 3 미충족 · 4 판정 불가(기록·루트) · 9 모듈 없음 · 그 밖 실패
 
 #######################################
@@ -638,17 +639,21 @@ DR_RC=0        # 평가 rc: 0 충족 · 3 미충족 · 4 판정 불가(기록·�
 # Arguments:
 #   $1 — 키 판독 상태(0 VALUE · 1 UNTRUSTED), $2 — 물리 세션 루트
 # Outputs:
-#   첫 줄 on|off(평가 때 슬롯이 켜졌나), 다음 줄부터 read_review_verdict 의 출력
+#   첫 줄 = 평가 때의 슬롯 상태 — on 켜짐 · untrusted harness.env 를 믿을 수 없음 ·
+#   invalid 키 값이 검증에 실패. 다음 줄부터 read_review_verdict 의 출력
 # Returns:
 #   read_review_verdict 의 rc · 9 모듈을 읽지 못함
 #######################################
 dualreview_eval() {
   { . "$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"; } 2>/dev/null || exit 9
-  if [ "$1" -eq 0 ] && validate_extra_gate_dir "$EXTRA_GATE_RAW"; then
+  if [ "$1" -ne 0 ]; then
+    EXTRA_GATE_DIR=''
+    printf 'untrusted\n'
+  elif validate_extra_gate_dir "$EXTRA_GATE_RAW"; then
     printf 'on\n'
   else
     EXTRA_GATE_DIR=''
-    printf 'off\n'
+    printf 'invalid\n'
   fi
   read_review_verdict "$2"
 }
@@ -657,6 +662,7 @@ dualreview_eval() {
 # 3.5 를 슬롯 리뷰 자리 기록으로 판정할지 정하고, 그렇다면 서브셸에서 평가한다(설계 2.4).
 #   ABSENT · (UNTRUSTED ∧ 기록 파일 없음)  → loop(기존 루프 원문 — I2)
 #   (UNTRUSTED ∧ 기록 있음) · VALUE        → 평가. rc 0 met · 3 unmet · 4 unmet(막음)
+#     rc 3 인데 남은 것이 세션 루트 자리뿐  → root(막되 기존 막음 안내가 사실이다)
 #     그 밖(모듈 없음 · 사망 · 판독 실패)   → 기록 파일이 있으면(0바이트 포함) unmet,
 #                                             없으면 loop(판정자도 기록하지 못했다 — 공시)
 # 평가할 수 없을 때의 증거는 기록 파일의 **존재**다 — 기록 줄은 해석하지 않는다(Y3).
@@ -686,7 +692,12 @@ dualreview_judge_slot() {
   DR_RC=$?
   case "$DR_RC" in
     0) DR_MODE=met ;;
-    3|4) DR_MODE=unmet ;;
+    3)
+      DR_MODE=unmet
+      # 사유가 없고 기다리는 자리가 세션 루트 _workspace 하나뿐이면(줄은 중복 없이 온다)
+      # 남은 항목은 세션 루트 규칙이다 — 슬롯 안내가 아니라 기존 막음 안내가 맞다.
+      [ "${DR_OUT#*$'\n'}" = $'\n'"W $root/_workspace" ] && DR_MODE=root ;;
+    4) DR_MODE=unmet ;;
     *) [ "$have_rec" -eq 1 ] && DR_MODE=unmet ;;
   esac
   return 0
@@ -695,7 +706,7 @@ dualreview_judge_slot() {
 #######################################
 # 사유 코드의 문구(Stop 상수 — 모듈이 없어도 나간다).
 # Arguments:
-#   $1 — 사유 코드, $2 — 평가 때 슬롯이 켜졌나(on|off)
+#   $1 — 사유 코드, $2 — 평가 때의 슬롯 상태(on|untrusted|invalid — dualreview_eval)
 # Outputs:
 #   문구 한 줄(모르는 코드는 코드 그대로)
 #######################################
@@ -703,7 +714,7 @@ dualreview_reason_text() {
   case "$1" in
     missing-record)
       if [ "$2" = on ]; then
-        echo "현재 리뷰 자리 기록이 없다 — 세션 폴더 쓰기를 확인하고 그 파일을 다시 저장하면 기록된다."
+        echo "현재 리뷰 자리 기록이 없다 — 세션 폴더 쓰기를 확인하고 그 파일을 다시 저장하면 기록된다. 저장 때 '기록하지 못했다(영구)' 알림이 나왔으면 경로가 길어 기록 줄이 1023바이트를 넘는 값이라 다시 저장해도 풀리지 않는다 — 저장소를 더 짧은 경로로 옮기거나 사용자에게 알려 판단을 받아라."
       else
         echo "현재 리뷰 자리 기록이 없다 — 지금은 슬롯이 꺼져 있어 저장해도 기록되지 않는다. harness.env 슬롯 설정을 고친 뒤 그 파일을 다시 저장하라."
       fi ;;
@@ -712,13 +723,17 @@ dualreview_reason_text() {
     record-unusable)
       echo "리뷰 자리 기록 파일을 쓰거나 읽을 수 없다 — 세션 폴더 권한을 고친 뒤 고친 파일들을 다시 저장하라." ;;
     root-unusable)
-      echo "세션 루트 경로에 개행이나 제어문자(US)가 있어 리뷰 자리를 판정할 수 없다 — 세션 루트 폴더 이름을 바꾸거나 harness.env 의 슬롯 키를 지워라." ;;
+      echo "세션 루트 경로에 개행이나 제어문자(US)가 있어 리뷰 자리를 판정할 수 없다 — 사용자에게 알려 판단을 받아라(세션 루트 폴더 이름을 바꿀지, 슬롯 키를 끌지는 사용자가 정한다)." ;;
     module)
       echo "추가 관할 폴더 모듈을 읽지 못해 리뷰 자리를 판정할 수 없다 — 하네스를 다시 설치(sync)하라." ;;
     eval-fail)
       echo "리뷰 자리 판정이 실패했다(모듈 오류) — 하네스를 다시 설치(sync)하라." ;;
     dir-unknown)
-      echo "슬롯 폴더를 알 수 없어(harness.env 를 믿고 읽을 수 없음) 기록 없는 절대경로 항목은 세션 루트 규칙으로 보았다." ;;
+      if [ "$2" = invalid ]; then
+        echo "슬롯 폴더를 알 수 없어(harness.env 의 슬롯 값을 쓸 수 없음 — 값 검증 실패) 기록 없는 절대경로 항목은 세션 루트 규칙으로 보았다."
+      else
+        echo "슬롯 폴더를 알 수 없어(harness.env 를 믿고 읽을 수 없음) 기록 없는 절대경로 항목은 세션 루트 규칙으로 보았다."
+      fi ;;
     *) echo "$1" ;;
   esac
 }
@@ -726,14 +741,15 @@ dualreview_reason_text() {
 #######################################
 # 슬롯 판정으로 막을 때의 안내(호출자가 stderr 로 돌린다). 기다리는 자리(W)와 현재 기록이
 # 없는 값(M)을 나열하고 사유마다 문구를 싣는다(cc2 — 슬롯이 꺼져 있었으면 출구가 다르다).
+# 기다리는 자리 목록이 없으면 그 자리에 저장하라는 안내 대신 사유를 먼저 풀라고 안내한다.
 # Globals:
 #   DR_OUT, DR_RC, DUALREVIEW_FLAG, count, MAX_BLOCKS (읽음)
 #######################################
 dualreview_slot_block() {
-  local on=off reasons="" body="" line code
+  local slot_state='' reasons="" body="" waiting="" line code
   case "$DR_RC" in
     0|3|4)
-      on="${DR_OUT%%$'\n'*}"
+      slot_state="${DR_OUT%%$'\n'*}"
       body="${DR_OUT#*$'\n'}"
       [ "$body" = "$DR_OUT" ] && body=""
       reasons="${body%%$'\n'*}"
@@ -742,14 +758,16 @@ dualreview_slot_block() {
     9) reasons=module ;;
     *) reasons=eval-fail ;;
   esac
+  # 기다리는 자리 목록은 한 번 만들어 나열과 안내 문장이 같은 목록을 보게 한다.
+  waiting="$(printf '%s\n' "$body" | sed -n 's/^W /  - /p')"
   echo "[완료 차단] codex 듀얼 리뷰가 그 리뷰 자리에서 확인되지 않았습니다 — 추가 관할 폴더 슬롯 리뷰 자리 기록으로 판정했습니다."
   echo
   echo "이 턴의 듀얼 리뷰 대상:"
   sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
-  if printf '%s\n' "$body" | grep -q '^W '; then
+  if [ -n "$waiting" ]; then
     echo
     echo "리뷰를 기다리는 자리(그 폴더에 *codex*.md 를 저장하면 풀린다):"
-    printf '%s\n' "$body" | sed -n 's/^W /  - /p'
+    printf '%s\n' "$waiting"
   fi
   if printf '%s\n' "$body" | grep -q '^M '; then
     echo
@@ -760,15 +778,20 @@ dualreview_slot_block() {
     echo
     echo "사유:"
     for code in $reasons; do
-      line="$(dualreview_reason_text "$code" "$on")"
+      line="$(dualreview_reason_text "$code" "$slot_state")"
       echo "  - $line"
     done
   fi
   echo
   echo "해야 할 일:"
   echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
-  echo "  2. 결과를 위 '리뷰를 기다리는 자리'에 *codex*.md 로 저장한다 — 슬롯 항목은 세션 루트 _workspace 의 리뷰로 풀리지 않는다."
-  echo "  3. 위 사유를 해결하고 저장하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+  if [ -n "$waiting" ]; then
+    echo "  2. 결과를 위 '리뷰를 기다리는 자리'에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다 — 슬롯 항목은 세션 루트 _workspace 의 리뷰로 풀리지 않는다."
+    echo "  3. 위 사유를 해결하고 저장하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+  else
+    echo "  2. 리뷰를 기다리는 자리를 아직 정할 수 없다 — 위 사유를 먼저 해결하면 다음 Stop 이 그 자리를 알려 준다."
+    echo "  3. 그 자리에 결과를 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+  fi
   echo "     codex 미설치·호출 실패로 생략하는 경우에만 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을"
   echo "     명시하고:  rm -f $(flag_hint "$DUALREVIEW_FLAG" .needs-dualreview)"
   echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
@@ -790,6 +813,7 @@ dualreview_slot_block() {
 #
 #      **추가 관할 폴더 슬롯**(ADR-0026): 키가 있으면 위 dualreview_judge_slot 이 결정 표대로
 #      슬롯 리뷰 자리 기록으로 판정한다. 키가 없으면 아래 기존 루프 원문 그대로다(I2).
+#      슬롯 판정으로 남은 것이 세션 루트 자리뿐이면(root) 기존 막음 안내를 낸다.
 if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
   dualreview_artifact=""
   dualreview_judge_slot

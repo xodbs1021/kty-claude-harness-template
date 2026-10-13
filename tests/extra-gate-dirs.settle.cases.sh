@@ -2,7 +2,8 @@
 # extra-gate-dirs.settle.cases.sh — 푸는 쪽(Stop 3.5 · 발행 가드 ②)의 이연 처분
 # 케이스: 미충족 나열 비용 · 발행 ② 기록 읽기 실패 알림 · 막음 안내 문구(루트
 # 경로 문자 · 슬롯 값 검증 실패 · 세션 루트 자리뿐인 막음 · 자리 목록 없는 막음 ·
-# 기록 줄 길이 초과 · 큰 본문의 기록 없는 값 나열).
+# 기록 줄 길이 초과 · 큰 본문의 기록 없는 값 나열) · 막음 · 발행 안내가 실제 해제
+# 조건과 맞는가(출구 · "위 사유" · 슬롯 문구 · 나열 실패 · 발행 ① ② 의 리뷰 자리).
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
 # 거기와 notice·judge·capture·release·life·rootchar 케이스 파일에 있다:
@@ -27,7 +28,19 @@ TOK_DR_UNTRUSTED='harness.env 를 믿고 읽을 수 없'
 TOK_DR_BADVALUE='슬롯 값을 쓸 수 없'
 TOK_DR_ABOVE="위 '리뷰를 기다리는 자리'"
 TOK_DR_MERGE='[cc]/[cx] 태그로 통합'
-TOK_DR_TOOLONG='1023바이트를 넘는 값이라 다시 저장해도 풀리지 않는다'
+TOK_DR_TOOLONG='1023바이트를 넘으면 기록할 수 없어'
+TOK_DR_NOEXIT_LONG='다시 저장해도 · 저장소를 옮겨도 이번 막음은 풀리지 않는다'
+TOK_DR_OLD_MOVE='저장소를 더 짧은 경로로 옮기거나'   # 이번 막음을 풀지 못하는 출구
+TOK_DR_PROXY='알림이 나왔으면'                      # 값별이 아닌 대리 조건
+TOK_DR_SLOTCLAUSE='슬롯 항목은 세션 루트 _workspace 의 리뷰로 풀리지 않는다'
+TOK_DR_ABOVE_REASON='위 사유'
+TOK_DR_LISTFAIL='목록을 만들지 못했다'
+TOK_DR_NOEXIT_UNREC='다시 저장해도 · 파일 이름을 바꿔도 이번 막음은 풀리지 않는다'
+TOK_DR_OLD_RENAME='파일 이름을 바꾸거나'           # 이번 막음을 풀지 못하는 출구
+TOK_PUB_PERITEM='항목마다 그 리뷰 자리'
+TOK_PUB_SLOTWHERE='또는 슬롯 리뷰 자리의 *codex*.md'
+# 187398c 의 발행 ① 2단계 줄(골든 — 키가 없을 때의 기존 바이트).
+TOK_PUB_OLD_STEP2='  2. 결과를 _workspace/*codex*.md 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다).'
 TOK_DR_MLIST='현재 리뷰 자리 기록이 없는 값:'
 # 큰 본문 나열 케이스의 항목 수 — 값마다 300바이트 남짓이라 본문이 파이프 버퍼
 # (64 KB)의 몇 배다.
@@ -181,27 +194,49 @@ v06() { # 기다리는 자리 목록이 없는 막음(missing-record 뿐)은 "�
   report "$name" "$why"
 }
 
+#######################################
+# 기록 줄이 1023바이트를 넘는 슬롯 저장소(slot/<a×200>/<b×200>/T)를 커밋하고 Stop ·
+# 완료 게이트 훅이 깔린 프로젝트를 만든 뒤 그 저장소의 새 파일을 한 번 편집한다.
+# Globals:
+#   STOP_HOOK (읽음) · LP_S, LP_T, LP_V, MNA_PROJ, FIXTURE_FAIL (씀)
+# Arguments:
+#   $1 — 고정틀 이름
+# Returns:
+#   0 · 1 고정틀 실패(FIXTURE_FAIL)
+#######################################
+long_path_project() {
+  local f a b
+  f="$(new_dir "$1")" || { FIXTURE_FAIL='임시 디렉토리'; return 1; }
+  a="$(printf '%200s' '' | tr ' ' a)"; b="$(printf '%200s' '' | tr ' ' b)"
+  LP_S="$f/slot"; LP_T="$LP_S/$a/$b/T"; LP_V="$LP_T/src/v7.go"
+  mkdir -p "$LP_T/src" && printf 'k\n' > "$LP_T/src/k.go" \
+    && commit_repo "$LP_T" \
+    && new_mna_project 1 "HARNESS_EXTRA_GATE_DIRS=\"$LP_S\""$'\n' \
+    && cp "$STOP_HOOK" "$MNA_PROJ/.claude/hooks/" \
+    || { FIXTURE_FAIL="${FIXTURE_FAIL:-고정틀}"; return 1; }
+  edit_new "$MNA_PROJ" "$LP_V" || return 1
+  if [[ "$(record_lines_of "$MNA_PROJ" "$LP_V")" != '!' ]]; then
+    FIXTURE_FAIL='끝줄이 갱신 표시가 아니다'
+    return 1
+  fi
+}
+
 v07() { # 기록 줄이 1023바이트를 넘어 현재 기록을 못 쓴 값(영구)은 다시 저장해도
         # 기록되지 않는다 — Stop 이 "다시 저장하면 기록된다" 로만 안내하면 회복되지 않는
-        # 길로 보낸다. 다시 저장으로 풀리지 않는 경우와 그 출구를 함께 안내한다.
-  local name='v07 기록 줄 1023B 초과 값 → 다시 저장으로 안 풀림 안내' why=''
-  local f s t v a b
-  f="$(new_dir v07)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
-  a="$(printf '%200s' '' | tr ' ' a)"; b="$(printf '%200s' '' | tr ' ' b)"
-  s="$f/slot"; t="$s/$a/$b/T"; v="$t/src/v7.go"
-  mkdir -p "$t/src" && printf 'k\n' > "$t/src/k.go" && commit_repo "$t" \
-    && new_mna_project 1 "HARNESS_EXTRA_GATE_DIRS=\"$s\""$'\n' \
-    && cp "$STOP_HOOK" "$MNA_PROJ/.claude/hooks/" \
-    || { FIXTURE_FAIL="${FIXTURE_FAIL:-고정틀}"; report "$name" ''; return; }
-  edit_new "$MNA_PROJ" "$v" || { report "$name" ''; return; }
-  if [[ "$(record_lines_of "$MNA_PROJ" "$v")" != '!' ]]; then
-    FIXTURE_FAIL='끝줄이 갱신 표시가 아니다'
-    report "$name" ''
-    return
-  fi
+        # 길로 보낸다. 그 값의 조건(기록 줄 길이)과 사용자 판단 출구를 함께 안내하고,
+        # 이번 막음을 풀지 못하는 출구(저장소 이동)나 값별이 아닌 대리 조건(저장 때
+        # 알림)에 기대지 않는다.
+  local name='v07 기록 줄 1023B 초과 값 → 다시 저장 · 이동으로 안 풀림 · 사용자 판단'
+  local why=''
+  long_path_project v07 || { report "$name" ''; return; }
   run_stop "$MNA_PROJ"
   why="$(expect_dr_slot_block "$MNA_PROJ" "$TOK_DR_MISSING" "$TOK_DR_TOOLONG" \
-    "  - $v")"
+    "$TOK_DR_NOEXIT_LONG" "$TOK_DR_ASKUSER" "  - $LP_V")"
+  if [[ -z "$why" ]]; then
+    if contains "$ERR" "$TOK_DR_OLD_MOVE"; then why='저장소 이동을 출구로 안내한다'
+    elif contains "$ERR" "$TOK_DR_PROXY"; then why='저장 때 알림에 기댄 조건'
+    fi
+  fi
   report "$name" "$why"
 }
 
@@ -228,6 +263,149 @@ v08() { # 기록 없는 값(M) 나열은 본문이 파이프 버퍼보다 커도
     if ! contains "$ERR" "$TOK_DR_MLIST"; then why='기록 없는 값 절이 빠졌다'
     elif [[ "$n" != 2 ]]; then why="끝 값 나열 ${n}번(기대 2 — 대상 · 기록 없는 값)"
     fi
+  fi
+  report "$name" "$why"
+}
+
+v09() { # 저장소를 더 짧은 경로로 옮겨 다시 저장하고 모든 자리에 리뷰를 둬도 옛 값은
+        # 같은 값의 새 기록 줄이 없어 missing-record 로 남는다 — 이번 막음의 출구가
+        # 아니다(안내가 그렇게 말해야 한다).
+  local name='v09 1023B 초과 값 → 저장소를 옮겨 다시 저장 · 세 자리 리뷰 → 여전히 막음'
+  local why='' t2 v2
+  long_path_project v09 || { report "$name" ''; return; }
+  t2="$LP_S/T2"; v2="$t2/src/v7.go"
+  mv "$LP_T" "$t2" || { FIXTURE_FAIL='저장소 이동'; report "$name" ''; return; }
+  run_mna "$MNA_PROJ" edit "$v2"
+  review_at "$t2/_workspace" && review_at "$LP_S/_workspace_T2" \
+    && review_at "$MNA_PROJ/_workspace" || { report "$name" ''; return; }
+  run_stop "$MNA_PROJ"
+  why="$(expect_dr_slot_block "$MNA_PROJ" "$TOK_DR_MISSING" \
+    "$TOK_DR_NOEXIT_LONG" "  - $LP_V")"
+  report "$name" "$why"
+}
+
+v10() { # 슬롯 값 검증 실패(dir-unknown)로 기록 없는 절대 항목이 세션 루트 규칙이 되면
+        # 세션 루트 리뷰로 풀린다 — 막음 안내가 "슬롯 항목은 세션 루트 리뷰로 풀리지
+        # 않는다" · "위 사유를 해결하고" 라고 하면 사실이 아니다(dir-unknown 은 판정
+        # 방식을 알리는 사유라 풀기 조건이 아니다).
+  local name='v10 dir-unknown · 루트 자리뿐 → 슬롯 문구 · 위 사유 없음 · 루트 리뷰로 해제'
+  local why=''
+  stop_fixture || { report "$name" ''; return; }
+  set_env "$C3_R" "$(env_slot "$C3_F/no-such-slot")"
+  dr_flag "$C3_R" "$C3_T/src/v10.go" || { report "$name" ''; return; }
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_DIRUNK" "$TOK_DR_ABOVE" \
+    "  - $C3_R/_workspace")"
+  if [[ -z "$why" ]]; then
+    if contains "$ERR" "$TOK_DR_SLOTCLAUSE"; then why='슬롯 문구가 나왔다'
+    elif contains "$ERR" "$TOK_DR_ABOVE_REASON"; then why='위 사유 안내가 나왔다'
+    fi
+  fi
+  if [[ -z "$why" ]]; then
+    review_at "$C3_R/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[루트 리뷰] $why"
+  fi
+  report "$name" "$why"
+}
+
+v11() { # 나열의 중복 제거가 실패해(awk 심) 자리 · 값 목록이 비면 "위 사유를 먼저
+        # 해결하면" 이 가리킬 사유가 없다 — 나열 실패를 그대로 알린다. 막음은 그대로다.
+  local name='v11 나열 실패(중복 제거 awk 실패) → 위 사유 없음 · 나열 실패 안내 · 막음'
+  local why='' v shim real
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v11.go"
+  real="$(command -v awk)"
+  shim="$(new_dir awkshim)" \
+    && printf '#!/bin/sh\n[ "$1" = %s ] && exit 2\nexec %s "$@"\n' \
+      "'!seen[\$0]++'" "$real" > "$shim/awk" && chmod +x "$shim/awk" \
+    && dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" "$C3_T/_workspace" \
+    || { FIXTURE_FAIL="${FIXTURE_FAIL:-awk 심}"; report "$name" ''; return; }
+  local -x PATH="$shim:$PATH"
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_LISTFAIL")"
+  if [[ -z "$why" ]]; then
+    if contains "$ERR" "$TOK_DR_ABOVE_REASON"; then why='위 사유 안내가 나왔다'
+    elif contains "$ERR" "  - $C3_T/_workspace"; then
+      why='자리 목록이 나왔다(심이 중복 제거를 막지 못했다)'
+    fi
+  fi
+  report "$name" "$why"
+}
+
+v12() { # 기다리는 자리만 있고 사유가 없는 막음은 "위 사유를 해결하고" 가 가리킬 것이
+        # 없다 — 그 자리에 저장하면 풀린다고만 안내한다.
+  local name='v12 슬롯 자리만 · 사유 없음 → 위 사유 없음 · 슬롯 문구 있음' why='' v
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v12.go"
+  dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" "$C3_T/_workspace" \
+    || { report "$name" ''; return; }
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_ABOVE" "$TOK_DR_SLOTCLAUSE" \
+    "  - $C3_T/_workspace")"
+  [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_ABOVE_REASON" \
+    && why='위 사유 안내가 나왔다'
+  report "$name" "$why"
+}
+
+v13() { # 경로에 US 가 든 값(unrecordable)은 파일 이름을 바꿔 새 경로를 저장해도 옛 값이
+        # 남아 막음이 풀리지 않는다 — 이름 바꾸기를 출구로 안내하지 않는다.
+  local name='v13 unrecordable → 이름을 바꿔 저장 · 자리 리뷰 → 여전히 막음 · 출구 문구'
+  local why='' v v2
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/a${US}b.go"; v2="$C3_T/src/ab.go"
+  edit_new "$C3_R" "$v" && mv "$v" "$v2" || { report "$name" ''; return; }
+  run_mna "$C3_R" edit "$v2"
+  review_at "$C3_T/_workspace" && review_at "$C3_S/_workspace_T" \
+    && review_at "$C3_R/_workspace" || { report "$name" ''; return; }
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_UNREC" "$TOK_DR_NOEXIT_UNREC")"
+  [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_OLD_RENAME" \
+    && why='이름 바꾸기를 출구로 안내한다'
+  report "$name" "$why"
+}
+
+v14() { # 발행 ① (듀얼리뷰 미해소)의 저장 안내 — 슬롯 모드에서 "_workspace 또는 슬롯
+        # 자리에 저장하면 자동 해제" 는 사실이 아니다(슬롯 항목은 그 자리에서만 풀린다).
+        # 키가 없으면 기존 줄 바이트 그대로다.
+  local name='v14 발행 ① 슬롯 모드 → 항목마다 그 자리 안내 · 키 부재 → 기존 줄' why=''
+  local v
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v14.go"
+  dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" "$C3_T/_workspace" \
+    || { report "$name" ''; return; }
+  run_pub "$C3_R"
+  if [[ "$RC" -ne 2 ]]; then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" "$TOK_PUB_PERITEM"; then
+    why="항목별 자리 안내 없음 [$(flat "$ERR" | head -c 200)]"
+  elif contains "$ERR" "$TOK_PUB_SLOTWHERE 로 저장한다 (듀얼리뷰"; then
+    why='또는 자리 저장으로 자동 해제라고 안내한다'
+  fi
+  if [[ -z "$why" ]]; then
+    set_env "$C3_R" "$ENV_NO_KEY"
+    run_pub "$C3_R"
+    if ! printf '%s\n' "$ERR" | grep -qxF -- "$TOK_PUB_OLD_STEP2"; then
+      why='[키 부재] 기존 2단계 줄이 아니다'
+    elif contains "$ERR" "$TOK_PUB_PERITEM"; then why='[키 부재] 슬롯 안내가 섞였다'
+    fi
+  fi
+  report "$name" "$why"
+}
+
+v15() { # 발행 ② 가 기록을 읽지 못하면(모듈 없음) 세션 루트만 본다 — 차단 안내가 "또는
+        # 슬롯 리뷰 자리" 에 저장하라고 하면 그 자리 리뷰로는 통과하지 못한다.
+  local name='v15 발행 ② 기록 못 읽음 → 리뷰 자리 안내는 세션 루트만 · 사유 한 줄'
+  local why=''
+  stop_fixture || { report "$name" ''; return; }
+  rec "$C3_R" "$C3_T/src/v15.go" "$C3_T/_workspace" \
+    && rm -f "$C3_R/.claude/hooks/_extra_gate_dirs.sh" \
+    || { report "$name" ''; return; }
+  run_pub "$C3_R"
+  if [[ "$RC" -ne 2 ]]; then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" "$TOK_PUB_NOTE"; then why='사유 한 줄 없음'
+  elif contains "$ERR" "$TOK_PUB_SLOTWHERE"; then
+    why='읽지 못한 슬롯 자리에 저장하라고 안내한다'
   fi
   report "$name" "$why"
 }

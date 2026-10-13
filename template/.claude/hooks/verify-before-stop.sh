@@ -717,14 +717,14 @@ dualreview_reason_text() {
   case "$1" in
     missing-record)
       if [ "$2" = on ]; then
-        echo "현재 리뷰 자리 기록이 없다 — 세션 폴더 쓰기를 확인하고 그 파일을 다시 저장하면 기록된다. 다만 그 값의 기록 줄(값 경로와 그 저장소의 리뷰 자리 경로들을 이은 한 줄)이 1023바이트를 넘으면 기록할 수 없어, 다시 저장해도 · 저장소를 옮겨도 이번 막음은 풀리지 않는다 — 사용자에게 알려 판단을 받아라(다음부터 막히지 않게 저장소를 더 짧은 경로로 옮길지는 사용자가 정한다)."
+        echo "현재 리뷰 자리 기록이 없다 — 세션 폴더 쓰기와 그 저장소의 git 판독(소유권 · 권한 · 손상)을 확인하고 그 파일을 다시 저장하면 기록된다. 다만 그 값의 기록 줄이 1023바이트를 넘으면 기록할 수 없어(기록 줄 = 값 경로와 리뷰 자리 경로들을 구분 바이트 하나씩으로 이은 것 — 자리는 슬롯 저장소 항목이면 그 저장소의 _workspace 와 옆 _workspace_<저장소> 둘, 설계 산출물은 그 폴더 하나), 다시 저장해도 · 저장소를 옮겨도 이번 막음은 풀리지 않는다 — 사용자에게 알려 판단을 받아라(다음부터 막히지 않게 저장소를 더 짧은 경로로 옮길지는 사용자가 정한다)."
       else
         echo "현재 리뷰 자리 기록이 없다 — 지금은 슬롯이 꺼져 있어 저장해도 기록되지 않는다. harness.env 슬롯 설정을 고친 뒤 그 파일을 다시 저장하라."
       fi ;;
     unrecordable)
       echo "경로에 제어문자(US)가 있어 리뷰 자리를 기록할 수 없는 값이다(영구) — 다시 저장해도 · 파일 이름을 바꿔도 이번 막음은 풀리지 않는다. 사용자에게 알려 판단을 받아라." ;;
     record-unusable)
-      echo "리뷰 자리 기록 파일을 쓰거나 읽을 수 없다 — 세션 폴더 권한을 고친 뒤 고친 파일들을 다시 저장하라." ;;
+      echo "리뷰 자리 기록 파일을 쓰거나 읽을 수 없다 — 세션 폴더의 .review-dirs 가 일반 파일이 아니거나(폴더 · FIFO · 끊긴 링크) 읽기 · 쓰기 권한이 없다. 읽고 쓸 수 있는 일반 파일이 되게(파일 종류 · 권한) 고친 뒤 고친 파일들을 다시 저장하라." ;;
     root-unusable)
       echo "세션 루트 경로에 개행이나 제어문자(US)가 있어 리뷰 자리를 판정할 수 없다 — 사용자에게 알려 판단을 받아라(세션 루트 폴더 이름을 바꿀지, 슬롯 키를 끌지는 사용자가 정한다)." ;;
     module)
@@ -768,10 +768,13 @@ dualreview_slot_block() {
   # sed 는 입력을 끝까지 읽는다 — `printf | grep -q` 로 판단하면 grep 이 첫 일치에서 닫아
   # 큰 본문(파이프 버퍼 초과)의 printf 가 SIGPIPE 로 죽고, pipefail 아래 조건이 거짓이 돼
   # 나열이 조용히 빠진다.
-  waiting="$(printf '%s\n' "$body" | sed -n 's/^W /  - /p')"
-  missing="$(printf '%s\n' "$body" | sed -n 's/^M /  - /p')"
+  # 자리 · 값은 바이트열이다 — 로케일에 기대지 않게 LC_ALL=C 로 다룬다(UTF-8 로케일의 GNU
+  # grep 은 잘못된 UTF-8 이 든 줄을 이진으로 보고 줄을 내지 않으며 경고를 stderr 에 섞는다).
+  waiting="$(printf '%s\n' "$body" | LC_ALL=C sed -n 's/^W /  - /p')"
+  missing="$(printf '%s\n' "$body" | LC_ALL=C sed -n 's/^M /  - /p')"
   # 세션 루트 자리 말고 기다리는 자리(슬롯 자리)가 있는가.
-  slot_waits="$(printf '%s\n' "$waiting" | grep -vxF -- "  - $DR_ROOT_WS")"
+  slot_waits="$(printf '%s\n' "$waiting" \
+    | LC_ALL=C grep -vxF -- "  - $DR_ROOT_WS" 2>/dev/null)"
   # dir-unknown 은 판정 방식을 알리는 사유라 풀기 전에 해결할 조건이 아니다.
   for code in $reasons; do
     [ "$code" = dir-unknown ] || blocking=1

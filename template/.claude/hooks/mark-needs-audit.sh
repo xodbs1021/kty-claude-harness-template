@@ -73,12 +73,14 @@ MSG_SWEEP_TRUNCATED="이 명령이 바꾼 파일이 너무 많아 일부만 게�
 MSG_SWEEP_PARTIAL="이 명령이 바꾼 파일 중 일부는 게이트에 기록하지 못했다(경로에 개행이 있거나 기록에 실패). 그 파일들은 수동으로 확인하라."
 # 슬롯이 켜졌을 때만: 명령문 경로가 상한을 넘었거나 홈 경로 토큰을 읽지 못해 뿌리를 다 못 훑음.
 MSG_SWEEP_ROOT_CAP="이 명령이 가리킨 경로가 많거나 그 경로를 읽지 못해 일부 저장소·작업 공간만 훑었을 수 있다. 나머지에서 바꾼 파일에는 게이트가 서지 않았을 수 있으니 수동으로 확인하라."
+# 슬롯이 켜졌을 때만: 스윕이 시간 예산에 닿아 끊김(Bash 훅 30 s 상한 전에 스스로 멈춘다).
+MSG_SWEEP_TIME_CUT="이 명령의 스윕이 시간 예산을 다 써서 바꾼 파일 일부만 게이트에 기록했다. 나머지에는 게이트가 서지 않았으니 수동으로 확인하라."
 # 추가 관할 폴더 슬롯(ADR-0026)을 쓸 수 없을 때의 알림 머리. 사유 문구는 _common.sh 의
 # extra_problem_text 가 뒤에 붙는다 — 모듈이 없어도 나가야 하기 때문이다.
 MSG_EXTRA_HEAD="추가 관할 폴더 슬롯(harness.env 의 HARNESS_EXTRA_GATE_DIRS)을 쓸 수 없다 — 고칠 때까지 세션 루트 밖 저장소 편집에 게이트가 서지 않고 리뷰 자리도 기록되지 않는다. 사유: "
 # 리뷰 자리 기록(슬롯 수명 계약 ①·③) 실패 — 회복 가능(쓰기 실패)과 영구(경로에 US·LF).
 MSG_RECORD_FAIL="리뷰 자리 기록에 실패했다(세션 폴더 쓰기 확인). 그 파일을 다시 저장하라 — 그 전까지 그 값은 턴 종료에서 막히거나 옛 소속 자리 리뷰로 풀릴 수 있다."
-MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있어 리뷰 자리를 기록하지 못했다(영구) — 그 값은 턴 종료에서 막힌다. 파일 이름을 바꾸거나 사용자에게 알려 판단을 받아라."
+MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있거나 기록 줄이 1023바이트를 넘어 리뷰 자리를 기록하지 못했다(영구) — 그 값이 슬롯 안 항목이면 턴 종료에서 막힌다. 파일 이름을 바꾸거나 사용자에게 알려 판단을 받아라."
 
 # --- 계약 함수 ------------------------------------------------------------
 
@@ -153,7 +155,9 @@ extra_gate_setup() {
 finish_hook() {
   local msg="${1:-}" notice="" seen=""
   if [[ -n "$NOTICE_CODE" ]]; then
-    { IFS= read -r seen < "$EXTRA_NOTICE_FILE"; } 2>/dev/null
+    # 표식은 일반 파일일 때만 읽는다 — FIFO 면 시간 제한 없이 기다린다. 아니면 매번 알린다.
+    [[ -f "$EXTRA_NOTICE_FILE" ]] \
+      && { IFS= read -r seen < "$EXTRA_NOTICE_FILE"; } 2>/dev/null
     [[ "$seen" == "$NOTICE_CODE" ]] \
       || notice="$MSG_EXTRA_HEAD$(extra_problem_text "$NOTICE_CODE")."
   fi
@@ -161,7 +165,9 @@ finish_hook() {
   [[ -n "$notice" ]] && msg="$notice${msg:+ $msg}"
   [[ -n "$msg" ]] || exit 0
   emit_message "$msg" 2>/dev/null || exit 0
-  if [[ -n "$notice" ]]; then
+  # 쓰기도 일반 파일이거나 아직 없을 때만 — FIFO 를 쓰기로 열면 읽는 쪽을 기다린다.
+  if [[ -n "$notice" ]] && { [[ -f "$EXTRA_NOTICE_FILE" ]] \
+      || [[ ! -e "$EXTRA_NOTICE_FILE" && ! -L "$EXTRA_NOTICE_FILE" ]]; }; then
     { printf '%s\n' "$NOTICE_CODE" > "$EXTRA_NOTICE_FILE"; } 2>/dev/null
   fi
   exit 0
@@ -357,6 +363,7 @@ SWEEP_MAX_ROOTS=3      # 프로젝트 밖 뿌리 탐색의 상한
 SWEEP_BUDGET=20
 SWEEP_END='.'          # 순회 입력의 끝 표지(find 경로·status 레코드가 될 수 없다)
 SWEEP_KEEP_WINDOW=0    # 순회 입력을 다 읽지 못했다 — 창을 남겨 다음 Bash 가 다시 훑는다
+SWEEP_TIME_CUT=0       # 시간 예산에 닿아 끊었다(절단 문구를 가른다)
 
 # find 의 prune 목록. **성능을 위한 것만 남긴다.**
 # 예전엔 dist·build·target·vendor 도 잘라냈는데, 그것들이 **git 에 추적 중**이면
@@ -423,8 +430,8 @@ sweep_roots() {
     [ -n "$root" ] && SWEEP_BASE="$SWEEP_BASE$root"$'\n'
   fi
   for tok in $(abs_path_tokens "$cmd"); do
-    if [ "$SWEEP_TOKEN_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
-      SWEEP_ROOTS_PARTIAL=1   # 알림은 슬롯이 켜졌을 때만 나간다(sweep_bash_writes 끝)
+    # 키가 없으면 예전 그대로 토큰마다 세고 상한부터 본다(187398c 와 같은 뿌리 집합).
+    if [ "$EXTRA_ON" -eq 0 ] && [ "$SWEEP_TOKEN_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
       break
     fi
     # 지워진 경로(`rm <파일>`)는 남은 가장 가까운 조상으로, 디렉토리 토큰(`git -C <경로>`)은
@@ -441,6 +448,15 @@ sweep_roots() {
     fi
     [ -n "$root" ] || continue
     [ "$root" = "$proj" ] && continue
+    # 슬롯이 켜졌으면 같은 저장소를 가리키는 토큰 여럿은 뿌리 하나로 센다 — 공유 상한을
+    # 먹어 다른 뿌리를 막거나 상한 알림을 잘못 내지 않게. 상한은 새 뿌리를 더할 때만 본다.
+    if [ "$EXTRA_ON" -eq 1 ]; then
+      case $'\n'"$SWEEP_BASE" in *$'\n'"$root"$'\n'*) continue ;; esac
+      if [ "$SWEEP_TOKEN_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
+        SWEEP_ROOTS_PARTIAL=1
+        break
+      fi
+    fi
     SWEEP_BASE="$SWEEP_BASE$root"$'\n'
     SWEEP_TOKEN_ROOTS=$((SWEEP_TOKEN_ROOTS + 1))
   done
@@ -461,6 +477,7 @@ SLOT_REPO_ROOTS=""      # 더할 저장소 뿌리(LF 줄 목록, 물리 경로 �
 SLOT_WS_ROOTS=""        # 작업 공간 뿌리(LF 줄 목록, 물리 경로 — 개행 없음)
 SWEEP_ROOTS_PARTIAL=0   # 뿌리를 다 훑지 못했다(상한 · 홈 토큰 추출 실패 · 개행 · 입력 유실)
 SLOT_UNITS=0            # 상한에 센 뿌리 수(SWEEP_TOKEN_ROOTS 에서 시작)
+SLOT_PAIR_REPOS=""      # 쌍 추론으로만 얻은 저장소 뿌리(LF 줄 목록) — 창 기반 find 만 한다
 JUDGED=""               # 작업 공간 뿌리에서 판정한 경로(LF 줄 목록 — 개행 없는 것만)
 ROOT_OUT=""             # root_dir · root_top 의 결과
 
@@ -646,6 +663,7 @@ slot_sweep_roots() {
   SLOT_REPO_ROOTS=""
   SLOT_WS_ROOTS=""
   SLOT_UNITS="$SWEEP_TOKEN_ROOTS"
+  SLOT_PAIR_REPOS=""
   if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ]; then
     add_slot_repo "$HARNESS_CWD" 0
     add_slot_ws "$HARNESS_CWD" 0
@@ -686,7 +704,8 @@ slot_pair_roots() {
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     t="$(sibling_repo_of "$r")" && [ -d "$t" ] || continue
     root_top "$t/." && [ "$ROOT_OUT" -ef "$t" ] || continue
-    push_slot_repo "$ROOT_OUT" 0
+    listed_same "$SWEEP_BASE$SLOT_REPO_ROOTS" "$ROOT_OUT" && continue
+    push_slot_repo "$ROOT_OUT" 0 && SLOT_PAIR_REPOS="$SLOT_PAIR_REPOS$ROOT_OUT"$'\n'
   done
 }
 
@@ -698,7 +717,8 @@ slot_pair_roots() {
 #   0 다 씀 · 1 남음(키가 없으면 늘 1 — I2)
 #######################################
 sweep_budget_spent() {
-  [ "$EXTRA_ON" -eq 1 ] && [ "$SECONDS" -ge "$SWEEP_BUDGET" ]
+  [ "$EXTRA_ON" -eq 1 ] && [ "$SECONDS" -ge "$SWEEP_BUDGET" ] || return 1
+  SWEEP_TIME_CUT=1
 }
 
 #######################################
@@ -811,6 +831,9 @@ sweep_repo_root() {
   # 한국어 파일명을 쓰는 저장소에서는 상시 조건이다(codex r2 지적, [cc] 실측).
   # -z 는 인용 없이 NUL 로 끊어 준다. 레코드 = 상태 2글자 + 공백 + 경로.
   # git 이 실패해도(저장소 아님) 끝 표지는 온다 — 표지가 없을 때만 입력 유실이다.
+  # 쌍 추론으로만 얻은 저장소는 건너뛴다 — 명령이 가리킨 곳이 아니라 그 형제라, 창과
+  # 무관한 미커밋 삭제를 판정하면 다른 트랙의 삭제까지 이 세션 의무가 된다.
+  case $'\n'"$SLOT_PAIR_REPOS" in *$'\n'"$root"$'\n'*) return 0 ;; esac
   ended=0
   while IFS= read -r -d '' st; do
     [ "$st" = "$SWEEP_END" ] && { ended=1; break; }
@@ -866,7 +889,13 @@ sweep_bash_writes() {
     root="${rest%%$'\n'*}"
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     [ -n "$root" ] || continue
-    case "$seen" in *"$root"$'\n'*) continue ;; esac
+    # 슬롯이 켜졌으면 줄 단위 정확 일치로 거른다 — 앞 뿌리의 접미가 뒤 뿌리와 같아도
+    # 뒤 뿌리를 건너뛰지 않게. 키가 없으면 예전 비교 그대로다(187398c 와 같은 뿌리 집합).
+    if [ "$EXTRA_ON" -eq 1 ]; then
+      case $'\n'"$seen" in *$'\n'"$root"$'\n'*) continue ;; esac
+    else
+      case "$seen" in *"$root"$'\n'*) continue ;; esac
+    fi
     seen="$seen$root"$'\n'
     sweep_repo_root "$root"
     [ "$truncated" -eq 1 ] && break
@@ -879,7 +908,9 @@ sweep_bash_writes() {
   # 조용히 끊으면 사용자는 게이트가 다 섰다고 믿는데 실제로는 아니다 — 이 훅이 위음성을
   # 대하는 방식(fail-loud)과 어긋난다. 메시지는 **하나로** 정하고, 출력은 finish_hook 이
   # 한 번만 한다(PostToolUse 계약 — JSON 한 줄).
-  if [ "$truncated" -eq 1 ]; then
+  if [ "$truncated" -eq 1 ] && [ "$SWEEP_TIME_CUT" -eq 1 ]; then
+    SWEEP_MSG="$MSG_SWEEP_TIME_CUT"
+  elif [ "$truncated" -eq 1 ]; then
     SWEEP_MSG="$MSG_SWEEP_TRUNCATED"
   elif [ "$file_msg" -eq 1 ]; then
     SWEEP_MSG="$MSG_SWEEP_PARTIAL"

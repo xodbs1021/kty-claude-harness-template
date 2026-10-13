@@ -21,13 +21,14 @@ if [[ -z "${MNA_HOOK-}" ]]; then
 fi
 
 BOUND_LATE='SECONDS=1000'   # 시작부터 시간 예산을 넘긴 훅 셸
+TOK_TIME_CUT='시간 예산을 다 써서'   # 시간 예산 절단 문구(MSG_SWEEP_TIME_CUT)
 
 # window_left <프로젝트> — Bash 창이 남아 있는가(소비되지 않았나).
 window_left() { ls "$1/.claude/.bash-windows/" 2>/dev/null | grep -q .; }
 
-# expect_budget_cut <프로젝트> <값> — 절단 알림 · 창 소비 · 그 값의 판정 없음.
+# expect_budget_cut <프로젝트> <값> — 시간 절단 알림 · 창 소비 · 그 값의 판정 없음.
 expect_budget_cut() {
-  if ! contains "$OUT" "$GOLDEN_TRUNCATED"; then printf '절단 알림 없음 [%s]' "$OUT"
+  if ! contains "$OUT" "$TOK_TIME_CUT"; then printf '시간 절단 알림 없음 [%s]' "$OUT"
   elif window_left "$1"; then printf '창을 소비하지 않았다'
   else expect_flags "$1" 0 "$2"
   fi

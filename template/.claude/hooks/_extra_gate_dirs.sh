@@ -37,10 +37,15 @@
 #   검사가 막는다. 그 검사에서 결과를 바꾸는 것은 쓰기 가능(-w)이다. 일반 파일(-f)·
 #   읽기(-r)는 사유 문구를 정밀화하는 용도다 — 그 둘이 없으면 판독이 실패해 어차피
 #   평가 실패로 막힌다.
+#   기록 한 줄은 1023바이트(개행 포함 1024)를 넘지 않는다 — bash 3.2 의 printf 는 그보다
+#   긴 줄을 1024바이트씩 나눠 써서, 병렬 덧붙이기가 그 사이에 끼면 줄이 섞여 다른 값·자리로
+#   읽힌다. 넘는 줄은 쓰지 않는다(rc 2 영구) — ③ 이 그렇게 빠지면 끝줄이 갱신 표시로 남아
+#   막히고, ① 까지 빠지면 기록 없는 슬롯 항목으로 막힌다.
 
 EXTRA_GATE_DIR=''          # 켜졌을 때 슬롯의 물리 절대경로(validate_extra_gate_dir)
 EXTRA_GATE_PROBLEM=''      # 불량 사유: colon|tilde|relative|missing|newline|root
 REVIEW_RECORD_SEP=$'\037'  # 기록 형식의 필드 구분자(US)
+REVIEW_RECORD_MAX=1023    # 기록 한 줄의 최대 바이트(개행 제외 — 한 번의 write 로 나가는 길이)
 REVIEW_VERDICT_REASONS=''  # read_review_verdict 가 쌓는 사유 코드(공백 구분)
 REVIEW_VERDICT_LINES=''    # read_review_verdict 가 쌓는 W·M 줄(LF 구분)
 SAME_DIR_PREFIX=''         # find_same_dir_prefix 가 찾은 접두
@@ -300,15 +305,17 @@ sibling_repo_of() {
 # 후보 추출기(awk)는 끝에 표지 줄 `.` 을 낸다(후보는 `~`·`$` 로 시작해 겹치지
 # 않는다). 표지가 없으면 추출이 실패한 것이다 — 빈 출력 + rc 0 으로 숨기지 않는다.
 # 순회는 매개변수 확장으로 한다(임시 파일·프로세스 치환 없음).
+# 홈 기준인데 펼칠 수 없는 토큰(`~사용자` · 홈 경로 모름)이 있으면 rc 3 으로 알린다 —
+# 그 토큰이 가리킨 곳을 훑지 못한 것이다. 펼친 나머지는 그대로 낸다.
 # Arguments:
 #   $1 — 명령문
 # Outputs:
 #   펼친 절대경로, 한 줄에 하나
 # Returns:
-#   0 · 2 후보 추출 실패(출력 없음)
+#   0 · 2 후보 추출 실패(출력 없음) · 3 펼치지 못한 홈 토큰이 있음(나머지는 냈다)
 #######################################
 home_path_tokens() {
-  local toks tok nl=$'\n'
+  local toks tok nl=$'\n' partial=0
   toks="$(printf '%s\n' "${1:-}" | LC_ALL=C awk '
     {
       s = $0
@@ -324,8 +331,11 @@ home_path_tokens() {
   while [[ -n "$toks" ]]; do
     tok="${toks%%"$nl"*}"
     toks="${toks#*"$nl"}"
-    [[ -n "$tok" ]] && expand_home_path "$tok"
+    [[ -n "$tok" ]] || continue
+    expand_home_path "$tok"
+    [[ $? -eq 1 ]] && partial=1
   done
+  ((partial)) && return 3
   return 0
 }
 
@@ -348,19 +358,21 @@ has_record_separator() {
 }
 
 #######################################
-# 기록 한 줄을 덧붙인다 — 기록 파일에 쓰는 유일한 자리.
+# 기록 한 줄을 덧붙인다 — 기록 파일에 쓰는 유일한 자리. 줄은 한 번의 write 로 나가야
+# 병렬 덧붙이기와 섞이지 않으므로 1023바이트를 넘는 줄은 쓰지 않는다(머리 주석).
 # Globals:
-#   REVIEW_DIRS_FILE (읽음)
+#   REVIEW_DIRS_FILE, REVIEW_RECORD_MAX (읽음)
 # Arguments:
 #   $1 — 줄(개행 없음)
 # Returns:
-#   0 · 1 쓰기 실패(기록 경로 미설정 포함)
+#   0 · 1 쓰기 실패(기록 경로 미설정 포함) · 2 줄이 1023바이트를 넘음(영구)
 #######################################
 append_review_record() {
-  local f="${REVIEW_DIRS_FILE:-}"
+  local f="${REVIEW_DIRS_FILE:-}" line="${1:-}" LC_ALL=C
   [[ -n "$f" ]] || return 1
+  ((${#line} <= REVIEW_RECORD_MAX)) || return 2
   # 중괄호가 필요하다: 리다이렉트 열기 실패는 뒤에 붙인 2>/dev/null 보다 먼저 보고된다.
-  { printf '%s\n' "${1:-}" >> "$f"; } 2>/dev/null
+  { printf '%s\n' "$line" >> "$f"; } 2>/dev/null
 }
 
 #######################################
@@ -370,7 +382,7 @@ append_review_record() {
 # Arguments:
 #   $1 — 플래그 값
 # Returns:
-#   0 · 1 쓰기 실패 · 2 값에 US·LF(영구 기록 불가 — 쓰지 않는다)
+#   0 · 1 쓰기 실패 · 2 값에 US·LF 이거나 줄이 너무 김(영구 기록 불가 — 쓰지 않는다)
 #######################################
 record_review_pending() {
   local v="${1:-}"
@@ -387,7 +399,7 @@ record_review_pending() {
 # Arguments:
 #   $1 — 플래그 값, $2... — 리뷰 자리
 # Returns:
-#   0 · 1 쓰기 실패 · 2 값이나 자리에 US·LF(쓰지 않는다)
+#   0 · 1 쓰기 실패 · 2 값이나 자리에 US·LF 이거나 줄이 너무 김(쓰지 않는다)
 #######################################
 record_review_dirs() {
   local v="${1:-}" line d

@@ -103,7 +103,20 @@ fi
 # 관할 폴더 값은 읽혀도 쓸 수 없을 수 있다(형식·없는 폴더·모듈 유실) — 그러면 슬롯이
 # 꺼지므로 같은 줄에 알린다. 검증은 슬롯 모듈의 것을 그대로 쓴다(규칙의 사본 금지).
 # 모듈이 없으면 사유 문구는 _common.sh 에서 나간다.
-if extra_gate_key_state "$envfile"; then
+extra_gate_key_state "$envfile"
+key_state=$?
+# 판독기는 부재(rc 3)라 하는데 자리가 읽을 수 없는 꼴이면(폴더·끊긴 링크·일반 파일 아래)
+# 래퍼가 UNTRUSTED 다 — 판독 불가 목록에 이 키가 없으면 여기서 따로 알린다(침묵 금지).
+if [[ "$key_state" -eq 1 ]]; then
+  case " $bad_keys" in
+    *" $EXTRA_GATE_KEY "*) ;;
+    *)
+      slot_msg="harness.env 추가 관할 폴더 경고: $(extra_problem_text untrusted)."
+      slot_msg="$slot_msg 슬롯이 꺼져 세션 루트 밖 저장소 편집에 게이트가 서지 않습니다."
+      msg="${msg:+$msg }$slot_msg" ;;
+  esac
+fi
+if [[ "$key_state" -eq 0 ]]; then
   problem=""
   slot_module="$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"
   if ! { . "$slot_module"; } 2>/dev/null; then

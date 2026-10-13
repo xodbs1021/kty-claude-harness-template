@@ -169,7 +169,10 @@ finish_hook() {
   # 쓰기도 일반 파일이거나 아직 없을 때만 — FIFO 를 쓰기로 열면 읽는 쪽을 기다린다.
   if [[ -n "$notice" ]] && { [[ -f "$EXTRA_NOTICE_FILE" ]] \
       || [[ ! -e "$EXTRA_NOTICE_FILE" && ! -L "$EXTRA_NOTICE_FILE" ]]; }; then
-    { printf '%s\n' "$NOTICE_CODE" > "$EXTRA_NOTICE_FILE"; } 2>/dev/null
+    # 쓰기 실패(EFBIG 등) 때 bash 3.2 printf 가 버퍼에 남긴 줄이 exit 때 stdout 으로 나가
+    # JSON 한 줄을 깨지 않게 버퍼를 /dev/null 로 비운다(append_review_record 와 같다).
+    { printf '%s\n' "$NOTICE_CODE" > "$EXTRA_NOTICE_FILE"; } 2>/dev/null \
+      || echo >/dev/null 2>&1
   fi
   exit 0
 }
@@ -687,6 +690,8 @@ add_slot_repo() {
 #######################################
 add_slot_ws() {
   local p="$1" w="" was_set=0
+  # 절대경로만 걷는다 — 상대경로(훅 입력 cwd `.`)는 성분을 떼도 문자열이 줄지 않는다.
+  case "$p" in /*) ;; *) return 1 ;; esac
   shopt -q nocasematch && was_set=1
   shopt -s nocasematch
   while [ -n "$p" ]; do
@@ -694,6 +699,7 @@ add_slot_ws() {
     case "${p##*/}" in
       _workspace | _workspace_*) w="$p"; break ;;
     esac
+    [ "${p%/*}" != "$p" ] || break   # 줄지 않으면 멈춘다(끝나지 않는 걸음 방지)
     p="${p%/*}"
   done
   [ "$was_set" -eq 1 ] || shopt -u nocasematch

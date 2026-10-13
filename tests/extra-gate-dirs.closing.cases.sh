@@ -45,11 +45,15 @@ home_path_tokens "npm pkg set a.b=~4.17.21 a=~4.17.21"; echo "v=$?"' HOME=/h
 }
 
 k33() { # 있는 사용자의 `~사용자` 는 셸이 그 홈으로 펼친다 — 훅은 그 홈을 모르니 알린다.
-  local name='k33 있는 사용자의 ~root → 모듈 rc 3 · 부분 알림' why=''
+        # `~+` · `~-` 도 셸이 cwd · 이전 cwd 로 펼치는 자리라 알린다.
+  local name='k33 있는 사용자의 ~root · ~+ · ~- → 모듈 rc 3 · 부분 알림' why=''
   run_module '
-home_path_tokens "cat ~root/a"; echo "r=$?"' HOME=/h
+home_path_tokens "cat ~root/a"; echo "r=$?"
+home_path_tokens "cat ~+/a"; echo "p=$?"
+home_path_tokens "cd ~-"; echo "m=$?"' HOME=/h
   if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
-  elif [[ "$(flat "$OUT")" != 'r=3' ]]; then why="모듈 판독 [$(flat "$OUT")]"
+  elif [[ "$(flat "$OUT")" != 'r=3 p=3 m=3' ]]; then
+    why="모듈 판독 [$(flat "$OUT")]"
   fi
   if [[ -z "$why" ]]; then
     sweep_fixture || { report "$name" ''; return; }

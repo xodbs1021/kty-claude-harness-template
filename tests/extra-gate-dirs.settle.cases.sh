@@ -12,8 +12,8 @@
 #   env_untrusted · rootchar_fixture · new_mna_project · commit_repo · set_env
 #   edit_new · record_lines_of · run_common_bounded · new_dir · report
 #   contains · flat · MODULE · STOP_HOOK · C3_F · C3_R · C3_S · C3_T · RC_ROOT
-#   RC_BASE · MNA_PROJ · TOK_DR_* · TOK_PUB_NOTE · ENV_NO_KEY · T_FLAG · US
-#   OUT · ERR · RC
+#   RC_BASE · MNA_PROJ · TOK_DR_* · TOK_PUB_NOTE · TOK_RECORD_* · ENV_NO_KEY
+#   T_FLAG · US · OUT · ERR · RC
 # 셸 이식성: macOS 기본 bash 는 3.2 다. ${var,,}·mapfile·연관배열 금지.
 
 if [[ -z "${MNA_HOOK-}" ]]; then
@@ -39,6 +39,14 @@ TOK_DR_NOEXIT_UNREC='다시 저장해도 · 파일 이름을 바꿔도 이번 �
 TOK_DR_OLD_RENAME='파일 이름을 바꾸거나'           # 이번 막음을 풀지 못하는 출구
 TOK_PUB_PERITEM='항목마다 그 리뷰 자리'
 TOK_PUB_SLOTWHERE='또는 슬롯 리뷰 자리의 *codex*.md'
+TOK_DR_PLACES='설계 산출물은 그 폴더 하나'   # 기록 줄 구성(자리 수는 항목 꼴마다)
+TOK_DR_KIND='일반 파일이 아니거나'           # record-unusable 의 실제 사유(종류 · 권한)
+TOK_DR_OLD_PERM='세션 폴더 권한을 고친 뒤'   # 폴더 · FIFO 에는 맞지 않는 옛 출구
+TOK_PUB_RECORDED='리뷰 자리가 기록된 슬롯 항목은'
+TOK_PUB_OLD_ALL='나열하고, 슬롯 항목은'      # 기록 없는 항목까지 아우르던 옛 문구
+TOK_RECORD_GIT='게이트는 섰고 그 값은 턴 종료에서 막힌다'   # 슬롯 git 판독 실패 알림
+TOK_GIT_OUTSIDE='앵커 밖 파일에는 게이트가 서지 않았으니'    # 이 값에는 맞지 않는 옛 문구
+TOK_DR_GITCHK='그 저장소의 git 판독'         # missing-record 의 확인 대상(쓰기만 아님)
 # 187398c 의 발행 ① 2단계 줄(골든 — 키가 없을 때의 기존 바이트).
 TOK_PUB_OLD_STEP2='  2. 결과를 _workspace/*codex*.md 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다).'
 TOK_DR_MLIST='현재 리뷰 자리 기록이 없는 값:'
@@ -198,7 +206,8 @@ v06() { # 기다리는 자리 목록이 없는 막음(missing-record 뿐)은 "�
 # 기록 줄이 1023바이트를 넘는 슬롯 저장소(slot/<a×200>/<b×200>/T)를 커밋하고 Stop ·
 # 완료 게이트 훅이 깔린 프로젝트를 만든 뒤 그 저장소의 새 파일을 한 번 편집한다.
 # Globals:
-#   STOP_HOOK (읽음) · LP_S, LP_T, LP_V, MNA_PROJ, FIXTURE_FAIL (씀)
+#   STOP_HOOK (읽음) · LP_S, LP_T, LP_V, LP_EDIT_OUT(첫 편집의 훅 출력), MNA_PROJ,
+#   FIXTURE_FAIL (씀)
 # Arguments:
 #   $1 — 고정틀 이름
 # Returns:
@@ -215,6 +224,7 @@ long_path_project() {
     && cp "$STOP_HOOK" "$MNA_PROJ/.claude/hooks/" \
     || { FIXTURE_FAIL="${FIXTURE_FAIL:-고정틀}"; return 1; }
   edit_new "$MNA_PROJ" "$LP_V" || return 1
+  LP_EDIT_OUT="$OUT"
   if [[ "$(record_lines_of "$MNA_PROJ" "$LP_V")" != '!' ]]; then
     FIXTURE_FAIL='끝줄이 갱신 표시가 아니다'
     return 1
@@ -231,7 +241,7 @@ v07() { # 기록 줄이 1023바이트를 넘어 현재 기록을 못 쓴 값(영
   long_path_project v07 || { report "$name" ''; return; }
   run_stop "$MNA_PROJ"
   why="$(expect_dr_slot_block "$MNA_PROJ" "$TOK_DR_MISSING" "$TOK_DR_TOOLONG" \
-    "$TOK_DR_NOEXIT_LONG" "$TOK_DR_ASKUSER" "  - $LP_V")"
+    "$TOK_DR_NOEXIT_LONG" "$TOK_DR_ASKUSER" "$TOK_DR_PLACES" "  - $LP_V")"
   if [[ -z "$why" ]]; then
     if contains "$ERR" "$TOK_DR_OLD_MOVE"; then why='저장소 이동을 출구로 안내한다'
     elif contains "$ERR" "$TOK_DR_PROXY"; then why='저장 때 알림에 기댄 조건'
@@ -269,17 +279,24 @@ v08() { # 기록 없는 값(M) 나열은 본문이 파이프 버퍼보다 커도
 
 v09() { # 저장소를 더 짧은 경로로 옮겨 다시 저장하고 모든 자리에 리뷰를 둬도 옛 값은
         # 같은 값의 새 기록 줄이 없어 missing-record 로 남는다 — 이번 막음의 출구가
-        # 아니다(안내가 그렇게 말해야 한다).
+        # 아니다(저장 때 알림 · Stop 안내가 모두 그렇게 말해야 한다).
   local name='v09 1023B 초과 값 → 저장소를 옮겨 다시 저장 · 세 자리 리뷰 → 여전히 막음'
   local why='' t2 v2
   long_path_project v09 || { report "$name" ''; return; }
   t2="$LP_S/T2"; v2="$t2/src/v7.go"
+  if ! contains "$LP_EDIT_OUT" "$TOK_RECORD_NOEXIT"; then
+    why="[저장 알림] 이번 막음이 풀리지 않는다는 안내 없음 [$LP_EDIT_OUT]"
+  elif contains "$LP_EDIT_OUT" "$TOK_RECORD_OLDEXIT"; then
+    why='[저장 알림] 이번 막음을 풀지 못하는 출구(이름 · 위치 바꾸기)를 안내한다'
+  fi
+  [[ -n "$why" ]] && { report "$name" "$why"; return; }
   mv "$LP_T" "$t2" || { FIXTURE_FAIL='저장소 이동'; report "$name" ''; return; }
   run_mna "$MNA_PROJ" edit "$v2"
+  contains "$OUT" "$TOK_RECORD_PERM" && why='[옮긴 뒤 저장] 영구 알림이 또 나왔다'
   review_at "$t2/_workspace" && review_at "$LP_S/_workspace_T2" \
     && review_at "$MNA_PROJ/_workspace" || { report "$name" ''; return; }
   run_stop "$MNA_PROJ"
-  why="$(expect_dr_slot_block "$MNA_PROJ" "$TOK_DR_MISSING" \
+  [[ -z "$why" ]] && why="$(expect_dr_slot_block "$MNA_PROJ" "$TOK_DR_MISSING" \
     "$TOK_DR_NOEXIT_LONG" "  - $LP_V")"
   report "$name" "$why"
 }
@@ -406,6 +423,137 @@ v15() { # 발행 ② 가 기록을 읽지 못하면(모듈 없음) 세션 루트
   elif ! contains "$ERR" "$TOK_PUB_NOTE"; then why='사유 한 줄 없음'
   elif contains "$ERR" "$TOK_PUB_SLOTWHERE"; then
     why='읽지 못한 슬롯 자리에 저장하라고 안내한다'
+  fi
+  report "$name" "$why"
+}
+
+v16() { # 기록 파일 자리가 폴더(· FIFO · 끊긴 링크)면 권한을 고쳐도 풀리지 않는다 —
+        # record-unusable 안내가 실제 사유(일반 파일 아님 · 권한)를 대고 그것을 고치게 한다.
+  local name='v16 기록 자리가 폴더 → record-unusable 사유에 파일 종류 · 그 출구로 해제'
+  local why='' v
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v16.go"
+  dr_flag "$C3_R" "$v" && mkdir "$C3_R/.claude/.review-dirs" \
+    || { report "$name" ''; return; }
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_UNUSABLE" "$TOK_DR_KIND")"
+  [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_OLD_PERM" \
+    && why='권한만 고치라고 안내한다'
+  # 안내한 출구가 실제로 푸는지: 일반 파일이 되게 고치고(폴더를 치움) 다시 저장 → 자리 리뷰.
+  if [[ -z "$why" ]]; then
+    rmdir "$C3_R/.claude/.review-dirs" && : > "$v" \
+      || { FIXTURE_FAIL='기록 자리 복구'; report "$name" ''; return; }
+    run_mna "$C3_R" edit "$v"
+    review_at "$C3_T/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[고친 뒤 다시 저장] $why"
+  fi
+  report "$name" "$why"
+}
+
+v17() { # 발행 ① 슬롯 모드 안내 — harness.env 를 믿을 수 없거나(UNTRUSTED) 값이 검증에
+        # 실패하면 기록 없는 절대 항목은 세션 루트 리뷰로 풀린다. "슬롯 항목은 세션 루트
+        # 리뷰로 풀리지 않는다" 는 리뷰 자리가 기록된 항목에만 맞다.
+  local name='v17 발행 ① UNTRUSTED → 기록된 슬롯 항목만 세션 루트로 안 풀린다고 안내'
+  local why='' v
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v17.go"
+  set_env "$C3_R" "$(env_untrusted "$C3_S")"
+  dr_flag "$C3_R" "$v" && rec "$C3_R" "$C3_T/src/old.go" "$C3_T/_workspace" \
+    || { report "$name" ''; return; }
+  run_pub "$C3_R"
+  if [[ "$RC" -ne 2 ]]; then why="rc=$RC (기대 2)"
+  elif ! contains "$ERR" "$TOK_PUB_RECORDED"; then
+    why="기록된 항목으로 좁힌 안내 없음 [$(flat "$ERR" | head -c 200)]"
+  elif contains "$ERR" "$TOK_PUB_OLD_ALL"; then why='모든 슬롯 항목이라고 안내한다'
+  fi
+  report "$name" "$why"
+}
+
+# v18_stop <로케일> <프로젝트> — 그 로케일로만 Stop 을 돌린다(판정 문자열 비교는 밖에서).
+v18_stop() {
+  local -x LC_ALL="$1"
+  run_stop "$2"
+}
+
+v18() { # 막음 안내의 슬롯 자리 가르기는 로케일에 기대지 않는다 — UTF-8 로케일의 GNU
+        # grep 은 잘못된 UTF-8 바이트가 든 자리 줄을 이진으로 보고 줄을 내지 않으며
+        # "binary file matches" 를 stderr(막음 안내)에 섞는다. 자리 경로는 바이트열이다.
+  local name='v18 자리 경로에 잘못된 UTF-8 · UTF-8 로케일 → 슬롯 문구 · 이진 경고 없음'
+  local why='' v d loc
+  loc="$(locale -a 2>/dev/null | grep -iE '^(c\.utf-?8|en_us\.utf-?8)$' \
+    | head -n 1)"
+  [[ -n "$loc" ]] || { FIXTURE_FAIL='UTF-8 로케일 없음'; report "$name" ''; return; }
+  stop_fixture || { report "$name" ''; return; }
+  d="$C3_S/T"$'\377'"x"
+  v="$d/src/v18.go"
+  dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" "$d/_workspace" \
+    || { report "$name" ''; return; }
+  v18_stop "$loc" "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_SLOTCLAUSE" "  - $d/_workspace")"
+  if [[ -z "$why" ]] && printf '%s\n' "$ERR" | grep -qi 'binary file'; then
+    why='이진 파일 경고가 안내에 섞였다'
+  fi
+  report "$name" "$why"
+}
+
+v19() { # 슬롯 안 ④ 앵커의 저장소를 git 이 돌려주지 못하면 리뷰 자리를 정하지 못해 현재
+        # 기록을 쓰지 않는다 — 게이트는 섰고 턴 종료에서 막힌다. 저장 알림이 "앵커 밖
+        # 파일에는 게이트가 서지 않았다" 로 끝나면 이 값의 막음을 숨기고, Stop 안내가
+        # "세션 폴더 쓰기" 만 확인하라 하면 git 이 고쳐지기 전 다시 저장으로는 안 풀린다.
+  local name='v19 슬롯 ④ 앵커 · git 판독 실패 → 알림 · Stop 이 git 을 짚음 · 그 출구로 해제'
+  local why='' u v
+  stop_fixture || { report "$name" ''; return; }
+  u="$C3_S/U"
+  mkdir -p "$u/.claude/hooks" \
+    && printf 'gitdir: %s\n' "$C3_S/nowhere" > "$u/.git" \
+    || { FIXTURE_FAIL='깨진 .git'; report "$name" ''; return; }
+  v="$u/.claude/hooks/x.sh"
+  edit_new "$C3_R" "$v" || { report "$name" ''; return; }
+  if ! contains "$OUT" "$TOK_RECORD_GIT"; then
+    why="[저장 알림] 막힘 · git 을 짚는 안내 없음 [$OUT]"
+  elif contains "$OUT" "$TOK_GIT_OUTSIDE"; then
+    why='[저장 알림] 앵커 밖 파일 문구로 이 값의 막음을 숨긴다'
+  fi
+  if [[ -z "$why" ]]; then
+    review_at "$C3_R/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_GITCHK" \
+      "  - $v")"
+    [[ -n "$why" ]] && why="[Stop] $why"
+  fi
+  # 안내한 출구가 실제로 푸는지: git 이 저장소를 읽게 된 뒤 다시 저장 → 그 자리 리뷰로 해제.
+  if [[ -z "$why" ]]; then
+    rm -f "$u/.git" && git -C "$u" init -q \
+      || { FIXTURE_FAIL='.git 복구'; report "$name" ''; return; }
+    run_mna "$C3_R" edit "$v"
+    review_at "$u/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[git 복구 뒤 다시 저장] $why"
+  fi
+  report "$name" "$why"
+}
+
+v20() { # 슬롯이 꺼진 동안의 missing-record 출구("harness.env 슬롯 설정을 고친 뒤 그 파일을
+        # 다시 저장하라")가 실제로 푼다 — 설정을 고치고 다시 저장하면 그 자리 리뷰로 풀린다.
+  local name='v20 슬롯 꺼짐 missing-record → 설정 고치고 다시 저장 → 자리 리뷰로 해제'
+  local why='' v
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v20.go"
+  set_env "$C3_R" "$(env_untrusted "$C3_S")"
+  : > "$v" && dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" '!' \
+    || { report "$name" ''; return; }
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXCONF")"
+  if [[ -z "$why" ]]; then
+    set_env "$C3_R" "$(env_slot "$C3_S")"
+    run_mna "$C3_R" edit "$v"
+    review_at "$C3_T/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[설정 고친 뒤 다시 저장] $why"
   fi
   report "$name" "$why"
 }

@@ -20,6 +20,10 @@ if [[ -z "${MNA_HOOK-}" ]]; then
 fi
 
 TOK_WRITE_FAIL='완료 게이트 플래그를 기록하지 못했다'   # MSG_WRITE_FAIL
+# 영구 기록 실패 알림의 출구 — 이번 막음은 다시 저장 · 이름 · 위치 바꾸기로 풀리지 않는다.
+TOK_RECORD_NOEXIT='다시 저장해도 · 파일 이름이나 저장소 위치를 바꿔도 이번 막음은 풀리지 않는다'
+TOK_RECORD_OLDEXIT='파일 이름이나 저장소 위치를 바꾸거나'   # 이번 막음을 풀지 못하는 옛 출구
+TOK_RECORD_KIND='기록 파일 종류'   # 회복 가능 실패의 확인 대상(쓰기 권한만이 아니다)
 
 #######################################
 # 완료 게이트 훅을 시간 상한 안에서 돌린다(끝나지 않는 대기도 적색으로 남긴다). 상한을
@@ -128,8 +132,10 @@ k04() { # 알림 표식은 세션마다 따로다 — 한 세션이 알렸다고
 
 k05() { # 기록 줄은 1023바이트를 넘으면 쓰지 않는다 — bash 3.2 의 printf 는 1024바이트 단위로
         # 나눠 써서 병렬 덧붙이기가 섞이면 다른 저장소 자리로 풀린다. 쓰지 않으면 마지막
-        # 줄이 갱신 표시로 남아 막히고(막는 쪽), 영구 문구로 알린다.
-  local name='k05 현재 기록 줄 > 1023B → 쓰지 않음 · 갱신 표시 끝줄 · 영구 문구' why=''
+        # 줄이 갱신 표시로 남아 막히고(막는 쪽), 영구 문구로 알린다. 그 막음은 다시
+        # 저장해도 · 이름이나 위치를 바꿔도 풀리지 않으니 그것을 출구로 안내하지 않는다.
+  local name='k05 현재 기록 줄 > 1023B → 쓰지 않음 · 갱신 표시 끝줄 · 영구 문구(출구)'
+  local why=''
   local f s t v a b tails
   f="$(new_dir k05)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
   a="$(printf '%200s' '' | tr ' ' a)"; b="$(printf '%200s' '' | tr ' ' b)"
@@ -141,6 +147,10 @@ k05() { # 기록 줄은 1023바이트를 넘으면 쓰지 않는다 — bash 3.2
   tails="$(record_lines_of "$MNA_PROJ" "$v")"
   if [[ "$tails" != '!' ]]; then why="기록 꼬리 [$(flat "$tails" | head -c 120)] (기대 ! 하나)"
   elif ! contains "$OUT" "$TOK_RECORD_PERM"; then why="영구 문구 없음 [$OUT]"
+  elif ! contains "$OUT" "$TOK_RECORD_NOEXIT"; then
+    why="이번 막음이 풀리지 않는다는 안내 없음 [$OUT]"
+  elif contains "$OUT" "$TOK_RECORD_OLDEXIT"; then
+    why='이번 막음을 풀지 못하는 출구(이름 · 위치 바꾸기)를 안내한다'
   fi
   [[ -z "$why" ]] && why="$(expect_flags "$MNA_PROJ" 4 "$v")"
   report "$name" "$why"
@@ -544,6 +554,7 @@ home_path_tokens "echo \"~/u\" '"'"'~/v'"'"'"; echo "q=$?"' HOME=/h
 
 k26() { # 기록 파일이 일반 파일이 아니면(FIFO · 폴더) 쓰지 않는다 — FIFO 는 열기에서 읽는 쪽을
         # 기다려 플래그를 쓰기 전에 훅 상한에 닿는다. 기록 실패 문구로 막는다(판독기 -f 와 같다).
+        # 문구의 확인 대상에 기록 파일 종류가 든다(쓰기 권한만으로는 풀리지 않는다).
   local name='k26 기록 파일이 FIFO → 대기 없이 끝남 · 4종 · 기록 실패 문구' why='' v
   slot_fixture || { report "$name" ''; return; }
   v="$C3_T/src/k26.go"
@@ -553,6 +564,8 @@ k26() { # 기록 파일이 일반 파일이 아니면(FIFO · 폴더) 쓰지 않
   if [[ "$RC" -eq 124 ]]; then why='끝나지 않았다(기록 FIFO 대기)'
   elif [[ "$RC" -ne 0 ]]; then why="rc=$RC"
   elif ! contains "$OUT" "$TOK_RECORD_FAIL"; then why="기록 실패 문구 없음 [$OUT]"
+  elif ! contains "$OUT" "$TOK_RECORD_KIND"; then
+    why="확인 대상에 기록 파일 종류 없음 [$OUT]"
   else why="$(expect_flags "$C3_R" 4 "$v")"
   fi
   report "$name" "$why"

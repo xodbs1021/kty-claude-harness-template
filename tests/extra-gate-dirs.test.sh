@@ -232,7 +232,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=195
+EXPECTED_CASES=200
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -251,7 +251,7 @@ r01_absent r01_empty r01b r02 r02e r03 r04 r05 r06 r07 r07b r09 e12w
 x1a x1b x1c x1d x1e x1f x1g x1h p01 p02 p03
 q01 q02 q03 q04
 v01 v02 v03 v04 v05 v06 v07 v08
-v09 v10 v11 v12 v13 v14 v15
+v09 v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20
 '
 
 #######################################

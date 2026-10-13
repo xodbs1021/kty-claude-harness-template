@@ -245,3 +245,136 @@ k12() { # 명령문 절대경로가 링크를 지나 끝이 개행인 저장소(
   [[ -z "$why" ]] && why="$(expect_flags "$C3_R" 0 "$C3_S/Q/src/q.go")"
   report "$name" "$why"
 }
+
+# --- 검수 r1 수정 고정 ------------------------------------------------------------
+
+#######################################
+# git 심 — `rev-parse --show-toplevel` 호출을 기록 파일에 한 줄씩 남기고 진짜 git 으로
+# 넘긴다(뿌리 수집이 git 을 몇 번 부르는지 센다). 경로는 심 본문에 박는다.
+# Arguments:
+#   $1 — 심 폴더, $2 — 기록 파일
+#######################################
+write_toplevel_counter() {
+  local real
+  real="$(command -v git)" || return 1
+  {
+    printf '#!/bin/sh\ncase " $* " in\n'
+    printf '  *" --show-toplevel "*) echo x >> "%s" ;;\nesac\n' "$2"
+    printf 'exec "%s" "$@"\n' "$real"
+  } > "$1/git" && chmod +x "$1/git"
+}
+
+# count_lines <파일> — 줄 수(없으면 0).
+count_lines() { [[ -f "$1" ]] && wc -l < "$1" | tr -d ' ' || echo 0; }
+
+k13() { # 홈 토큰 후보는 단어 머리의 `~` 뿐이다 — `HEAD~1` · `main~3..HEAD` · `x@~4` ·
+        # `"C1~C4"` 의 단어 중간 `~` 는 홈 경로가 아니라 부분 알림을 내지 않는다.
+        # 머리 경계(줄 처음 · 공백 · 따옴표 · = : ( ; | & < > 뒤)는 모듈 단위로도 본다.
+  local name='k13 단어 중간 ~ → 홈 토큰 아님 · 부분 알림 없음(머리 ~ 는 그대로)'
+  local why='' c
+  run_module '
+home_path_tokens "git diff HEAD~1 && git log main~3..HEAD"; echo "mid=$?"
+home_path_tokens "npm i x@~4; git commit -m \"C1~C4\""; echo "mid2=$?"
+home_path_tokens "cat ~nouser-k13/a"; echo "user=$?"
+home_path_tokens "a=~/p b:~/q (~/r) x|~/s y<~/t \"~/u\" '"'"'~/v'"'"'"; echo "head=$?"' HOME=/h
+  if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
+  elif [[ "$(flat "$OUT")" != 'mid=0 mid2=0 user=3 /h/p /h/q /h/r /h/s /h/t /h/u /h/v head=0' ]]; then
+    why="모듈 판독 [$(flat "$OUT")]"
+  fi
+  if [[ -z "$why" ]]; then
+    sweep_fixture || { report "$name" ''; return; }
+    for c in 'git diff HEAD~1' 'git log main~3..HEAD' 'npm i x@~4' \
+        'git commit -m "C1~C4"'; do
+      make_window "$C3_R" || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+      run_mna "$C3_R" bash "$c"
+      contains "$OUT" "$TOK_ROOT_CAP" && { why="[$c] 거짓 부분 알림"; break; }
+    done
+  fi
+  report "$name" "$why"
+}
+
+k14() { # 뿌리 수집(명령문 토큰)도 시간 예산을 본다 — 예산을 넘긴 셸은 토큰마다 git 을
+        # 부르지 않고 시간 절단을 알리고 창을 소비한다(토큰이 많으면 30 s 상한에 닿는다).
+  local name='k14 예산 넘긴 셸 · 토큰 20개 → git 최상위 조회 0 · 시간 절단 알림' why=''
+  local shim log i cmd=''
+  sweep_fixture || { report "$name" ''; return; }
+  shim="$(new_dir topcount)" && log="$shim/calls" \
+    && write_toplevel_counter "$shim" "$log" || { FIXTURE_FAIL='git 심'; report "$name" ''; return; }
+  for i in $(seq 1 20); do cmd="$cmd cat $C3_T/src/d$i/f.go;"; done
+  (
+    PATH="$shim:$PATH"
+    local MNA_ENV='SECONDS=1000'
+    run_mna "$C3_R" bash "$cmd"
+    printf '%s\n' "$OUT" > "$TMPROOT/k14.out"
+  )
+  OUT="$(cat "$TMPROOT/k14.out")"; DID_RUN=1
+  if [[ "$(count_lines "$log")" -ne 0 ]]; then why="git 최상위 조회 $(count_lines "$log")번 (기대 0)"
+  elif ! contains "$OUT" "$TOK_TIME_CUT"; then why="시간 절단 알림 없음 [$OUT]"
+  elif ls "$C3_R/.claude/.bash-windows/" 2>/dev/null | grep -q .; then why='창을 소비하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+k15() { # 이미 얻은 뿌리 안의 토큰(중첩 저장소 표지 .git 이 사이에 없음)은 git 을 다시 부르지
+        # 않는다 — 같은 저장소 토큰 50개가 50번 조회하던 비용 상한 회귀.
+  local name='k15 같은 저장소 토큰 50개(파일 · 없는 폴더) → git 최상위 조회 몇 번뿐' why=''
+  local shim log i cmd=''
+  sweep_fixture || { report "$name" ''; return; }
+  shim="$(new_dir topcount)" && log="$shim/calls" \
+    && write_toplevel_counter "$shim" "$log" || { FIXTURE_FAIL='git 심'; report "$name" ''; return; }
+  # 반은 T/src 안 파일, 반은 없는 폴더(남은 조상 = T 자신)다.
+  for i in $(seq 1 25); do cmd="$cmd cat $C3_T/src/f$i.go; cat $C3_T/d$i/f.go;"; done
+  (
+    PATH="$shim:$PATH"
+    run_mna "$C3_R" bash "$cmd"
+  )
+  DID_RUN=1
+  [[ "$(count_lines "$log")" -le 5 ]] || why="git 최상위 조회 $(count_lines "$log")번 (기대 5 이하)"
+  report "$name" "$why"
+}
+
+k16() { # cwd 에서 얻은 쌍(cwd = 작업 공간 _workspace_T → 저장소 T)은 cwd 저장소처럼 git
+        # status 삭제 판정을 한다 — `rm ../T/src/a.go` 를 놓치지 않는다. 명령문 토큰에서
+        # 얻은 쌍만 창 기반 find 로 한정한다(k08).
+  local name='k16 cwd=_workspace_T · rm ../T/src/a.go → 4종' why='' v
+  sweep_fixture || { report "$name" ''; return; }
+  local MNA_CWD="$C3_S/_workspace_T"
+  v="$C3_T/src/a.go"
+  rm -f "$v" || { report "$name" ''; return; }
+  run_mna "$C3_R" bash 'rm ../T/src/a.go'
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+k17() { # 저장소가 아니라고 답을 받은 폴더는 같은 스윕에서 다시 묻지 않는다 — 저장소 밖 같은
+        # 폴더 토큰이 많을 때 토큰마다 git 을 부르던 비용.
+  local name='k17 저장소 밖 같은 폴더 토큰 50개 → git 최상위 조회 몇 번뿐' why=''
+  local shim log i cmd='' plain
+  sweep_fixture || { report "$name" ''; return; }
+  plain="$C3_F/plain"
+  mkdir -p "$plain" && shim="$(new_dir topcount)" && log="$shim/calls" \
+    && write_toplevel_counter "$shim" "$log" || { FIXTURE_FAIL='git 심'; report "$name" ''; return; }
+  for i in $(seq 1 50); do cmd="$cmd cat $plain/f$i;"; done
+  (
+    PATH="$shim:$PATH"
+    run_mna "$C3_R" bash "$cmd"
+  )
+  DID_RUN=1
+  [[ "$(count_lines "$log")" -le 5 ]] || why="git 최상위 조회 $(count_lines "$log")번 (기대 5 이하)"
+  report "$name" "$why"
+}
+
+k18() { # 이미 얻은 뿌리 T 안이라도 사이에 다른 저장소 표지(.git)가 있으면 그 중첩 저장소 U
+        # 를 따로 찾는다 — U 의 git 이 아는 삭제를 놓치지 않는다(T 의 status 는 U 를 모른다).
+  local name='k18 T 토큰 뒤 중첩 저장소 T/u 의 삭제 → U 를 뿌리로 · 4종' why='' u v
+  sweep_fixture || { report "$name" ''; return; }
+  u="$C3_T/u"; v="$u/src/del.go"
+  mkdir -p "$u/src" && printf 'k\n' > "$v" && commit_repo "$u" \
+    || { report "$name" ''; return; }
+  find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+  rm -f "$v" || { report "$name" ''; return; }
+  run_mna "$C3_R" bash "cat $C3_T/src/a.go; rm $v"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}

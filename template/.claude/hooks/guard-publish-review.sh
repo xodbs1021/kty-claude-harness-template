@@ -76,9 +76,18 @@ if [ -e "$REVIEW_DIRS_FILE" ] || [ -L "$REVIEW_DIRS_FILE" ]; then
     fi
   fi
 fi
-# 안내 문구의 리뷰 자리 — 모드일 때만 슬롯 자리를 덧붙인다(아니면 기존 바이트).
+# 안내 문구의 리뷰 자리 — 모드이고 기록을 읽었을 때만 슬롯 자리를 덧붙인다(읽지 못했으면
+# ② 는 세션 루트만 본다. 키가 없으면 기존 바이트).
 review_where='_workspace/*codex*.md'
-[ "$slot_mode" -eq 1 ] && review_where='_workspace/*codex*.md 또는 슬롯 리뷰 자리의 *codex*.md'
+if [ "$slot_mode" -eq 1 ] && [ -z "$slot_note" ]; then
+  review_where='_workspace/*codex*.md 또는 슬롯 리뷰 자리의 *codex*.md'
+fi
+# ① 의 저장 안내 — 듀얼리뷰 게이트(Stop)는 항목마다 그 리뷰 자리의 리뷰로만 푼다. 모드에서
+# "아무 자리에 저장하면 해제" 라고 하면 사실이 아니다(키가 없으면 기존 바이트).
+dr_save_step="  2. 결과를 ${review_where} 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다)."
+if [ "$slot_mode" -eq 1 ]; then
+  dr_save_step="  2. 결과를 항목마다 그 리뷰 자리에 *codex*.md 로 저장한다 — 자리는 완료 게이트(Stop) 막음 안내가 나열하고, 슬롯 항목은 세션 루트 _workspace 의 리뷰로 풀리지 않는다. 모든 항목이 풀리면 듀얼리뷰 게이트가 자동 해제된다."
+fi
 
 deny() {  # $1 = 첫 줄 사유, $2 = 해야 할 일(여러 줄 허용)
   {
@@ -98,7 +107,7 @@ if [ -s "$DUALREVIEW_FLAG" ]; then
   deny "이 턴의 변경이 아직 codex 듀얼 리뷰 전입니다 — 리뷰를 앞질러 발행할 수 없습니다." \
 "해야 할 일:
   1. 대상 변경/산출물을 codex 듀얼 리뷰한다 (모델·effort 는 guard-codex-invocation 규정).
-  2. 결과를 ${review_where} 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다).
+${dr_save_step}
   3. 그 다음 발행을 다시 시도한다."
 fi
 

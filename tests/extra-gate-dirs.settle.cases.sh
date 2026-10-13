@@ -2,16 +2,17 @@
 # extra-gate-dirs.settle.cases.sh — 푸는 쪽(Stop 3.5 · 발행 가드 ②)의 이연 처분
 # 케이스: 미충족 나열 비용 · 발행 ② 기록 읽기 실패 알림 · 막음 안내 문구(루트
 # 경로 문자 · 슬롯 값 검증 실패 · 세션 루트 자리뿐인 막음 · 자리 목록 없는 막음 ·
-# 기록 줄 길이 초과).
+# 기록 줄 길이 초과 · 큰 본문의 기록 없는 값 나열).
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
 # 거기와 notice·judge·capture·release·life·rootchar 케이스 파일에 있다:
 #   stop_fixture · run_stop · run_pub · dr_flag · rec · review_at · review_now
 #   expect_dr_released · expect_dr_slot_block · expect_dr_loop_block · env_slot
 #   env_untrusted · rootchar_fixture · new_mna_project · commit_repo · set_env
-#   edit_new · record_lines_of · run_common_bounded · new_dir · report · contains
-#   flat · MODULE · STOP_HOOK · C3_F · C3_R · C3_S · C3_T · RC_ROOT · RC_BASE
-#   MNA_PROJ · TOK_DR_* · TOK_PUB_NOTE · ENV_NO_KEY · US · OUT · ERR · RC
+#   edit_new · record_lines_of · run_common_bounded · new_dir · report
+#   contains · flat · MODULE · STOP_HOOK · C3_F · C3_R · C3_S · C3_T · RC_ROOT
+#   RC_BASE · MNA_PROJ · TOK_DR_* · TOK_PUB_NOTE · ENV_NO_KEY · T_FLAG · US
+#   OUT · ERR · RC
 # 셸 이식성: macOS 기본 bash 는 3.2 다. ${var,,}·mapfile·연관배열 금지.
 
 if [[ -z "${MNA_HOOK-}" ]]; then
@@ -27,6 +28,10 @@ TOK_DR_BADVALUE='슬롯 값을 쓸 수 없'
 TOK_DR_ABOVE="위 '리뷰를 기다리는 자리'"
 TOK_DR_MERGE='[cc]/[cx] 태그로 통합'
 TOK_DR_TOOLONG='1023바이트를 넘는 값이라 다시 저장해도 풀리지 않는다'
+TOK_DR_MLIST='현재 리뷰 자리 기록이 없는 값:'
+# 큰 본문 나열 케이스의 항목 수 — 값마다 300바이트 남짓이라 본문이 파이프 버퍼
+# (64 KB)의 몇 배다.
+V08_ITEMS=1000
 # 미충족 나열 비용 케이스의 항목 수와 시간 상한(초). 항목 수에 이차로 늘던
 # 판정은 이 수에서 상한을 크게 넘긴다(macOS bash 3.2 에서 수 분).
 V01_ITEMS=10000
@@ -38,7 +43,8 @@ v01() { # 미충족 항목이 많아도 판정 비용은 항목 수에 선형이
   local why='' f r s outf m w
   f="$(new_dir v01)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
   r="$f/R"; s="$f/S"; outf="$f/verdict.out"
-  mkdir -p "$r/.claude" "$s" || { FIXTURE_FAIL='골격'; report "$name" ''; return; }
+  mkdir -p "$r/.claude" "$s" \
+    || { FIXTURE_FAIL='골격'; report "$name" ''; return; }
   # 홀수 항목은 끝줄이 갱신 표시(M), 짝수 항목은 같은 자리 둘(W 는 둘로 모인다).
   awk -v n="$V01_ITEMS" -v s="$s" 'BEGIN {
       for (i = 1; i <= n; i++) printf "%s/T/src/f%05d.go\n", s, i }' \
@@ -196,5 +202,32 @@ v07() { # 기록 줄이 1023바이트를 넘어 현재 기록을 못 쓴 값(영
   run_stop "$MNA_PROJ"
   why="$(expect_dr_slot_block "$MNA_PROJ" "$TOK_DR_MISSING" "$TOK_DR_TOOLONG" \
     "  - $v")"
+  report "$name" "$why"
+}
+
+v08() { # 기록 없는 값(M) 나열은 본문이 파이프 버퍼보다 커도 빠지지 않는다 — 판정을
+        # `printf | grep -q` 로 하면 grep 이 첫 일치에서 닫아 printf 가 SIGPIPE 로
+        # 죽고(pipefail) 절이 조용히 사라진다. 막음 · 사유는 그대로다.
+  local name="v08 끝줄 갱신 표시 ${V08_ITEMS}개(큰 본문) → 기록 없는 값 절 · 끝 값까지"
+  local why='' a b d last n
+  stop_fixture || { report "$name" ''; return; }
+  a="$(printf '%100s' '' | tr ' ' a)"; b="$(printf '%100s' '' | tr ' ' b)"
+  d="$C3_T/src/$a/$b"
+  awk -v n="$V08_ITEMS" -v d="$d" 'BEGIN {
+      for (i = 1; i <= n; i++) printf "%s/f%05d.go\n", d, i }' \
+    > "$C3_R/.claude/.needs-dualreview" \
+    && awk -v us="$US" '{ print $0 us "!" }' "$C3_R/.claude/.needs-dualreview" \
+      > "$C3_R/.claude/.review-dirs" \
+    && touch -t "$T_FLAG" "$C3_R/.claude/.needs-dualreview" \
+    || { FIXTURE_FAIL='플래그 · 기록'; report "$name" ''; return; }
+  last="$(printf '%s/f%05d.go' "$d" "$V08_ITEMS")"
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING")"
+  if [[ -z "$why" ]]; then
+    n="$(printf '%s\n' "$ERR" | grep -cxF -- "  - $last")"
+    if ! contains "$ERR" "$TOK_DR_MLIST"; then why='기록 없는 값 절이 빠졌다'
+    elif [[ "$n" != 2 ]]; then why="끝 값 나열 ${n}번(기대 2 — 대상 · 기록 없는 값)"
+    fi
+  fi
   report "$name" "$why"
 }

@@ -295,7 +295,8 @@ home_path_tokens "a=~/p b:~/q (~/r) x|~/s y<~/t \"~/u\" '"'"'~/v'"'"'"; echo "he
 
 k14() { # 뿌리 수집(명령문 토큰)도 시간 예산을 본다 — 예산을 넘긴 셸은 토큰마다 git 을
         # 부르지 않고 시간 절단을 알리고 창을 소비한다(토큰이 많으면 30 s 상한에 닿는다).
-  local name='k14 예산 넘긴 셸 · 토큰 20개 → git 최상위 조회 0 · 시간 절단 알림' why=''
+  local name='k14 예산 넘긴 셸 · 토큰 20개 · 홈 토큰 → git 최상위 조회 0 · 시간 절단 알림'
+  local why=''
   local shim log i cmd=''
   sweep_fixture || { report "$name" ''; return; }
   shim="$(new_dir topcount)" && log="$shim/calls" \
@@ -311,6 +312,22 @@ k14() { # 뿌리 수집(명령문 토큰)도 시간 예산을 본다 — 예산�
   if [[ "$(count_lines "$log")" -ne 0 ]]; then why="git 최상위 조회 $(count_lines "$log")번 (기대 0)"
   elif ! contains "$OUT" "$TOK_TIME_CUT"; then why="시간 절단 알림 없음 [$OUT]"
   elif ls "$C3_R/.claude/.bash-windows/" 2>/dev/null | grep -q .; then why='창을 소비하지 않았다'
+  fi
+  # 홈 토큰만 있는 명령(`ls ~` — 절대경로 토큰 없음)은 슬롯 홈 토큰 순회가 예산을 본다.
+  if [[ -z "$why" ]]; then
+    make_window "$C3_R" || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+    (
+      PATH="$shim:$PATH"
+      local MNA_ENV='SECONDS=1000'
+      local -x HOME="$C3_F"
+      run_mna "$C3_R" bash 'ls ~'
+      printf '%s\n' "$OUT" > "$TMPROOT/k14.out"
+    )
+    OUT="$(cat "$TMPROOT/k14.out")"
+    if [[ "$(count_lines "$log")" -ne 0 ]]; then
+      why="[홈 토큰] git 최상위 조회 $(count_lines "$log")번 (기대 0)"
+    elif ! contains "$OUT" "$TOK_TIME_CUT"; then why="[홈 토큰] 시간 절단 알림 없음 [$OUT]"
+    fi
   fi
   report "$name" "$why"
 }

@@ -22,19 +22,20 @@ TOK_PUB_NOTE='슬롯 리뷰 자리 기록을 읽지 못해'    # 기록을 못 �
 #######################################
 # 발행 가드를 돌린다(발행 도구 이름 · 세션 번호 없음).
 # Globals:
-#   TMPROOT, BASH (읽음) · ERR, RC, DID_RUN (씀)
+#   TMPROOT, BASH (읽음) · OUT, ERR, RC, DID_RUN (씀)
 # Arguments:
 #   $1 — 프로젝트
 #######################################
 run_pub() {
-  local p="$1" errf="$TMPROOT/perr.$$"
-  ERR=''; RC=999; DID_RUN=1
+  local p="$1" outf="$TMPROOT/pout.$$" errf="$TMPROOT/perr.$$"
+  OUT=''; ERR=''; RC=999; DID_RUN=1
   printf '{"tool_name":"mcp__wiki__publish"}' | (cd "$p" && env -u HARNESS_HOOKS \
     -u ECC_DISABLED_HOOKS CLAUDE_PROJECT_DIR="$p" \
-    "$BASH" "$p/.claude/hooks/guard-publish-review.sh" >/dev/null 2>"$errf")
+    "$BASH" "$p/.claude/hooks/guard-publish-review.sh" >"$outf" 2>"$errf")
   RC=$?
+  OUT="$(cat "$outf" 2>/dev/null)"
   ERR="$(cat "$errf" 2>/dev/null)"
-  rm -f "$errf"
+  rm -f "$outf" "$errf"
 }
 
 # review_now <폴더> — 지금 시각의 *codex*.md(발행 창 안).
@@ -67,6 +68,7 @@ x1a() { # T/u 파일 편집(T 자리) → git init T/u → 재편집 → 마지�
 
 x1b() { # 슬롯을 S → S2 로 바꿔 값이 슬롯 밖이 된 뒤 재편집 → 빈 집합 줄 → 세션 루트
         # 리뷰로 풀리고 옛 T 자리 리뷰로는 안 풀린다(④ 앵커 — 슬롯 밖에서도 게이트).
+        # 남은 것이 세션 루트 자리뿐이라 막음 안내는 기존 문구다(v05).
   local name='x1b 슬롯 밖이 된 뒤 재편집 → 빈 집합 줄 · 루트 리뷰로만 풀림' why='' a
   stop_fixture || { report "$name" ''; return; }
   a="$C3_T/.claude/hooks/x.sh"
@@ -76,7 +78,7 @@ x1b() { # 슬롯을 S → S2 로 바꿔 값이 슬롯 밖이 된 뒤 재편집 �
   run_mna "$C3_R" edit "$a"
   review_at "$C3_T/_workspace" || { report "$name" ''; return; }
   run_stop "$C3_R"
-  why="$(expect_dr_slot_block "$C3_R" "$C3_R/_workspace")"
+  why="$(expect_dr_loop_block "$C3_R")"
   if [[ -z "$why" ]]; then
     review_at "$C3_R/_workspace" || { report "$name" ''; return; }
     run_stop "$C3_R"

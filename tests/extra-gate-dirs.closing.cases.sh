@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# extra-gate-dirs.closing.cases.sh — PR① 종결 라운드 r2 처분 케이스: 없는 사용자의
+# extra-gate-dirs.closing.cases.sh — PR① 종결 라운드 r2 · r3 처분 케이스: 없는 사용자의
 # `~사용자` · 비ASCII 홈 토큰 · 홈 토큰 경로의 같은 뿌리 중복 계수 · 상대 cwd · 알림
-# 표식 쓰기 EFBIG · nocasematch 복원 · 기록 줄 길이 경계.
+# 표식 쓰기 EFBIG · nocasematch 복원 · 기록 줄 길이 경계(r2, k32–k39) · 홈 토큰의 `:`
+# 경계 · 사용자 조회 실패(r3, k40–k43).
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
 # 거기와 notice·judge·sweep·bound·capture 케이스 파일에 있다:

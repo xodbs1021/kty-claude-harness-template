@@ -13,6 +13,8 @@
 #                                      슬롯 경계·순회 입력 유실)
 #   extra-gate-dirs.capture.cases.sh   잡는 쪽 이연 처분(기록 줄 길이·쌍 뿌리 삭제 판정·
 #                                      중복 계수·접미 충돌·홈 토큰 알림·표식·동시 출력)
+#   extra-gate-dirs.closing.cases.sh   종결 r2 처분(없는 사용자 ~ · 비ASCII 홈 토큰 ·
+#                                      홈 토큰 중복 계수 · 상대 cwd · 표식 EFBIG · 경계)
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -207,7 +209,8 @@ for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.judge.cases.sh \
                   extra-gate-dirs.sweep.cases.sh \
                   extra-gate-dirs.bound.cases.sh \
-                  extra-gate-dirs.capture.cases.sh; do
+                  extra-gate-dirs.capture.cases.sh \
+                  extra-gate-dirs.closing.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -218,7 +221,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=130
+EXPECTED_CASES=138
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -231,7 +234,7 @@ s01 s02 s03 s04 s05 s06 s07 s08 s09 s10 s11 s12
 f01 f02 f03 f04 f05 s_pair1 s_pair2 s_nonpair s_rec h_unset
 b01 b02 b03 b04 b05 l01 l02 l03 w01 w02 d01 d02 d03
 k01 k02 k03 k04 k05 k06 k07 k08 k09 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23
-k24 k25 k26 k27 k28 k29 k30 k31
+k24 k25 k26 k27 k28 k29 k30 k31 k32 k33 k34 k35 k36 k37 k38 k39
 '
 
 #######################################

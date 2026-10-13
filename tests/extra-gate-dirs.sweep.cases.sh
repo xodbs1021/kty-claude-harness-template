@@ -151,6 +151,7 @@ s09() { # 삭제 · cwd 상대경로 → git 이 아는 삭제를 4종으로.
 
 #######################################
 # s10 의 awk 심: 홈 토큰 추출 프로그램일 때만 실패하고 나머지는 진짜 awk 로 넘긴다.
+# 그 프로그램은 `-v heads=` 인자로 알아본다 — 추출 정규식이 바뀌어도 심이 빗나가지 않게.
 # Arguments:
 #   $1 — 심 폴더
 #######################################
@@ -159,7 +160,7 @@ write_awk_shim() {
   real="$(command -v awk)" || return 1
   cat > "$1/awk" <<EOF
 #!/bin/sh
-case "\$*" in *'[~\$][-A-Za-z0-9_./~@+{}]*'*) exit 1 ;; esac
+case "\$*" in *'heads='*) exit 1 ;; esac
 exec "$real" "\$@"
 EOF
   chmod +x "$1/awk"

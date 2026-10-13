@@ -25,17 +25,22 @@ TOK_WRITE_FAIL='완료 게이트 플래그를 기록하지 못했다'   # MSG_WR
 # 완료 게이트 훅을 시간 상한 안에서 돌린다(끝나지 않는 대기도 적색으로 남긴다). 상한을
 # 넘기면 강제로 끝내고 RC=124.
 # Globals:
-#   TMPROOT, BASH (읽음) · OUT, ERR, RC, DID_RUN (씀)
+#   TMPROOT, BASH, MNA_CWD (읽음) · OUT, ERR, RC, DID_RUN (씀)
 # Arguments:
-#   $1 — 상한(초), $2 — 프로젝트, $3 — 편집 경로
+#   $1 — 상한(초), $2 — 프로젝트, $3 — 편집 경로 또는 명령, $4 — edit(기본)|bash
+#   MNA_CWD 가 비어 있지 않으면 payload 의 cwd 로 싣는다(run_mna 와 같다).
 #######################################
 run_mna_bounded() {
   local secs="$1" p="$2" payf="$TMPROOT/bpay.$$" outf="$TMPROOT/bout.$$"
   local errf="$TMPROOT/berr.$$" pid ticks=0
   OUT=''; ERR=''; RC=999; DID_RUN=1
   python3 -c 'import json, sys
-open(sys.argv[2], "w", encoding="utf-8").write(json.dumps({"tool_input": {"file_path": sys.argv[1]}}))' \
-    "$3" "$payf"
+key = "command" if sys.argv[3] == "bash" else "file_path"
+body = {"tool_input": {key: sys.argv[1]}}
+if sys.argv[4]:
+    body["cwd"] = sys.argv[4]
+open(sys.argv[2], "w", encoding="utf-8").write(json.dumps(body))' \
+    "$3" "$payf" "${4:-edit}" "$MNA_CWD"
   (cd "$p" && exec env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS CLAUDE_PROJECT_DIR="$p" \
     "$BASH" "$p/.claude/hooks/mark-needs-audit.sh" <"$payf" >"$outf" 2>"$errf") &
   pid=$!
@@ -204,10 +209,11 @@ k09() { # 같은 저장소를 가리키는 토큰 여럿은 뿌리 하나로 센
   report "$name" "$why"
 }
 
-k10() { # 홈 토큰을 펼칠 수 없으면(`~사용자` · HOME 없음) 그 뿌리를 못 훑은 것이다 — 알린다.
-  local name='k10 펼칠 수 없는 홈 토큰(~사용자) → 부분 알림' why=''
+k10() { # 홈 토큰을 펼칠 수 없으면(있는 사용자의 `~사용자` · HOME 없음) 그 뿌리를 못 훑은
+        # 것이다 — 알린다. 없는 사용자는 셸도 펼치지 않는다(k32).
+  local name='k10 펼칠 수 없는 홈 토큰(~root) → 부분 알림' why=''
   sweep_fixture || { report "$name" ''; return; }
-  run_mna "$C3_R" bash 'cat ~nouser-capture-k10/a.txt'
+  run_mna "$C3_R" bash 'cat ~root/a.txt'
   contains "$OUT" "$TOK_ROOT_CAP" || why="부분 알림 없음 [$OUT]"
   report "$name" "$why"
 }
@@ -277,11 +283,12 @@ k13() { # 홈 토큰 후보는 단어 머리의 `~` 뿐이다 — `HEAD~1` · `m
   run_module '
 home_path_tokens "git diff HEAD~1 && git log main~3..HEAD"; echo "mid=$?"
 home_path_tokens "npm i x@~4; git commit -m \"C1~C4\""; echo "mid2=$?"
-home_path_tokens "cat ~nouser-k13/a"; echo "user=$?"
+home_path_tokens "cat ~root/a"; echo "user=$?"
+home_path_tokens "cat ~nouser-k13/a"; echo "nouser=$?"
 home_path_tokens "a=~/p b:~/q (~/r) x|~/s y<~/t"; echo "head=$?"' HOME=/h
   if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
-  elif [[ "$(flat "$OUT")" \
-          != 'mid=0 mid2=0 user=3 /h/p /h/q /h/r /h/s /h/t head=0' ]]; then
+  elif [[ "$(flat "$OUT")" != \
+      'mid=0 mid2=0 user=3 nouser=0 /h/p /h/q /h/r /h/s /h/t head=0' ]]; then
     why="모듈 판독 [$(flat "$OUT")]"
   fi
   if [[ -z "$why" ]]; then

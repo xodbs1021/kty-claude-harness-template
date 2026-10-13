@@ -747,7 +747,7 @@ dualreview_reason_text() {
 #   DR_OUT, DR_RC, DUALREVIEW_FLAG, count, MAX_BLOCKS (읽음)
 #######################################
 dualreview_slot_block() {
-  local slot_state='' reasons="" body="" waiting="" line code
+  local slot_state='' reasons="" body="" waiting="" missing="" line code
   case "$DR_RC" in
     0|3|4)
       slot_state="${DR_OUT%%$'\n'*}"
@@ -759,8 +759,12 @@ dualreview_slot_block() {
     9) reasons=module ;;
     *) reasons=eval-fail ;;
   esac
-  # 기다리는 자리 목록은 한 번 만들어 나열과 안내 문장이 같은 목록을 보게 한다.
+  # 기다리는 자리 · 기록 없는 값 목록은 한 번 만들어 나열과 판단이 같은 목록을 보게 한다.
+  # sed 는 입력을 끝까지 읽는다 — `printf | grep -q` 로 판단하면 grep 이 첫 일치에서 닫아
+  # 큰 본문(파이프 버퍼 초과)의 printf 가 SIGPIPE 로 죽고, pipefail 아래 조건이 거짓이 돼
+  # 나열이 조용히 빠진다.
   waiting="$(printf '%s\n' "$body" | sed -n 's/^W /  - /p')"
+  missing="$(printf '%s\n' "$body" | sed -n 's/^M /  - /p')"
   echo "[완료 차단] codex 듀얼 리뷰가 그 리뷰 자리에서 확인되지 않았습니다 — 추가 관할 폴더 슬롯 리뷰 자리 기록으로 판정했습니다."
   echo
   echo "이 턴의 듀얼 리뷰 대상:"
@@ -770,10 +774,10 @@ dualreview_slot_block() {
     echo "리뷰를 기다리는 자리(그 폴더에 *codex*.md 를 저장하면 풀린다):"
     printf '%s\n' "$waiting"
   fi
-  if printf '%s\n' "$body" | grep -q '^M '; then
+  if [ -n "$missing" ]; then
     echo
     echo "현재 리뷰 자리 기록이 없는 값:"
-    printf '%s\n' "$body" | sed -n 's/^M /  - /p'
+    printf '%s\n' "$missing"
   fi
   if [ -n "$reasons" ]; then
     echo

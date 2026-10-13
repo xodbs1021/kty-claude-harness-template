@@ -280,7 +280,8 @@ home_path_tokens "npm i x@~4; git commit -m \"C1~C4\""; echo "mid2=$?"
 home_path_tokens "cat ~nouser-k13/a"; echo "user=$?"
 home_path_tokens "a=~/p b:~/q (~/r) x|~/s y<~/t"; echo "head=$?"' HOME=/h
   if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
-  elif [[ "$(flat "$OUT")" != 'mid=0 mid2=0 user=3 /h/p /h/q /h/r /h/s /h/t head=0' ]]; then
+  elif [[ "$(flat "$OUT")" \
+          != 'mid=0 mid2=0 user=3 /h/p /h/q /h/r /h/s /h/t head=0' ]]; then
     why="모듈 판독 [$(flat "$OUT")]"
   fi
   if [[ -z "$why" ]]; then
@@ -503,7 +504,8 @@ k24() { # 작업 공간 루프도 설계 모양 필터보다 먼저 시간 예�
   sweep_fixture || { report "$name" ''; return; }
   w="$C3_S/_workspace_T"
   for i in 1 2 3 4 5; do
-    printf 'x\n' > "$w/n$i.txt" || { FIXTURE_FAIL='비설계 파일'; report "$name" ''; return; }
+    printf 'x\n' > "$w/n$i.txt" \
+      || { FIXTURE_FAIL='비설계 파일'; report "$name" ''; return; }
   done
   local MNA_CWD="$w" MNA_ENV="$BOUND_LATE"
   run_mna "$C3_R" bash 'touch n1.txt n2.txt n3.txt n4.txt n5.txt'
@@ -552,12 +554,15 @@ k26() { # 기록 파일이 일반 파일이 아니면(FIFO · 폴더) 쓰지 않
 k27() { # 기록 쓰기가 EFBIG(ulimit -f 0)로 실패해도 그 줄이 stdout 으로 새지 않는다 — bash 3.2
         # 의 printf 는 실패한 줄을 출력 버퍼에 남겨 다음 출력과 함께 낸다(훅 stdout 은 JSON 한 줄).
   local name='k27 기록 쓰기 EFBIG → rc 1 · stdout 누출 없음' why='' f
-  f="$(new_dir k27)" && : > "$f/rec" || { FIXTURE_FAIL='기록 파일'; report "$name" ''; return; }
+  f="$(new_dir k27)" && : > "$f/rec" \
+    || { FIXTURE_FAIL='기록 파일'; report "$name" ''; return; }
   run_module '
 REVIEW_DIRS_FILE="$FIX/rec"
-(trap "" XFSZ; ulimit -f 0; append_review_record "LEAK-k27"; echo "rc=$?")' FIX="$f"
+(trap "" XFSZ; ulimit -f 0; append_review_record "LEAK-k27"
+ echo "rc=$?")' FIX="$f"
   if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
-  elif [[ "$(flat "$OUT")" != 'rc=1' ]]; then why="출력 [$(flat "$OUT")] (기대 rc=1)"
+  elif [[ "$(flat "$OUT")" != 'rc=1' ]]; then
+    why="출력 [$(flat "$OUT")] (기대 rc=1)"
   fi
   report "$name" "$why"
 }
@@ -568,7 +573,8 @@ k28() { # 기록 줄 길이는 바이트로 잰다 — UTF-8 로케일에서 글
   local why='' loc f s t v a b line tails
   for loc in C.UTF-8 en_US.UTF-8 ''; do
     [[ -z "$loc" ]] && break
-    [[ "$(LC_ALL="$loc" "$BASH" -c 'x=가; echo "${#x}"' 2>/dev/null)" == 1 ]] && break
+    [[ "$(LC_ALL="$loc" "$BASH" -c 'x=가; echo "${#x}"' 2>/dev/null)" == 1 ]] \
+      && break
   done
   [[ -n "$loc" ]] || { FIXTURE_FAIL='UTF-8 로케일 없음'; report "$name" ''; return; }
   f="$(new_dir k28)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
@@ -577,14 +583,16 @@ k28() { # 기록 줄 길이는 바이트로 잰다 — UTF-8 로케일에서 글
   line="$v$US$t/_workspace$US$s/$a/$b/_workspace_T"
   [[ "$(LC_ALL="$loc" "$BASH" -c 'echo "${#1}"' x "$line")" -le 1023 \
      && "$(LC_ALL=C "$BASH" -c 'echo "${#1}"' x "$line")" -gt 1023 ]] \
-    || { FIXTURE_FAIL='줄 길이 전제(1023자 이하 · 1023B 초과)'; report "$name" ''; return; }
+    || { FIXTURE_FAIL='줄 길이 전제(1023자 이하 · 1023B 초과)'
+         report "$name" ''; return; }
   mkdir -p "$t/src" && printf 'k\n' > "$t/src/k.go" && commit_repo "$t" \
     && new_mna_project 1 "HARNESS_EXTRA_GATE_DIRS=\"$s\""$'\n' \
     || { report "$name" ''; return; }
   local MNA_ENV="LC_ALL=$loc"
   edit_new "$MNA_PROJ" "$v" || { report "$name" ''; return; }
   tails="$(record_lines_of "$MNA_PROJ" "$v")"
-  if [[ "$tails" != '!' ]]; then why="기록 꼬리 [$(flat "$tails" | head -c 120)] (기대 ! 하나)"
+  if [[ "$tails" != '!' ]]; then
+    why="기록 꼬리 [$(flat "$tails" | head -c 120)] (기대 ! 하나)"
   elif ! contains "$OUT" "$TOK_RECORD_PERM"; then why="영구 문구 없음 [$OUT]"
   fi
   [[ -z "$why" ]] && why="$(expect_flags "$MNA_PROJ" 4 "$v")"

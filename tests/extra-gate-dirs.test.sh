@@ -237,7 +237,7 @@ k24 k25 k26 k27 k28 k29 k30 k31
 #######################################
 # 케이스 목록을 검사하고 전부 돌린 뒤 러너 자신의 계수를 검사한다.
 # Globals:
-#   EXPECTED_CASES, CASES (읽음) · ran, DID_RUN, FIXTURE_FAIL (씀) · pass, fail (읽음)
+#   EXPECTED_CASES, CASES, pass, fail (읽음) · ran, DID_RUN, FIXTURE_FAIL (씀)
 # Outputs:
 #   케이스마다 판정 한 줄, 끝에 합계(stdout) · 러너 자체 결함(stderr)
 # Returns:

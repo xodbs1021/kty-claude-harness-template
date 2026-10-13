@@ -165,3 +165,70 @@ echo "bytes=$(wc -c < "$FIX/rec" | tr -d " ")"' FIX="$f"
   fi
   report "$name" "$why"
 }
+
+# --- 종결 r3 — 홈 토큰의 `:` 경계 · 사용자 조회 실패 -------------------------------
+
+#######################################
+# 홈 토큰 명령 하나로 슬롯 저장소의 새 파일이 4종인지 본다(세션 루트 cwd · HOME=고정틀).
+# Globals:
+#   C3_F, C3_R, C3_T (읽음 — sweep_fixture 가 만든 고정틀)
+# Arguments:
+#   $1 — 케이스 이름, $2 — 명령(`~/slot` · `$HOME/slot` 이 슬롯을 가리킨다)
+#######################################
+expect_home_colon_4() {
+  local name="$1" cmd="$2" why='' v
+  sweep_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/n.go"
+  new_file "$v" || { report "$name" ''; return; }
+  local MNA_ENV="HOME=$C3_F"
+  run_mna "$C3_R" bash "$cmd"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+k40() { # `:` 는 홈 토큰을 끊는다 — `-v ~/slot/T:/w` 가 `…/T:/w` 한 토큰이 되면 없는
+        # 경로라 조상 걸음이 슬롯까지 올라가 저장소 T 를 놓친다(무기록 · 무알림).
+  expect_home_colon_4 'k40 docker -v ~/slot/T:/w → T 4종' \
+    'docker run --rm -v ~/slot/T:/w img gofmt -w /w'
+}
+
+k41() { # `$HOME` 꼴도 같다.
+  expect_home_colon_4 'k41 docker -v $HOME/slot/T:/w → T 4종' \
+    'docker run --rm -v $HOME/slot/T:/w img gofmt -w /w'
+}
+
+k42() { # `~/a:~/b` — `:` 뒤의 `~` 는 단어 머리다. 둘째 저장소 U 도 훑어야 한다.
+  local name='k42 X=~/slot/T/src:~/slot/U/src → T · U 4종' why='' u vt vu
+  sweep_fixture || { report "$name" ''; return; }
+  u="$C3_S/U"
+  mkdir -p "$u/src" && printf 'k\n' > "$u/src/k.go" && commit_repo "$u" \
+    || { report "$name" ''; return; }
+  find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+  vt="$C3_T/src/n.go"; vu="$u/src/n.go"
+  new_file "$vt" && new_file "$vu" || { report "$name" ''; return; }
+  local MNA_ENV="HOME=$C3_F"
+  run_mna "$C3_R" bash 'X=~/slot/T/src:~/slot/U/src make gen'
+  why="$(expect_flags "$C3_R" 4 "$vt")"
+  [[ -n "$why" ]] && why="[T] $why"
+  if [[ -z "$why" ]]; then
+    why="$(expect_flags "$C3_R" 4 "$vu")"
+    [[ -n "$why" ]] && why="[U] $why"
+  fi
+  report "$name" "$why"
+}
+
+k43() { # 사용자 조회를 못 하면(python3 실패) 있다고 본다 — 알리는 쪽이다. 없음으로 보면
+        # 있는 사용자의 홈이 조용히 빠진다.
+  local name='k43 사용자 조회 실패(python3 심) → rc 3' why='' shim
+  shim="$(new_dir pyshim)" && printf '#!/bin/sh\nexit 1\n' > "$shim/python3" \
+    && chmod +x "$shim/python3" \
+    || { FIXTURE_FAIL='python3 심'; report "$name" ''; return; }
+  run_module '
+PATH="$SHIM:$PATH"
+home_path_tokens "cat ~nouser-k43/a"; echo "r=$?"' HOME=/h SHIM="$shim"
+  if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
+  elif [[ "$(flat "$OUT")" != 'r=3' ]]; then why="모듈 판독 [$(flat "$OUT")]"
+  fi
+  report "$name" "$why"
+}

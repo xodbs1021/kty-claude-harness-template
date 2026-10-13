@@ -22,6 +22,10 @@ DUALREVIEW_FLAG="$STATE_DIR/.needs-dualreview"
 RETRIEVAL_FLAG="$STATE_DIR/.needs-retrieval"
 BLOCK_COUNT="$STATE_DIR/.stop-block-count"
 BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플래그 상태) — 진전 인지 리셋용
+# 추가 관할 폴더 슬롯(ADR-0026, _extra_gate_dirs.sh). 키 이름의 유일 지점이다.
+readonly EXTRA_GATE_KEY='HARNESS_EXTRA_GATE_DIRS'
+REVIEW_DIRS_FILE="$STATE_DIR/.review-dirs"         # 슬롯 리뷰 자리 기록(형식은 모듈이 정본)
+EXTRA_NOTICE_FILE="$STATE_DIR/.extra-gate-notice"  # 슬롯 사용 불가 알림을 낸 사유 표식
 
 # 세션 격리 (2026-10-01 실사고). 위 경로들은 **세션 번호가 없을 때의 기본값**이다.
 #
@@ -67,6 +71,8 @@ bind_session_state() {
   RETRIEVAL_FLAG="$SESSION_STATE_DIR/.needs-retrieval"
   BLOCK_COUNT="$SESSION_STATE_DIR/.stop-block-count"
   BLOCK_FP="$SESSION_STATE_DIR/.stop-block-fp"
+  REVIEW_DIRS_FILE="$SESSION_STATE_DIR/.review-dirs"
+  EXTRA_NOTICE_FILE="$SESSION_STATE_DIR/.extra-gate-notice"
   HARNESS_SESSION_ID="$sid"
 }
 HARNESS_SESSION_ID=""
@@ -765,4 +771,66 @@ if len(hits) > MAX_HITS:
     sys.stdout.write("... 그리고 %d개 더\n" % (len(hits) - MAX_HITS))
 raise SystemExit(0)
 PY
+}
+
+#######################################
+# 추가 관할 폴더 키의 판독 상태(ADR-0026). 판독기 stderr 는 막는다(훅이 대신 알린다).
+# 부재(rc=3)면 자리를 셸 내장 검사로 다시 본다 — 일반 파일이거나, 없고 가장 가까운
+# 조상이 탐색 가능한 폴더면 ABSENT(키가 없을 때와 같은 바이트). 디렉터리·끊긴 심링크(그 자리든
+# 조상이든 — `-e` 는 끊긴 링크를 "없음"으로 본다)·탐색 불가 폴더·더 줄일 수 없는
+# 상대경로는 읽을 수 없는 자리라 UNTRUSTED 다.
+# Globals:
+#   EXTRA_GATE_KEY, HARNESS_ENV_FILE (읽음) · EXTRA_GATE_RAW (씀 — VALUE 의 원문)
+# Arguments:
+#   $1 — 판독할 harness.env (선택, 기본 HARNESS_ENV_FILE)
+# Returns:
+#   0 VALUE · 1 UNTRUSTED · 3 ABSENT
+#######################################
+extra_gate_key_state() {
+  local file="${1:-$HARNESS_ENV_FILE}" rc p q
+  EXTRA_GATE_RAW="$(harness_env_value "$EXTRA_GATE_KEY" "$file" 2>/dev/null)"
+  rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    [[ -n "$EXTRA_GATE_RAW" ]] && return 0
+    return 3
+  fi
+  EXTRA_GATE_RAW=''
+  [[ "$rc" -eq 3 ]] || return 1
+  [[ -f "$file" ]] && return 3
+  [[ -e "$file" ]] && return 1
+  p="$file"
+  while [[ ! -e "$p" ]]; do
+    [[ -L "$p" ]] && return 1
+    q="${p%/*}"
+    [[ "$q" != "$p" ]] || return 1
+    p="${q:-/}"
+  done
+  [[ -d "$p" && -x "$p" ]] && return 3
+  return 1
+}
+EXTRA_GATE_RAW=""
+
+#######################################
+# 슬롯 사유 코드의 문구(경로·`"`·`\`·개행 없음 — JSON 에 그대로 싣는다). 모듈이
+# 없어도(사유 module) 나가야 해서 여기 둔다.
+# Arguments:
+#   $1 — untrusted|module|colon|tilde|relative|missing|newline|root
+# Outputs:
+#   문구(개행 없음)
+# Returns:
+#   0 · 1 모르는 코드
+#######################################
+extra_problem_text() {
+  case "${1:-}" in
+    untrusted)
+      printf '%s' 'harness.env 를 믿고 읽을 수 없다(손상·읽기 불가·중복 선언·문법 밖·파일 종류)' ;;
+    module) printf '%s' '추가 관할 폴더 모듈을 읽지 못했다 — 하네스를 다시 설치(sync)하라' ;;
+    colon) printf '%s' '값에 : 가 있다 — 폴더 하나만 적는다(목록 형식이 아니다)' ;;
+    tilde) printf '%s' '~ 를 펼칠 수 없다(~사용자 형식이거나 홈 경로를 모른다)' ;;
+    relative) printf '%s' '절대경로가 아니다 — / 또는 ~/ 로 시작해야 한다' ;;
+    missing) printf '%s' '그 폴더가 없거나 들어갈 수 없다' ;;
+    newline) printf '%s' '그 폴더의 실제 경로에 개행이 있다 — 줄 단위 기록에 쓸 수 없다' ;;
+    root) printf '%s' '/ 는 관할 폴더로 쓸 수 없다' ;;
+    *) return 1 ;;
+  esac
 }

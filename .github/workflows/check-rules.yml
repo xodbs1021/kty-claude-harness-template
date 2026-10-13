@@ -74,5 +74,9 @@ jobs:
       # 편집이 `.claude/*` 로 분류돼 게이트가 하나도 서지 않던 결함의 재발 방지.
       - name: 워크트리 프로젝트 루트 회귀 테스트
         run: ./tests/worktree-project-dir.test.sh
+      # 추가 관할 폴더 슬롯(ADR-0026). 세션 루트 밖 저장소 편집의 게이트와 그 해제 자리 —
+      # 키가 없을 때 기존 바이트가 그대로인지와 기록 형식을 보수적으로 읽는지가 축이다.
+      - name: 추가 관할 폴더 슬롯 회귀 테스트
+        run: ./tests/extra-gate-dirs.test.sh
       - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
         run: ./scripts/check-layer-boundary.sh

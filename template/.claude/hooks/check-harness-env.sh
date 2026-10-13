@@ -94,7 +94,7 @@ if [[ -n "$bad_keys" ]]; then
   slot_note=""
   case " $bad_keys" in
     *" $EXTRA_GATE_KEY "*)
-      slot_note=" 관할 폴더 키는 슬롯이 꺼져 세션 루트 밖 저장소 편집에 게이트가 서지 않습니다."
+      slot_note=" 관할 폴더 키는 슬롯이 꺼져 슬롯 폴더 안 저장소 편집에 게이트가 서지 않습니다."
       ;;
   esac
   msg="harness.env 판독 경고: ${bad_keys}— 이 키의 값을 믿을 수 없습니다(중복 선언·지원 문법 밖·닫히지 않은 따옴표·읽기 실패 중 하나). 판독기는 이런 값을 미설정으로 취급합니다 — 검사 명령 키는 검사가 조용히 생략되고, 게이트 스위치 키는 안전측인 켜짐으로 동작합니다.${slot_note} 파일 첫머리의 문법 규칙을 확인하세요."
@@ -112,7 +112,7 @@ if [[ "$key_state" -eq 1 ]]; then
     *" $EXTRA_GATE_KEY "*) ;;
     *)
       slot_msg="harness.env 추가 관할 폴더 경고: $(extra_problem_text untrusted)."
-      slot_msg="$slot_msg 슬롯이 꺼져 세션 루트 밖 저장소 편집에 게이트가 서지 않습니다."
+      slot_msg="$slot_msg 슬롯이 꺼져 슬롯 폴더 안 저장소 편집에 게이트가 서지 않습니다."
       msg="${msg:+$msg }$slot_msg" ;;
   esac
 fi
@@ -126,7 +126,7 @@ if [[ "$key_state" -eq 0 ]]; then
   fi
   if [[ -n "$problem" ]]; then
     slot_msg="harness.env 추가 관할 폴더 경고: $(extra_problem_text "$problem")."
-    slot_msg="$slot_msg 슬롯이 꺼져 세션 루트 밖 저장소 편집에 게이트가 서지 않습니다."
+    slot_msg="$slot_msg 슬롯이 꺼져 슬롯 폴더 안 저장소 편집에 게이트가 서지 않습니다."
     msg="${msg:+$msg }$slot_msg"
   fi
 fi

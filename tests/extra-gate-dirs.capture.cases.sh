@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # extra-gate-dirs.capture.cases.sh — 의무를 잡는 쪽(C1-C4)의 이연 처분 케이스: 기록 줄 길이 ·
 # 쌍 뿌리의 삭제 판정 · 같은 뿌리 중복 계수 · 뿌리 중복 제거의 접미 충돌 · 홈 토큰 축소 알림 ·
-# 끝 개행 저장소 · 편집 검증 훅 침묵 · 알림 표식(FIFO · 세션 격리) · 메시지 동시 출력.
+# 끝 개행 저장소 · 편집 검증 훅 침묵 · 알림 표식(FIFO · 세션 격리) · 메시지 동시 출력 ·
+# 종결 r1(작업 공간 예산 순서 · 따옴표 안 ~ · 기록 파일 종류 · EFBIG · 바이트 길이 · 기록
+# 세션 격리 · 값 // · 절단 문구).
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
 # 거기와 envcheck·notice·judge·sweep 케이스 파일에 있다:
@@ -269,16 +271,16 @@ count_lines() { [[ -f "$1" ]] && wc -l < "$1" | tr -d ' ' || echo 0; }
 
 k13() { # 홈 토큰 후보는 단어 머리의 `~` 뿐이다 — `HEAD~1` · `main~3..HEAD` · `x@~4` ·
         # `"C1~C4"` 의 단어 중간 `~` 는 홈 경로가 아니라 부분 알림을 내지 않는다.
-        # 머리 경계(줄 처음 · 공백 · 따옴표 · = : ( ; | & < > 뒤)는 모듈 단위로도 본다.
+        # 머리 경계(줄 처음 · 공백 · = : ( ; | & < > 뒤)는 모듈 단위로도 본다(따옴표는 k25).
   local name='k13 단어 중간 ~ → 홈 토큰 아님 · 부분 알림 없음(머리 ~ 는 그대로)'
   local why='' c
   run_module '
 home_path_tokens "git diff HEAD~1 && git log main~3..HEAD"; echo "mid=$?"
 home_path_tokens "npm i x@~4; git commit -m \"C1~C4\""; echo "mid2=$?"
 home_path_tokens "cat ~nouser-k13/a"; echo "user=$?"
-home_path_tokens "a=~/p b:~/q (~/r) x|~/s y<~/t \"~/u\" '"'"'~/v'"'"'"; echo "head=$?"' HOME=/h
+home_path_tokens "a=~/p b:~/q (~/r) x|~/s y<~/t"; echo "head=$?"' HOME=/h
   if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
-  elif [[ "$(flat "$OUT")" != 'mid=0 mid2=0 user=3 /h/p /h/q /h/r /h/s /h/t /h/u /h/v head=0' ]]; then
+  elif [[ "$(flat "$OUT")" != 'mid=0 mid2=0 user=3 /h/p /h/q /h/r /h/s /h/t head=0' ]]; then
     why="모듈 판독 [$(flat "$OUT")]"
   fi
   if [[ -z "$why" ]]; then
@@ -473,5 +475,163 @@ k23() { # 같은 부류(문자열 접두 ≠ 물리 조상) — 얻은 뿌리 Y/
   new_file "$v" || { report "$name" ''; return; }
   run_mna "$C3_R" bash "cd $y/a/inner && printf x > $y/a/inner/../src/s3.go"
   why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+# --- 종결 r1 — 예산 순서 · 따옴표 · 기록 파일 종류 · 바이트 길이 · 세션 격리 · // ----------
+TOK_TIME_CUT_ALL='일부 또는 전부를 게이트에 기록하지 못했다'   # MSG_SWEEP_TIME_CUT(기록 0개도 맞게)
+
+# session_key_of <session_id> — _common.sh 정본이 그 세션에 주는 폴더 이름.
+session_key_of() {
+  env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$TMPROOT" "$BASH" -c \
+    '. "$0" && session_key "$1"' "$COMMON" "$1"
+}
+
+# record_tails_in <기록 파일> <값> — 그 파일에서 그 값의 기록 꼬리들(줄당 하나).
+record_tails_in() {
+  local line
+  [[ -f "$1" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == "$2$US"* ]] && printf '%s\n' "${line#"$2$US"}"
+  done < "$1"
+}
+
+k24() { # 작업 공간 루프도 설계 모양 필터보다 먼저 시간 예산을 본다(저장소 루프와 같다) —
+        # 비설계 파일만 아주 많아도 예산이 끊는다. 그러지 않으면 수십만 개에서 30 s 상한.
+  local name='k24 작업 공간 비설계 파일만 · 예산 넘긴 셸 → 시간 절단 알림 · 창 소비'
+  local why='' w i
+  sweep_fixture || { report "$name" ''; return; }
+  w="$C3_S/_workspace_T"
+  for i in 1 2 3 4 5; do
+    printf 'x\n' > "$w/n$i.txt" || { FIXTURE_FAIL='비설계 파일'; report "$name" ''; return; }
+  done
+  local MNA_CWD="$w" MNA_ENV="$BOUND_LATE"
+  run_mna "$C3_R" bash 'touch n1.txt n2.txt n3.txt n4.txt n5.txt'
+  if ! contains "$OUT" "$TOK_TIME_CUT"; then why="시간 절단 알림 없음 [$OUT]"
+  elif window_left "$C3_R"; then why='창을 소비하지 않았다'
+  fi
+  report "$name" "$why"
+}
+
+k25() { # 따옴표 안의 `~` 는 셸이 펼치지 않는다 — 따옴표는 단어 머리가 아니다. JSON 문자열 ·
+        # 따옴표 인자 · 따옴표로 감싼 버전 범위는 홈 토큰이 아니라 부분 알림을 내지 않는다.
+  local name='k25 따옴표 안 ~ → 홈 토큰 아님 · 부분 알림 없음' why='' c
+  run_module '
+home_path_tokens "echo \"~/u\" '"'"'~/v'"'"'"; echo "q=$?"' HOME=/h
+  if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
+  elif [[ "$(flat "$OUT")" != 'q=0' ]]; then why="모듈 판독 [$(flat "$OUT")]"
+  fi
+  if [[ -z "$why" ]]; then
+    sweep_fixture || { report "$name" ''; return; }
+    for c in "printf '{\"x\":\"~1.2.3\"}' > p.json" "echo '~ok'" \
+        'npm pkg set dependencies.lodash="~4.17.21"'; do
+      make_window "$C3_R" || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+      run_mna "$C3_R" bash "$c"
+      contains "$OUT" "$TOK_ROOT_CAP" && { why="[$c] 거짓 부분 알림"; break; }
+    done
+  fi
+  report "$name" "$why"
+}
+
+k26() { # 기록 파일이 일반 파일이 아니면(FIFO · 폴더) 쓰지 않는다 — FIFO 는 열기에서 읽는 쪽을
+        # 기다려 플래그를 쓰기 전에 훅 상한에 닿는다. 기록 실패 문구로 막는다(판독기 -f 와 같다).
+  local name='k26 기록 파일이 FIFO → 대기 없이 끝남 · 4종 · 기록 실패 문구' why='' v
+  slot_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/k26.go"
+  mkfifo "$C3_R/.claude/.review-dirs" && : > "$v" \
+    || { FIXTURE_FAIL='FIFO 기록 파일'; report "$name" ''; return; }
+  run_mna_bounded 10 "$C3_R" "$v"
+  if [[ "$RC" -eq 124 ]]; then why='끝나지 않았다(기록 FIFO 대기)'
+  elif [[ "$RC" -ne 0 ]]; then why="rc=$RC"
+  elif ! contains "$OUT" "$TOK_RECORD_FAIL"; then why="기록 실패 문구 없음 [$OUT]"
+  else why="$(expect_flags "$C3_R" 4 "$v")"
+  fi
+  report "$name" "$why"
+}
+
+k27() { # 기록 쓰기가 EFBIG(ulimit -f 0)로 실패해도 그 줄이 stdout 으로 새지 않는다 — bash 3.2
+        # 의 printf 는 실패한 줄을 출력 버퍼에 남겨 다음 출력과 함께 낸다(훅 stdout 은 JSON 한 줄).
+  local name='k27 기록 쓰기 EFBIG → rc 1 · stdout 누출 없음' why='' f
+  f="$(new_dir k27)" && : > "$f/rec" || { FIXTURE_FAIL='기록 파일'; report "$name" ''; return; }
+  run_module '
+REVIEW_DIRS_FILE="$FIX/rec"
+(trap "" XFSZ; ulimit -f 0; append_review_record "LEAK-k27"; echo "rc=$?")' FIX="$f"
+  if [[ "$RC" -ne 0 ]]; then why="모듈 셸 rc=$RC [$ERR]"
+  elif [[ "$(flat "$OUT")" != 'rc=1' ]]; then why="출력 [$(flat "$OUT")] (기대 rc=1)"
+  fi
+  report "$name" "$why"
+}
+
+k28() { # 기록 줄 길이는 바이트로 잰다 — UTF-8 로케일에서 글자로 재면 1023자 이하 · 1023B 초과
+        # 줄을 써서 한 번의 write 보장이 깨진다. 한글 경로로 그 줄을 만든다(k05 는 ASCII 뿐).
+  local name='k28 UTF-8 로케일 · 기록 줄 1023자 이하 1023B 초과 → 쓰지 않음 · 영구 문구'
+  local why='' loc f s t v a b line tails
+  for loc in C.UTF-8 en_US.UTF-8 ''; do
+    [[ -z "$loc" ]] && break
+    [[ "$(LC_ALL="$loc" "$BASH" -c 'x=가; echo "${#x}"' 2>/dev/null)" == 1 ]] && break
+  done
+  [[ -n "$loc" ]] || { FIXTURE_FAIL='UTF-8 로케일 없음'; report "$name" ''; return; }
+  f="$(new_dir k28)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
+  a="$(printf '가%.0s' $(seq 1 80))"; b="$(printf '나%.0s' $(seq 1 80))"
+  s="$f/slot"; t="$s/$a/$b/T"; v="$t/src/k28.go"
+  line="$v$US$t/_workspace$US$s/$a/$b/_workspace_T"
+  [[ "$(LC_ALL="$loc" "$BASH" -c 'echo "${#1}"' x "$line")" -le 1023 \
+     && "$(LC_ALL=C "$BASH" -c 'echo "${#1}"' x "$line")" -gt 1023 ]] \
+    || { FIXTURE_FAIL='줄 길이 전제(1023자 이하 · 1023B 초과)'; report "$name" ''; return; }
+  mkdir -p "$t/src" && printf 'k\n' > "$t/src/k.go" && commit_repo "$t" \
+    && new_mna_project 1 "HARNESS_EXTRA_GATE_DIRS=\"$s\""$'\n' \
+    || { report "$name" ''; return; }
+  local MNA_ENV="LC_ALL=$loc"
+  edit_new "$MNA_PROJ" "$v" || { report "$name" ''; return; }
+  tails="$(record_lines_of "$MNA_PROJ" "$v")"
+  if [[ "$tails" != '!' ]]; then why="기록 꼬리 [$(flat "$tails" | head -c 120)] (기대 ! 하나)"
+  elif ! contains "$OUT" "$TOK_RECORD_PERM"; then why="영구 문구 없음 [$OUT]"
+  fi
+  [[ -z "$why" ]] && why="$(expect_flags "$MNA_PROJ" 4 "$v")"
+  report "$name" "$why"
+}
+
+k29() { # 리뷰 자리 기록은 세션마다 따로다 — 두 세션이 서로의 기록을 건드리지 않고 공유
+        # 자리(.claude/.review-dirs)도 쓰지 않는다.
+  local name='k29 .review-dirs 세션 격리 → 세션 A·B 각자 자기 값만 · 공유 자리 없음'
+  local why='' va vb fa fb
+  slot_fixture || { report "$name" ''; return; }
+  va="$C3_T/src/k29a.go"; vb="$C3_T/src/k29b.go"
+  fa="$C3_R/.claude/.sessions/$(session_key_of k29-session-a)/.review-dirs"
+  fb="$C3_R/.claude/.sessions/$(session_key_of k29-session-b)/.review-dirs"
+  local MNA_SID='k29-session-a'
+  edit_new "$C3_R" "$va" || { report "$name" ''; return; }
+  MNA_SID='k29-session-b'
+  edit_new "$C3_R" "$vb" || { report "$name" ''; return; }
+  if [[ -e "$C3_R/.claude/.review-dirs" ]]; then why='공유 기록 자리에 썼다'
+  elif [[ "$fa" == "$fb" ]]; then why='두 세션의 기록 자리가 같다'
+  elif [[ -z "$(record_tails_in "$fa" "$va")" ]]; then why='세션 A 기록에 A 값이 없다'
+  elif [[ -z "$(record_tails_in "$fb" "$vb")" ]]; then why='세션 B 기록에 B 값이 없다'
+  elif [[ -n "$(record_tails_in "$fa" "$vb")" ]]; then why='세션 A 기록에 B 값이 섞였다'
+  elif [[ -n "$(record_tails_in "$fb" "$va")" ]]; then why='세션 B 기록에 A 값이 섞였다'
+  fi
+  report "$name" "$why"
+}
+
+k30() { # 값 `//` 는 `pwd -P` 가 `//` 로 내어 `/` 거부를 비켜 갔다 — 슬롯이 알림 없이 무효였다.
+  local name='k30 값 // → 알림 root' why='' p
+  new_mna_project 1 'HARNESS_EXTRA_GATE_DIRS="//"'$'\n' \
+    || { report "$name" ''; return; }
+  p="$MNA_PROJ"; : > "$p/src/a.ts"
+  run_mna "$p" edit "$p/src/a.ts"
+  why="$(expect_notice root '//')"
+  report "$name" "$why"
+}
+
+k31() { # 시간 절단 문구는 기록이 0개일 때도 맞아야 한다 — 뿌리 수집 단계에서 끊기면 세션
+        # 루트의 파일까지 하나도 기록하지 않는다("일부만 기록했다"가 아니다).
+  local name='k31 뿌리 수집 단계 절단 → 기록 0 · "일부 또는 전부" 문구' why=''
+  sweep_fixture || { report "$name" ''; return; }
+  new_file "$C3_R/src/k31.go" || { report "$name" ''; return; }
+  local MNA_ENV="$BOUND_LATE"
+  run_mna "$C3_R" bash "cat $C3_T/src/a.go > src/k31.go"
+  if ! contains "$OUT" "$TOK_TIME_CUT_ALL"; then why="문구 [$OUT]"
+  else why="$(expect_flags "$C3_R" 0 src/k31.go)"
+  fi
   report "$name" "$why"
 }

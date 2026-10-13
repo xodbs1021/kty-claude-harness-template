@@ -218,7 +218,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=122
+EXPECTED_CASES=130
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -231,35 +231,50 @@ s01 s02 s03 s04 s05 s06 s07 s08 s09 s10 s11 s12
 f01 f02 f03 f04 f05 s_pair1 s_pair2 s_nonpair s_rec h_unset
 b01 b02 b03 b04 b05 l01 l02 l03 w01 w02 d01 d02 d03
 k01 k02 k03 k04 k05 k06 k07 k08 k09 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23
+k24 k25 k26 k27 k28 k29 k30 k31
 '
 
-# 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이
-# 상쇄돼 그대로 초록이 된다.
-case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
-case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"
-if [[ "$case_total" -ne "$EXPECTED_CASES" \
-      || "$case_uniq" -ne "$EXPECTED_CASES" ]]; then
-  echo "✗ CASES 목록 ${case_total}건(유일 ${case_uniq}건) ≠ 기대" \
-    "${EXPECTED_CASES}건 — 케이스가 중복됐거나 빠졌습니다" >&2
-  exit 1
-fi
+#######################################
+# 케이스 목록을 검사하고 전부 돌린 뒤 러너 자신의 계수를 검사한다.
+# Globals:
+#   EXPECTED_CASES, CASES (읽음) · ran, DID_RUN, FIXTURE_FAIL (씀) · pass, fail (읽음)
+# Outputs:
+#   케이스마다 판정 한 줄, 끝에 합계(stdout) · 러너 자체 결함(stderr)
+# Returns:
+#   0 전건 통과 · 1 실패 또는 러너 결함
+#######################################
+main() {
+  local case_total case_uniq c
+  # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이
+  # 상쇄돼 그대로 초록이 된다.
+  case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
+  case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"
+  if [[ "$case_total" -ne "$EXPECTED_CASES" \
+        || "$case_uniq" -ne "$EXPECTED_CASES" ]]; then
+    echo "✗ CASES 목록 ${case_total}건(유일 ${case_uniq}건) ≠ 기대" \
+      "${EXPECTED_CASES}건 — 케이스가 중복됐거나 빠졌습니다" >&2
+    exit 1
+  fi
 
-echo "extra-gate-dirs — 추가 관할 폴더 슬롯"
-for c in $CASES; do
-  ran=$((ran + 1))
-  DID_RUN=0
-  FIXTURE_FAIL=''
-  "$c"
-done
+  echo "extra-gate-dirs — 추가 관할 폴더 슬롯"
+  for c in $CASES; do
+    ran=$((ran + 1))
+    DID_RUN=0
+    FIXTURE_FAIL=''
+    "$c"
+  done
 
-if [[ "$ran" -ne "$EXPECTED_CASES" ]]; then
-  echo "✗ 실행 ${ran}건 ≠ 기대 ${EXPECTED_CASES}건 — 케이스가 조용히 빠졌습니다" >&2
-  exit 1
-fi
-if [[ $((pass + fail)) -ne "$ran" ]]; then
-  echo "✗ 판정 $((pass + fail))건 ≠ 실행 ${ran}건 — 중복 판정했거나 건너뛰었습니다" >&2
-  exit 1
-fi
+  if [[ "$ran" -ne "$EXPECTED_CASES" ]]; then
+    echo "✗ 실행 ${ran}건 ≠ 기대 ${EXPECTED_CASES}건 — 케이스가 조용히 빠졌습니다" >&2
+    exit 1
+  fi
+  if [[ $((pass + fail)) -ne "$ran" ]]; then
+    echo "✗ 판정 $((pass + fail))건 ≠ 실행 ${ran}건 — 중복 판정했거나 건너뛰었습니다" >&2
+    exit 1
+  fi
 
-echo "— ${pass}/${ran} 통과"
-[[ "$fail" -eq 0 ]] || exit 1
+  echo "— ${pass}/${ran} 통과"
+  [[ "$fail" -eq 0 ]] || exit 1
+}
+
+main "$@"

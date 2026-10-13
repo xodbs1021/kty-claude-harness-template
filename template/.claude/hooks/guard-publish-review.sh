@@ -122,15 +122,11 @@ case "$now" in ''|*[!0-9]*)
 esac
 now=$((10#$now))
 
-recent=""
-# 세션 루트 _workspace 가 첫 자리이고, 모드일 때 기록된 리뷰 자리가 뒤따른다(줄 목록 —
-# 자리는 판정자가 개행 없는 경로로만 기록한다).
-review_dirs="$PROJECT_DIR/_workspace"$'\n'"$slot_dirs"
-while [ -z "$recent" ] && [ -n "$review_dirs" ]; do
-  d="${review_dirs%%$'\n'*}"
-  case "$review_dirs" in *$'\n'*) review_dirs="${review_dirs#*$'\n'}" ;; *) review_dirs="" ;; esac
-  [ -n "$d" ] || continue
-  for f in "$d"/*codex*.md; do
+# recent_review_in <폴더> — 그 폴더의 *codex*.md 가운데 WINDOW분 안의 것 하나를 recent 에
+# 담는다(rc 0). 없으면 rc 1. 세션 루트와 슬롯 기록 자리가 같은 판정을 쓴다.
+recent_review_in() {
+  local f m age
+  for f in "$1"/*codex*.md; do
     [ -f "$f" ] || continue
     m="$(stat -f %m "$f" 2>/dev/null)" || m=""
     [ -n "$m" ] || { m="$(stat -c %Y "$f" 2>/dev/null)" || m=""; }
@@ -142,9 +138,21 @@ while [ -z "$recent" ] && [ -n "$review_dirs" ]; do
     [ "$age" -ge 0 ] || continue
     if [ "$age" -le $(( WINDOW_MIN * 60 )) ]; then
       recent="$f"
-      break
+      return 0
     fi
   done
+  return 1
+}
+
+recent=""
+# 세션 루트는 따로 본다 — 루트 경로는 개행을 품을 수 있어 줄 목록에 넣으면 쪼개진다.
+recent_review_in "$PROJECT_DIR/_workspace"
+# 모드일 때만 기록된 리뷰 자리를 이어 본다(줄 목록 — 판정자는 개행·US 없는 자리만 기록한다).
+rest="$slot_dirs"
+while [ -z "$recent" ] && [ -n "$rest" ]; do
+  d="${rest%%$'\n'*}"
+  case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+  [ -n "$d" ] && recent_review_in "$d"
 done
 
 if [ -z "$recent" ]; then

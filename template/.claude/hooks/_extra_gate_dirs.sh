@@ -564,12 +564,19 @@ read_review_dirs() {
 #   첫 줄 = 사유 코드(공백 구분, 없으면 빈 줄). 다음 줄부터 `W <자리>`(미충족
 #   항목이 기다리는 자리)와 `M <값>`(현재 기록이 없는 값)
 # Returns:
-#   0 전부 충족 · 3 미충족 · 4 record-unusable · 그 밖(2) 평가 실패
+#   0 전부 충족 · 3 미충족 · 4 판정 불가(record-unusable · root-unusable) ·
+#   그 밖(2) 평가 실패
 #######################################
 read_review_verdict() {
   local root="${1:-}" flag="${DUALREVIEW_FLAG:-}" rec="${REVIEW_DIRS_FILE:-}"
   local rows
   [[ -n "$root" && -n "$flag" && -n "$rec" ]] || return 2
+  # 세션 루트 자리(`루트/_workspace`)는 US 구분 자리 목록·줄 단위 결과에 실린다 — 루트에
+  # US·LF 가 있으면 다른 폴더로 쪼개지므로 판정하지 않고 막는다(조용한 축소 금지).
+  if has_record_separator "$root"; then
+    printf 'root-unusable\n'
+    return 4
+  fi
   if [[ -e "$rec" || -L "$rec" ]]; then
     if [[ ! -f "$rec" || ! -r "$rec" || ! -w "$rec" ]]; then
       printf 'record-unusable\n'

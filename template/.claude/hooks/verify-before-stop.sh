@@ -628,7 +628,7 @@ fi
 # 키 판독 상태 · 기록 파일의 존재 · 평가의 rc · 사유 코드 · W/M 줄만 안다(설계 2.4 Y3).
 DR_MODE=""     # loop 기존 루프 · met 슬롯 판정으로 해제 · unmet 슬롯 판정으로 막음
 DR_OUT=""      # 평가 출력: on|off 한 줄 · 사유 코드 한 줄 · W <자리> · M <값> 줄
-DR_RC=0        # 평가 rc: 0 충족 · 3 미충족 · 4 record-unusable · 9 모듈 없음 · 그 밖 실패
+DR_RC=0        # 평가 rc: 0 충족 · 3 미충족 · 4 판정 불가(기록·루트) · 9 모듈 없음 · 그 밖 실패
 
 #######################################
 # 서브셸 안에서만 부른다(모듈 적재 실패는 exit 로 알린다). 모듈을 적재해 슬롯을 검증하고
@@ -673,9 +673,15 @@ dualreview_judge_slot() {
   [ "$ks" -eq 3 ] && return 0
   { [ -e "$REVIEW_DIRS_FILE" ] || [ -L "$REVIEW_DIRS_FILE" ]; } && have_rec=1
   [ "$ks" -eq 1 ] && [ "$have_rec" -eq 0 ] && return 0
-  # 소속은 물리 세션 루트로 본다 — 판정자가 그렇게 기록했다(e12w).
-  root="$(CDPATH='' cd -P -- "$PROJECT_DIR" 2>/dev/null && pwd -P)" || root=""
-  [ -n "$root" ] || root="$PROJECT_DIR"
+  # 소속은 물리 세션 루트로 본다 — 판정자가 그렇게 기록했다(e12w). 끝 개행까지 센티널로
+  # 받는다 — 명령 치환은 끝 개행을 지워 다른 폴더를 가리킨다. 개행·US 가 든 루트는 모듈이
+  # root-unusable 로 막는다(목록 구분자와 부딪힌다).
+  if root="$(CDPATH='' cd -P -- "$PROJECT_DIR" 2>/dev/null && pwd -P && printf x)"; then
+    root="${root%x}"
+    root="${root%$'\n'}"
+  else
+    root="$PROJECT_DIR"
+  fi
   DR_OUT="$(dualreview_eval "$ks" "$root" 2>/dev/null)"
   DR_RC=$?
   case "$DR_RC" in
@@ -705,6 +711,8 @@ dualreview_reason_text() {
       echo "경로에 제어문자(US)가 있어 리뷰 자리를 기록할 수 없는 값이다(영구) — 파일 이름을 바꾸거나 사용자에게 알려 판단을 받아라." ;;
     record-unusable)
       echo "리뷰 자리 기록 파일을 쓰거나 읽을 수 없다 — 세션 폴더 권한을 고친 뒤 고친 파일들을 다시 저장하라." ;;
+    root-unusable)
+      echo "세션 루트 경로에 개행이나 제어문자(US)가 있어 리뷰 자리를 판정할 수 없다 — 세션 루트 폴더 이름을 바꾸거나 harness.env 의 슬롯 키를 지워라." ;;
     module)
       echo "추가 관할 폴더 모듈을 읽지 못해 리뷰 자리를 판정할 수 없다 — 하네스를 다시 설치(sync)하라." ;;
     eval-fail)

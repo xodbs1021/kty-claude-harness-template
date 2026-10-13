@@ -17,6 +17,7 @@
 #                                      홈 토큰 중복 계수 · 상대 cwd · 표식 EFBIG · 경계)
 #   extra-gate-dirs.release.cases.sh   듀얼리뷰 해제(Stop 3.5)의 슬롯 리뷰 자리 판정
 #   extra-gate-dirs.life.cases.sh      기록 수명(소속 변경·결속 순서·기록 장애)·발행 ②
+#   extra-gate-dirs.rootchar.cases.sh  세션 루트 경로의 개행·US(Stop 3.5 · 발행 ②)
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -214,7 +215,8 @@ for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.capture.cases.sh \
                   extra-gate-dirs.closing.cases.sh \
                   extra-gate-dirs.release.cases.sh \
-                  extra-gate-dirs.life.cases.sh; do
+                  extra-gate-dirs.life.cases.sh \
+                  extra-gate-dirs.rootchar.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -225,7 +227,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=176
+EXPECTED_CASES=180
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -242,6 +244,7 @@ k24 k25 k26 k27 k28 k29 k30 k31 k32 k33 k34 k35 k36 k37 k38 k39 k40 k41 k42 k43
 c01 c02 c03 t01 t02 t03 t04 t07 t08 t09
 r01_absent r01_empty r01b r02 r02e r03 r04 r05 r06 r07 r07b r09 e12w
 x1a x1b x1c x1d x1e x1f x1g x1h p01 p02 p03
+q01 q02 q03 q04
 '
 
 #######################################

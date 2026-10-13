@@ -80,7 +80,7 @@ MSG_SWEEP_TIME_CUT="이 명령의 스윕이 시간 예산을 다 써서 바꾼 �
 MSG_EXTRA_HEAD="추가 관할 폴더 슬롯(harness.env 의 HARNESS_EXTRA_GATE_DIRS)을 쓸 수 없다 — 고칠 때까지 슬롯 폴더 안 저장소 편집에 게이트가 서지 않고 리뷰 자리도 기록되지 않는다. 사유: "
 # 리뷰 자리 기록(슬롯 수명 계약 ①·③) 실패 — 회복 가능(쓰기 실패)과 영구(경로에 US·LF).
 MSG_RECORD_FAIL="리뷰 자리 기록에 실패했다(세션 폴더 쓰기 확인). 그 파일을 다시 저장하라 — 그 전까지 그 값은 턴 종료에서 막히거나 옛 소속 자리 리뷰로 풀릴 수 있다."
-MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있거나 기록 줄이 1023바이트를 넘어 리뷰 자리를 기록하지 못했다(영구) — 그 값이 슬롯 안 항목이면 턴 종료에서 막힌다. 파일 이름을 바꾸거나 사용자에게 알려 판단을 받아라."
+MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있거나 기록 줄이 1023바이트를 넘어 리뷰 자리를 기록하지 못했다(영구) — 그 값이 슬롯 안 항목이면 턴 종료에서 막힌다. 파일 이름이나 저장소 위치를 바꾸거나(자리 경로가 길면 저장소를 더 짧은 경로로 옮긴다) 사용자에게 알려 판단을 받아라."
 
 # --- 계약 함수 ------------------------------------------------------------
 
@@ -139,9 +139,10 @@ extra_gate_setup() {
 }
 
 #######################################
-# 진입 뒤의 유일한 출구(훅 비활성이면 그 전에 끝난다). 분기의 최종 메시지 하나 뒤에 리뷰 자리 기록 실패 문구를, 앞에
-# 슬롯 알림(그 사유를 이 세션에 아직 알리지 않았으면)을 붙여 JSON 한 줄로 내고, 출력이
-# 성공했을 때만 표식에 사유를 적는다 — stdout 이 닫혀 못 낸 알림은 다음 호출이 다시 낸다.
+# 진입 뒤의 유일한 출구(훅 비활성이면 그 전에 끝난다). 분기의 최종 메시지 하나 뒤에
+# 리뷰 자리 기록 실패 문구를, 앞에 슬롯 알림(그 사유를 이 세션에 아직 알리지 않았으면)을
+# 붙여 JSON 한 줄로 내고, 출력이 성공했을 때만 표식에 사유를 적는다 — stdout 이 닫혀 못
+# 낸 알림은 다음 호출이 다시 낸다.
 # 기록 실패 문구는 슬롯이 켜졌을 때만 생기므로 키가 없으면 출력은 예전 바이트 그대로다.
 # Globals:
 #   NOTICE_CODE, EXTRA_NOTICE_FILE, MSG_EXTRA_HEAD, RECORD_MSG (읽음)
@@ -414,6 +415,53 @@ abs_path_tokens() {
 # 목록은 예전 출력 그대로다. 슬롯이 켜졌으면 최상위를 root_top 으로 받아 개행이 든
 # 것은 빼고, 상한을 넘긴 토큰과 함께 SWEEP_ROOTS_PARTIAL 로 알린다.
 SWEEP_BASE=""          # 저장소 뿌리(LF 줄 목록 — 세션 루트가 늘 첫 줄)
+SWEEP_ROOTS_CUT=0      # 뿌리 수집 중에 시간 예산이 끝났다(스윕 전체를 끊는다)
+SWEEP_NOREPO_DIRS=""   # 이번 스윕에서 저장소가 아니라고 답을 받은 조회 폴더(LF 줄 목록)
+
+# sweep_query_dir <경로> — root_top · git_toplevel 이 git 에 묻는 폴더(`/.git` 앞 · 폴더면
+# 그 자신 · 파일이면 부모)를 QUERY_DIR 에 담는다(서브셸 없이). 같은 폴더는 같은 답이다.
+QUERY_DIR=""
+sweep_query_dir() {
+  case "$1" in
+    */.git/*) QUERY_DIR="${1%%/.git/*}" ;;
+    */.git) QUERY_DIR="${1%/.git}" ;;
+    *) QUERY_DIR="${1%/*}" ;;
+  esac
+}
+
+#######################################
+# 경로가 이미 얻은 저장소 뿌리(SWEEP_BASE) 자신이거나 그 안이고, 그 사이에 다른 저장소의
+# 표지(.git)가 없는가 — 그러면 같은 뿌리라 git 최상위를 다시 묻지 않아도 된다. 표지가
+# 있으면(중첩 저장소) 아니라고 답해 git 이 그 저장소를 찾게 한다. 이미 저장소가 아니라고
+# 답을 받은 폴더(SWEEP_NOREPO_DIRS)도 같은 폴더면 다시 묻지 않는다. 문자열로만 보므로
+# 표기가 다른 경로(심링크 경유)는 아니라고 답한다 — 그때는 git 을 부른다(느릴 뿐 틀리지
+# 않는다).
+# Globals:
+#   SWEEP_BASE, SWEEP_NOREPO_DIRS (읽음) · QUERY_DIR (sweep_query_dir 가 씀)
+# Arguments:
+#   $1 — 경로(폴더는 `<폴더>/.` 꼴이어도 된다)
+# Returns:
+#   0 이미 얻은 뿌리 안 · 1 아님
+#######################################
+known_root_has() {
+  local p="${1%/.}" rest="$SWEEP_BASE" r d
+  sweep_query_dir "$1"
+  case $'\n'"$SWEEP_NOREPO_DIRS" in *$'\n'"$QUERY_DIR"$'\n'*) return 0 ;; esac
+  while [ -n "$rest" ]; do
+    r="${rest%%$'\n'*}"
+    case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
+    [ -n "$r" ] || continue
+    [ "$p" = "$r" ] && return 0
+    case "$p" in "$r"/*) ;; *) continue ;; esac
+    d="$p"
+    while [ "$d" != "$r" ]; do
+      [ -e "$d/.git" ] && return 1
+      d="${d%/*}"
+    done
+    return 0
+  done
+  return 1
+}
 SWEEP_TOKEN_ROOTS=0    # 그중 명령문 절대경로에서 얻은 뿌리 수(SWEEP_MAX_ROOTS 상한)
 
 sweep_roots() {
@@ -434,6 +482,12 @@ sweep_roots() {
     if [ "$EXTRA_ON" -eq 0 ] && [ "$SWEEP_TOKEN_ROOTS" -ge "$SWEEP_MAX_ROOTS" ]; then
       break
     fi
+    # 슬롯이 켜졌으면 뿌리 수집도 시간 예산을 본다 — 토큰이 아주 많으면 이 루프만으로
+    # Bash 훅 상한(30 s)에 닿아 알림 없이 취소된다. 넘으면 스윕 전체를 끊고 알린다.
+    if sweep_budget_spent; then
+      SWEEP_ROOTS_CUT=1
+      break
+    fi
     # 지워진 경로(`rm <파일>`)는 남은 가장 가까운 조상으로, 디렉토리 토큰(`git -C <경로>`)은
     # 부모가 아니라 자신으로 조회한다 — git_toplevel 은 파일 경로의 dirname 을 묻는다([cx] r1).
     existing_ancestor "$tok"
@@ -441,7 +495,14 @@ sweep_roots() {
     [ -n "$tok" ] || continue
     [ -d "$tok" ] && tok="$tok/."
     if [ "$EXTRA_ON" -eq 1 ]; then
-      root_top "$tok" || continue
+      # 이미 얻은 뿌리 안이면 같은 뿌리다 — git 을 다시 부르지 않는다(같은 저장소 토큰이
+      # 많을 때 토큰마다 git 을 부르던 비용).
+      known_root_has "$tok" && continue
+      if ! root_top "$tok"; then
+        sweep_query_dir "$tok"
+        SWEEP_NOREPO_DIRS="$SWEEP_NOREPO_DIRS$QUERY_DIR"$'\n'
+        continue
+      fi
       root="$ROOT_OUT"
     else
       root="$(git_toplevel "$tok")" || continue
@@ -469,15 +530,16 @@ sweep_roots() {
 # 뿌리 — 물리화), 그리고 쌍(저장소 T ↔ 형제 _workspace_T). 넓히는 곳은 슬롯 안·세션
 # 루트 밖뿐이고 슬롯 자신은 뿌리가 아니다 — 슬롯 전체는 훑지 않는다(다른 트랙의 쓰기를
 # 잡지 않게).
-# 상한(명령문 토큰 뿌리는 상한 하나를 함께 쓴다): 명령문 토큰에서 얻은 뿌리(절대경로 저장소 · 홈 토큰 저장소
-# · 작업 공간)는 SWEEP_MAX_ROOTS 하나를 함께 쓰고, 넘으면 알린다. 쌍은 원천 하나에 하나라
-# 따로 세지 않는다. cwd 에서 얻은 뿌리도 세지 않는다(저장소·작업 공간 하나씩뿐이다).
+# 상한: 명령문 토큰에서 얻은 뿌리(절대경로 저장소 · 홈 토큰 저장소 · 작업 공간)는
+# SWEEP_MAX_ROOTS 하나를 함께 쓰고, 넘으면 알린다. 같은 뿌리는 한 번만 센다. 쌍은 원천
+# 하나에 하나라 따로 세지 않고, cwd 에서 얻은 뿌리도 세지 않는다(저장소·작업 공간 하나씩).
 # 뿌리 경로는 root_dir · root_top 으로만 얻는다 — 개행이 든 뿌리는 목록에 들어가지 않는다.
 SLOT_REPO_ROOTS=""      # 더할 저장소 뿌리(LF 줄 목록, 물리 경로 — 개행 없음)
 SLOT_WS_ROOTS=""        # 작업 공간 뿌리(LF 줄 목록, 물리 경로 — 개행 없음)
 SWEEP_ROOTS_PARTIAL=0   # 뿌리를 다 훑지 못했다(상한 · 홈 토큰 추출 실패 · 개행 · 입력 유실)
 SLOT_UNITS=0            # 상한에 센 뿌리 수(SWEEP_TOKEN_ROOTS 에서 시작)
-SLOT_PAIR_REPOS=""      # 쌍 추론으로만 얻은 저장소 뿌리(LF 줄 목록) — 창 기반 find 만 한다
+SLOT_PAIR_REPOS=""      # 명령문 토큰의 쌍으로만 얻은 저장소(LF 줄 목록) — 창 기반 find 만
+SLOT_CWD_WS=""          # cwd 에서 얻은 작업 공간 뿌리(그 쌍은 삭제 판정을 유지한다)
 JUDGED=""               # 작업 공간 뿌리에서 판정한 경로(LF 줄 목록 — 개행 없는 것만)
 ROOT_OUT=""             # root_dir · root_top 의 결과
 
@@ -495,7 +557,7 @@ listed_same() {
 #######################################
 # 스윕 뿌리용 물리화 — 폴더를 물리 경로로 풀어 ROOT_OUT 에 담는다. 끝 개행까지 센티널로
 # 받는다: 명령 치환은 끝 개행을 지워 이름이 같은 다른 폴더(다른 트랙)를 가리키고, 가운데
-# 개행은 LF 줄 목록을 쪼갠다(명령 치환이 끝 개행을 지우는 부류). 개행이 든 경로는 뿌리로 쓰지 않고 알린다.
+# 개행은 LF 줄 목록을 쪼갠다. 개행이 든 경로는 뿌리로 쓰지 않고 알린다.
 # Globals:
 #   ROOT_OUT, SWEEP_ROOTS_PARTIAL (씀)
 # Arguments:
@@ -651,10 +713,12 @@ slot_cwd_check() {
 
 #######################################
 # 슬롯 스윕 뿌리를 정한다(본 셸에서 — 전역에 담는다). 후보는 cwd · 절대경로 토큰 ·
-# 홈 토큰이다. 홈 토큰 추출이 실패하면(rc 2) 빈 성공으로 받지 않고 알림 표시를 세운다.
+# 홈 토큰이다. 홈 토큰 추출이 실패하거나(rc 2) 펼치지 못한 홈 토큰이 있으면(rc 3) 빈
+# 성공으로 받지 않고 알림 표시를 세운다. 토큰 순회 중 시간 예산이 끝나면 SWEEP_ROOTS_CUT
+# 을 세우고 돌아온다(호출자가 스윕을 끊는다).
 # Globals:
 #   HARNESS_CWD, SWEEP_TOKEN_ROOTS (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS, SLOT_UNITS,
-#   SWEEP_ROOTS_PARTIAL (씀)
+#   SLOT_PAIR_REPOS, SLOT_CWD_WS, SWEEP_ROOTS_PARTIAL, SWEEP_ROOTS_CUT (씀)
 # Arguments:
 #   $1 — 명령문
 #######################################
@@ -664,11 +728,16 @@ slot_sweep_roots() {
   SLOT_WS_ROOTS=""
   SLOT_UNITS="$SWEEP_TOKEN_ROOTS"
   SLOT_PAIR_REPOS=""
+  SLOT_CWD_WS=""
   if [ -n "$HARNESS_CWD" ] && [ -d "$HARNESS_CWD" ]; then
     add_slot_repo "$HARNESS_CWD" 0
-    add_slot_ws "$HARNESS_CWD" 0
+    add_slot_ws "$HARNESS_CWD" 0 && SLOT_CWD_WS="$ROOT_OUT"
   fi
   for tok in $(abs_path_tokens "$cmd"); do
+    if sweep_budget_spent; then
+      SWEEP_ROOTS_CUT=1
+      return 0
+    fi
     add_slot_ws "$tok" 1
   done
   toks="$(home_path_tokens "$cmd")" || SWEEP_ROOTS_PARTIAL=1
@@ -677,6 +746,10 @@ slot_sweep_roots() {
     tok="${rest%%$'\n'*}"
     case "$rest" in *$'\n'*) rest="${rest#*$'\n'}" ;; *) rest="" ;; esac
     [ -n "$tok" ] || continue
+    if sweep_budget_spent; then
+      SWEEP_ROOTS_CUT=1
+      return 0
+    fi
     add_slot_ws "$tok" 1
     add_slot_repo "$tok" 1
   done
@@ -686,9 +759,11 @@ slot_sweep_roots() {
 #######################################
 # 쌍 뿌리 — 슬롯 안 저장소 뿌리 T 의 형제 작업 공간과, 작업 공간 뿌리 W 의 형제
 # 저장소(git 최상위가 바로 그 폴더일 때)를 더한다. 쌍은 원천 하나에 하나라 상한에 세지
-# 않는다(원천이 상한 아래이므로 쌍도 그 아래다).
+# 않는다(원천이 상한 아래이므로 쌍도 그 아래다). 명령문 토큰의 작업 공간에서 얻은 쌍
+# 저장소는 SLOT_PAIR_REPOS 에 적어 삭제 판정에서 뺀다 — cwd 작업 공간의 쌍은 빼지 않는다.
 # Globals:
-#   SWEEP_BASE (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS (읽고 씀) · ROOT_OUT (씀)
+#   SWEEP_BASE, SLOT_CWD_WS (읽음) · SLOT_REPO_ROOTS, SLOT_WS_ROOTS (읽고 씀) ·
+#   ROOT_OUT, SLOT_PAIR_REPOS (씀)
 #######################################
 slot_pair_roots() {
   local rest="$SWEEP_BASE$SLOT_REPO_ROOTS" r t
@@ -705,14 +780,18 @@ slot_pair_roots() {
     t="$(sibling_repo_of "$r")" && [ -d "$t" ] || continue
     root_top "$t/." && [ "$ROOT_OUT" -ef "$t" ] || continue
     listed_same "$SWEEP_BASE$SLOT_REPO_ROOTS" "$ROOT_OUT" && continue
-    push_slot_repo "$ROOT_OUT" 0 && SLOT_PAIR_REPOS="$SLOT_PAIR_REPOS$ROOT_OUT"$'\n'
+    push_slot_repo "$ROOT_OUT" 0 || continue
+    # cwd 작업 공간의 쌍은 cwd 저장소처럼 삭제 판정을 한다(`rm ../T/x` 를 놓치지 않게).
+    # 명령문 토큰에서 얻은 쌍만 창 기반 find 로 한정한다(SLOT_PAIR_REPOS).
+    [ "$r" = "$SLOT_CWD_WS" ] || SLOT_PAIR_REPOS="$SLOT_PAIR_REPOS$ROOT_OUT"$'\n'
   done
 }
 
 #######################################
-# 슬롯이 켜졌고 시간 예산을 다 썼는가(훅 시작부터 — SECONDS).
+# 슬롯이 켜졌고 시간 예산을 다 썼는가(훅 시작부터 — SECONDS). 다 썼으면 절단 문구를
+# 가르도록 SWEEP_TIME_CUT 을 세운다(부수효과).
 # Globals:
-#   EXTRA_ON, SECONDS, SWEEP_BUDGET (읽음)
+#   EXTRA_ON, SECONDS, SWEEP_BUDGET (읽음) · SWEEP_TIME_CUT (씀)
 # Returns:
 #   0 다 씀 · 1 남음(키가 없으면 늘 1 — 예전 동작 그대로)
 #######################################
@@ -776,9 +855,10 @@ sweep_workspace_roots() {
 #######################################
 # 저장소 뿌리 하나를 훑는다 — 창 이후 바뀐 파일과 git 이 아는 삭제를 judge_file 로.
 # 호출자(sweep_bash_writes)의 지역 변수 n · truncated · file_msg 를 갱신한다(동적 범위).
-# 상한·시간 예산에 닿으면 truncated=1 로 돌아온다.
+# 상한·시간 예산에 닿으면 truncated=1 로 돌아온다. 명령문 토큰의 쌍으로만 얻은 저장소
+# (SLOT_PAIR_REPOS)는 git status 삭제 판정을 하지 않는다.
 # Globals:
-#   EXTRA_ON, JUDGED, proj, SWEEP_MAX, SWEEP_END (읽음)
+#   EXTRA_ON, JUDGED, proj, SWEEP_MAX, SWEEP_END, SLOT_PAIR_REPOS (읽음)
 # Arguments:
 #   $1 — 저장소 뿌리
 #######################################
@@ -874,9 +954,14 @@ sweep_bash_writes() {
 
   [ "$EXTRA_ON" -eq 1 ] && slot_cwd_check
   sweep_roots "$cmd"
-  if [ "$EXTRA_ON" -eq 1 ]; then
+  [ "$SWEEP_ROOTS_CUT" -eq 1 ] && truncated=1
+  if [ "$EXTRA_ON" -eq 1 ] && [ "$truncated" -eq 0 ]; then
     slot_sweep_roots "$cmd"
-    sweep_workspace_roots
+    if [ "$SWEEP_ROOTS_CUT" -eq 1 ]; then
+      truncated=1
+    else
+      sweep_workspace_roots
+    fi
   fi
 
   # 뿌리 목록은 매개변수 확장으로 돈다 — 히어독은 임시 파일이라 그것을 못 만들면(디스크

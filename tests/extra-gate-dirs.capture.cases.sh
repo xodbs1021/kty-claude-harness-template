@@ -395,3 +395,83 @@ k18() { # 이미 얻은 뿌리 T 안이라도 사이에 다른 저장소 표지(
   why="$(expect_flags "$C3_R" 4 "$v")"
   report "$name" "$why"
 }
+
+# --- 확인 패스 r1c — 뿌리 캐시와 심링크 ----------------------------------------------
+# 이미 얻은 뿌리 안의 심링크가 다른 저장소 하위 폴더를 가리키면, 문자열 조상 걸음은 그
+# 경로를 "같은 뿌리"로 읽는다. 캐시는 링크 성분을 만나면 git 에 물어야 한다 — 네 꼴 모두
+# 링크 대상 저장소의 파일에 4종이 서야 한다(a1f9da4 와 같은 판정).
+
+k19() { # 세션 루트 R 의 링크 R/lnk → 슬롯 저장소 T/src, `printf x > R/lnk/s1.go`.
+  local name='k19 세션 루트 링크 → 슬롯 T/src 에 쓰기 → 4종' why='' v
+  sweep_fixture || { report "$name" ''; return; }
+  ln -s "$C3_T/src" "$C3_R/lnk" || { FIXTURE_FAIL='링크'; report "$name" ''; return; }
+  v="$C3_T/src/s1.go"
+  new_file "$v" || { report "$name" ''; return; }
+  run_mna "$C3_R" bash "printf x > $C3_R/lnk/s1.go"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+k20() { # 슬롯 저장소 X 안 링크 X/zlnk → T/src, `cp X/src/a.go X/zlnk/s2.go`(X 토큰이 먼저).
+  local name='k20 슬롯 저장소 X 의 링크 → T/src 에 쓰기(X 토큰 먼저) → 4종' why='' x v
+  sweep_fixture || { report "$name" ''; return; }
+  x="$C3_S/X"
+  mkdir -p "$x/src" && printf 'k\n' > "$x/src/a.go" && commit_repo "$x" \
+    && ln -s "$C3_T/src" "$x/zlnk" || { report "$name" ''; return; }
+  find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+  v="$C3_T/src/s2.go"
+  new_file "$v" || { report "$name" ''; return; }
+  run_mna "$C3_R" bash "cp $x/src/a.go $x/zlnk/s2.go"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+k21() { # npm link 꼴 — 세션 루트(git 저장소)의 R/node_modules/ui → 슬롯 mono/packages/ui.
+  local name='k21 세션 루트 node_modules 링크 → 슬롯 mono 하위 폴더 수정 → 4종' why=''
+  local m v
+  sweep_fixture || { report "$name" ''; return; }
+  m="$C3_S/mono"; v="$m/packages/ui/src/B.tsx"
+  mkdir -p "$m/packages/ui/src" "$C3_R/node_modules" && printf 'a\n' > "$v" \
+    && commit_repo "$m" && printf '.claude/\nnode_modules/\n' > "$C3_R/.gitignore" \
+    && commit_repo "$C3_R" && ln -s "$m/packages/ui" "$C3_R/node_modules/ui" \
+    || { report "$name" ''; return; }
+  find "$C3_F" "$C3_R/node_modules" -exec touch -h -t 201901010000 {} + \
+    && make_window "$C3_R" || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+  printf 'b\n' > "$v"
+  run_mna "$C3_R" bash "sed -i.bak s/a/b/ $C3_R/node_modules/ui/src/B.tsx"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+k22() { # 세션 루트 링크 R/tpl → 슬롯 밖 하네스 정본 꼴 H/template. 키를 켜도 기존 ③ 게이트가
+        # 그대로여야 한다(슬롯은 넓히기만 한다).
+  local name='k22 세션 루트 링크 → 하네스 정본 template 수정(키 켬) → 4종' why='' h v
+  sweep_fixture || { report "$name" ''; return; }
+  h="$C3_F/H"; v="$h/template/.claude/hooks/x.sh"
+  mkdir -p "${v%/*}" && printf 'a\n' > "$v" && commit_repo "$h" \
+    && ln -s "$h/template" "$C3_R/tpl" || { report "$name" ''; return; }
+  find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+  printf 'b\n' > "$v"
+  run_mna "$C3_R" bash "sed -i.bak s/a/b/ $C3_R/tpl/.claude/hooks/x.sh"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}
+
+k23() { # 같은 부류(문자열 접두 ≠ 물리 조상) — 얻은 뿌리 Y/a/inner(중첩 저장소) 뒤의
+        # `Y/a/inner/../src/s3.go` 는 물리로 Y 안이다. `..` 성분이 든 경로는 git 에 물어야 한다.
+  local name='k23 얻은 뿌리 뒤 .. 성분 경로 → 바깥 저장소 Y 를 뿌리로 · 4종' why='' y v
+  sweep_fixture || { report "$name" ''; return; }
+  y="$C3_S/Y"
+  mkdir -p "$y/a/inner" "$y/a/src" && printf 'k\n' > "$y/a/inner/k.go" \
+    && printf 'k\n' > "$y/a/src/k.go" && printf 'a/inner/\n' > "$y/.gitignore" \
+    && commit_repo "$y/a/inner" && commit_repo "$y" || { report "$name" ''; return; }
+  find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL='창'; report "$name" ''; return; }
+  v="$y/a/src/s3.go"
+  new_file "$v" || { report "$name" ''; return; }
+  run_mna "$C3_R" bash "cd $y/a/inner && printf x > $y/a/inner/../src/s3.go"
+  why="$(expect_flags "$C3_R" 4 "$v")"
+  report "$name" "$why"
+}

@@ -218,7 +218,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=117
+EXPECTED_CASES=122
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -230,7 +230,7 @@ e20 e21 e22 e23 e24 e25
 s01 s02 s03 s04 s05 s06 s07 s08 s09 s10 s11 s12
 f01 f02 f03 f04 f05 s_pair1 s_pair2 s_nonpair s_rec h_unset
 b01 b02 b03 b04 b05 l01 l02 l03 w01 w02 d01 d02 d03
-k01 k02 k03 k04 k05 k06 k07 k08 k09 k10 k11 k12 k13 k14 k15 k16 k17 k18
+k01 k02 k03 k04 k05 k06 k07 k08 k09 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23
 '
 
 # 목록 자체의 중복·누락을 먼저 본다. 실행 수만 세면 "하나 중복 + 하나 누락"이

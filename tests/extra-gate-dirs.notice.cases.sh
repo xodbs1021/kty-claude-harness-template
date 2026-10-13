@@ -29,6 +29,7 @@ MNA_OUT_FILE=''   # 직전 run_mna 의 stdout 파일(바이트 비교용)
 MNA_CWD=''        # 비어 있지 않으면 payload 의 cwd
 MNA_FAIL=0        # 1 이면 PostToolUseFailure 모양(error 필드)
 MNA_NOHOME=0      # 1 이면 HOME 을 지우고 훅을 돌린다
+MNA_SID=''        # 비어 있지 않으면 payload 의 session_id(세션 폴더 격리 시험)
 MNA_ENV=''        # 비어 있지 않으면 훅 환경에 더할 할당 하나(NAME=값 — 시간 예산 주입)
 MNA_FSIZE0=0      # 1 이면 `ulimit -f 0`(SIGXFSZ 무시) 아래서 돈다 — 임시 파일·파일 쓰기
                   # 실패 주입. stdout 은 파이프로 받는다(파일이면 그 쓰기도 막힌다).
@@ -81,7 +82,7 @@ make_window() {
 # Arguments:
 #   $1 — 프로젝트, $2 — edit|bash, $3 — 편집 경로 또는 명령,
 #   $4 — closed 면 stdout 을 닫고 돌린다(출력 실패 주입).
-#   MNA_CWD · MNA_FAIL · MNA_NOHOME · MNA_ENV · MNA_FSIZE0 전역도 읽는다(위 선언 주석).
+#   MNA_CWD · MNA_FAIL · MNA_NOHOME · MNA_ENV · MNA_FSIZE0 · MNA_SID 전역도 읽는다(위 선언 주석).
 #######################################
 run_mna() {
   local p="$1" kind="$2" arg="$3" mode="${4:-}" payf errf unset_home=''
@@ -97,9 +98,11 @@ if sys.argv[4]:
 if sys.argv[5] == "1":
     body["hook_event_name"] = "PostToolUseFailure"
     body["error"] = "Exit code 1"
+if sys.argv[6]:
+    body["session_id"] = sys.argv[6]
 with open(sys.argv[3], "w", encoding="utf-8") as fh:
     fh.write(json.dumps(body))' \
-    "$kind" "$arg" "$payf" "$MNA_CWD" "$MNA_FAIL"
+    "$kind" "$arg" "$payf" "$MNA_CWD" "$MNA_FAIL" "$MNA_SID"
   [[ "$MNA_NOHOME" == 1 ]] && unset_home='-u HOME'
   if [[ "$mode" == closed ]]; then
     (cd "$p" && env -u HARNESS_HOOKS -u ECC_DISABLED_HOOKS $unset_home \

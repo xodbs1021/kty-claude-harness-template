@@ -3,17 +3,20 @@
 # 케이스: 미충족 나열 비용 · 발행 ② 기록 읽기 실패 알림 · 막음 안내 문구(루트
 # 경로 문자 · 슬롯 값 검증 실패 · 세션 루트 자리뿐인 막음 · 자리 목록 없는 막음 ·
 # 기록 줄 길이 초과 · 큰 본문의 기록 없는 값 나열) · 막음 · 발행 안내가 실제 해제
-# 조건과 맞는가(출구 · "위 사유" · 슬롯 문구 · 나열 실패 · 발행 ① ② 의 리뷰 자리).
+# 조건과 맞는가(출구 · "위 사유" · 슬롯 문구 · 나열 실패 · 발행 ① ② 의 리뷰 자리) ·
+# 종결 전 처분(Bash 스윕의 git 판독 실패 알림 · 평가 실패의 원인별 출구 ·
+# root-unusable 의 키 출구 · 중복 제거 실패 나열 · 기록 불가 값의 알림 우선).
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
-# 거기와 notice·judge·capture·release·life·rootchar 케이스 파일에 있다:
+# 거기와 notice·judge·capture·release·life·rootchar·sweep 케이스 파일에 있다:
 #   stop_fixture · run_stop · run_pub · dr_flag · rec · review_at · review_now
 #   expect_dr_released · expect_dr_slot_block · expect_dr_loop_block · env_slot
-#   env_untrusted · rootchar_fixture · new_mna_project · commit_repo · set_env
-#   edit_new · record_lines_of · run_common_bounded · new_dir · report
+#   env_untrusted · rootchar_fixture · root_review · new_mna_project
+#   commit_repo · set_env · edit_new · new_file · make_window · run_mna
+#   expect_flags · record_lines_of · run_common_bounded · new_dir · report
 #   contains · flat · MODULE · STOP_HOOK · C3_F · C3_R · C3_S · C3_T · RC_ROOT
 #   RC_BASE · MNA_PROJ · TOK_DR_* · TOK_PUB_NOTE · TOK_RECORD_* · ENV_NO_KEY
-#   T_FLAG · US · OUT · ERR · RC
+#   GOLDEN_PARTIAL · T_FLAG · US · OUT · ERR · RC
 # 셸 이식성: macOS 기본 bash 는 3.2 다. ${var,,}·mapfile·연관배열 금지.
 
 if [[ -z "${MNA_HOOK-}" ]]; then
@@ -50,6 +53,11 @@ TOK_DR_GITCHK='그 저장소의 git 판독'         # missing-record 의 확인 
 # 187398c 의 발행 ① 2단계 줄(골든 — 키가 없을 때의 기존 바이트).
 TOK_PUB_OLD_STEP2='  2. 결과를 _workspace/*codex*.md 로 저장한다 (듀얼리뷰 게이트가 자동 해제된다).'
 TOK_DR_MLIST='현재 리뷰 자리 기록이 없는 값:'
+TOK_DR_EVALENV='리뷰 자리 판정이 실패했다(환경 장애'   # 판정기를 돌리지 못한 환경 장애
+TOK_DR_EVALMOD='리뷰 자리 판정이 실패했다(모듈 오류)'  # 모듈이 망가진 평가 실패
+TOK_DR_SYNC='(sync)하라'                               # 다시 설치 출구
+TOK_DR_KEYLINE='키 줄을 지우거나 값을 비울지'          # root-unusable 의 키 출구(사용자 판단)
+TOK_DR_OLD_KEYOFF='슬롯 키를 끌지'   # 값만 틀리게 바꾸는 것(그대로 막힘)과 갈리지 않는 옛 문구
 # 큰 본문 나열 케이스의 항목 수 — 값마다 300바이트 남짓이라 본문이 파이프 버퍼
 # (64 KB)의 몇 배다.
 V08_ITEMS=1000
@@ -327,26 +335,36 @@ v10() { # 슬롯 값 검증 실패(dir-unknown)로 기록 없는 절대 항목�
   report "$name" "$why"
 }
 
-v11() { # 나열의 중복 제거가 실패해(awk 심) 자리 · 값 목록이 비면 "위 사유를 먼저
-        # 해결하면" 이 가리킬 사유가 없다 — 나열 실패를 그대로 알린다. 막음은 그대로다.
-  local name='v11 나열 실패(중복 제거 awk 실패) → 위 사유 없음 · 나열 실패 안내 · 막음'
-  local why='' v shim real
+v11() { # 나열의 중복 제거가 실패해도(awk 심) 자리 목록은 중복 제거 없이 그대로 나온다
+        # — 목록이 비면 저장할 자리도, "위 사유를 먼저 해결하면" 이 가리킬 사유도 없다.
+        # 두 값이 같은 자리를 기다리게 해, 그 자리가 두 번 나오면 중복 제거 없는 목록이다.
+        # 막음은 그대로이고, 나열된 자리에 리뷰를 두면(awk 가 여전히 실패해도) 풀린다.
+  local name='v11 중복 제거 awk 실패 → 중복 제거 없는 목록 · 위 사유 없음 · 그 자리 리뷰로 해제'
+  local why='' v w shim real n
   stop_fixture || { report "$name" ''; return; }
-  v="$C3_T/src/v11.go"
+  v="$C3_T/src/v11.go"; w="$C3_T/src/v11b.go"
   real="$(command -v awk)"
   shim="$(new_dir awkshim)" \
     && printf '#!/bin/sh\n[ "$1" = %s ] && exit 2\nexec %s "$@"\n' \
       "'!seen[\$0]++'" "$real" > "$shim/awk" && chmod +x "$shim/awk" \
-    && dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" "$C3_T/_workspace" \
+    && dr_flag "$C3_R" "$v" "$w" && rec "$C3_R" "$v" "$C3_T/_workspace" \
+    && rec "$C3_R" "$w" "$C3_T/_workspace" \
     || { FIXTURE_FAIL="${FIXTURE_FAIL:-awk 심}"; report "$name" ''; return; }
   local -x PATH="$shim:$PATH"
   run_stop "$C3_R"
-  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_LISTFAIL")"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_ABOVE")"
   if [[ -z "$why" ]]; then
-    if contains "$ERR" "$TOK_DR_ABOVE_REASON"; then why='위 사유 안내가 나왔다'
-    elif contains "$ERR" "  - $C3_T/_workspace"; then
-      why='자리 목록이 나왔다(심이 중복 제거를 막지 못했다)'
+    n="$(printf '%s\n' "$ERR" | grep -cxF -- "  - $C3_T/_workspace")"
+    if [[ "$n" != 2 ]]; then why="자리 나열 ${n}번(기대 2 — 중복 제거 없는 목록)"
+    elif contains "$ERR" "$TOK_DR_ABOVE_REASON"; then why='위 사유 안내가 나왔다'
+    elif contains "$ERR" "$TOK_DR_LISTFAIL"; then why='목록을 버리고 나열 실패로 안내한다'
     fi
+  fi
+  if [[ -z "$why" ]]; then
+    review_at "$C3_T/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[나열된 자리 리뷰] $why"
   fi
   report "$name" "$why"
 }
@@ -554,6 +572,183 @@ v20() { # 슬롯이 꺼진 동안의 missing-record 출구("harness.env 슬롯 �
     run_stop "$C3_R"
     why="$(expect_dr_released "$C3_R")"
     [[ -n "$why" ]] && why="[설정 고친 뒤 다시 저장] $why"
+  fi
+  report "$name" "$why"
+}
+
+# --- 종결 전 처분: 알림 · 출구가 실제 사유 · 해제 조건과 맞는가 -------------------
+
+# broken_git_repo <폴더> — git 이 읽지 못하는 저장소(.git 이 없는 곳을 가리킨다)와 그
+# 안의 .claude/hooks 를 만든다. 그 앵커 파일은 ④ 로 게이트가 서지만 소속을 모른다.
+broken_git_repo() {
+  mkdir -p "$1/.claude/hooks" \
+    && printf 'gitdir: %s\n' "$C3_S/nowhere" > "$1/.git" \
+    || { FIXTURE_FAIL='깨진 .git'; return 1; }
+}
+
+v21() { # Bash 스윕에서도 슬롯 ④ 앵커의 git 판독 실패 알림은 그 사유로 나간다 — 스윕
+        # 집계의 부분 기록 문구("일부는 게이트에 기록하지 못했다")로 접히면 게이트가
+        # 섰다는 것과 턴 종료에서 막힌다는 것이 숨는다. 알림대로 막히고, 알림의
+        # 출구(git 을 고친 뒤 다시 저장)가 실제로 푼다.
+  local name='v21 Bash 스윕 · 슬롯 ④ git 판독 실패 → git 알림 · 막음 · 그 출구로 해제'
+  local why='' u v
+  stop_fixture || { report "$name" ''; return; }
+  u="$C3_T/U"
+  broken_git_repo "$u" \
+    && find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL="${FIXTURE_FAIL:-창}"; report "$name" ''; return; }
+  v="$u/.claude/hooks/x.sh"
+  new_file "$v" || { report "$name" ''; return; }
+  local MNA_CWD="$C3_T"
+  run_mna "$C3_R" bash 'touch U/.claude/hooks/x.sh'
+  if ! contains "$OUT" "$TOK_RECORD_GIT"; then
+    why="[스윕 알림] 막힘 · git 을 짚는 안내 없음 [$OUT]"
+  elif contains "$OUT" "$GOLDEN_PARTIAL"; then
+    why='[스윕 알림] 부분 기록 문구로 접혔다'
+  fi
+  [[ -z "$why" ]] && why="$(expect_flags "$C3_R" 4 "$v")"
+  [[ -z "$why" && "$(record_lines_of "$C3_R" "$v")" != '!' ]] \
+    && why="끝줄이 갱신 표시가 아니다 [$(flat "$(record_lines_of "$C3_R" "$v")")]"
+  # 알림의 "턴 종료에서 막힌다" 가 사실인가 — 세션 루트 리뷰가 있어도 막는다.
+  if [[ -z "$why" ]]; then
+    review_at "$C3_R/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "  - $v")"
+    [[ -n "$why" ]] && why="[Stop] $why"
+  fi
+  # 알림의 출구: git 이 그 저장소를 읽게 된 뒤 다시 저장 → 그 자리 리뷰로 해제.
+  if [[ -z "$why" ]]; then
+    rm -f "$u/.git" && git -C "$u" init -q \
+      || { FIXTURE_FAIL='.git 복구'; report "$name" ''; return; }
+    run_mna "$C3_R" edit "$v"
+    review_at "$u/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[git 복구 뒤 다시 저장] $why"
+  fi
+  report "$name" "$why"
+}
+
+# v22_stop_shim <심 폴더> <프로젝트> — 심을 PATH 앞에 둔 채로만 Stop 을 돌린다.
+v22_stop_shim() {
+  local -x PATH="$1:$PATH"
+  run_stop "$2"
+}
+
+v22() { # 평가 실패의 출구는 원인마다 다르다. 판정기(awk)가 돌지 못한 환경 장애는 다시
+        # 설치로 풀리지 않으니 sync 가 아니라 사용자 판단을 안내하고, 장애가 걷히면 같은
+        # 리뷰로 풀린다. 모듈이 망가진 평가 실패(사망 주입)는 sync 를 안내하고, 모듈을
+        # 되돌리면(sync 가 하는 일) 풀린다.
+  local name='v22 평가 실패 — awk 실패 → 사용자 판단 · sync 아님 / 모듈 오류 → sync'
+  local why='' v m shim real
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/v22.go"
+  m="$C3_R/.claude/hooks/_extra_gate_dirs.sh"
+  real="$(command -v awk)"
+  shim="$(new_dir verdictawk)" \
+    && printf '#!/bin/sh\n[ "$2" = mode=verdict ] && exit 2\nexec %s "$@"\n' \
+      "$real" > "$shim/awk" && chmod +x "$shim/awk" \
+    && dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" "$C3_T/_workspace" \
+    && review_at "$C3_T/_workspace" \
+    || { FIXTURE_FAIL="${FIXTURE_FAIL:-awk 심}"; report "$name" ''; return; }
+  v22_stop_shim "$shim" "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_EVALENV" "$TOK_DR_ASKUSER")"
+  [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_SYNC" \
+    && why='환경 장애에 sync 를 안내한다'
+  [[ -n "$why" ]] && why="[awk 실패] $why"
+  if [[ -z "$why" ]]; then
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[장애가 걷힌 뒤] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    dr_flag "$C3_R" "$v" \
+      && printf '%s\n' \
+        'read_review_verdict() { : "$V22_UNSET_VARIABLE"; }' >> "$m" \
+      || { FIXTURE_FAIL='사망 주입'; report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_EVALMOD" "$TOK_DR_SYNC")"
+    [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_EVALENV" \
+      && why='모듈 오류를 환경 장애로 안내한다'
+    [[ -n "$why" ]] && why="[모듈 오류] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    cp "$MODULE" "$m" || { FIXTURE_FAIL='모듈 복구'; report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[모듈을 되돌린 뒤] $why"
+  fi
+  report "$name" "$why"
+}
+
+v23() { # root-unusable 의 키 출구는 실제로 푸는 것만 말한다 — 키 줄을 지우거나 값을
+        # 비우면(키 없음) 세션 루트 리뷰로 풀리고, 값만 틀리게 바꾸면(슬롯 꺼짐)
+        # 그대로 막힌다. "슬롯 키를 끌지" 는 이 둘을 가르지 않았다.
+  local name='v23 root-unusable → 키 줄 삭제 · 빈 값은 루트 리뷰로 해제 · 틀린 값은 막음'
+  local why='' env
+  rootchar_fixture mid '' || { report "$name" ''; return; }
+  env="$RC_ROOT/.claude/harness/harness.env"
+  env_slot "$RC_BASE/slot" > "$env" && dr_flag "$RC_ROOT" 'src/a.go' \
+    || { report "$name" ''; return; }
+  run_stop "$RC_ROOT"
+  why="$(expect_dr_slot_block "$RC_ROOT" "$TOK_DR_ROOTBAD" "$TOK_DR_KEYLINE")"
+  [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_OLD_KEYOFF" \
+    && why='값만 바꾸는 것과 가르지 않는 옛 문구'
+  # 값만 틀리게 바꾸면 루트 리뷰가 있어도 그대로 막힌다.
+  if [[ -z "$why" ]]; then
+    root_review "$RC_ROOT"
+    env_slot "$RC_BASE/no-such-slot" > "$env"
+    run_stop "$RC_ROOT"
+    why="$(expect_dr_slot_block "$RC_ROOT" "$TOK_DR_ROOTBAD")"
+    [[ -n "$why" ]] && why="[틀린 값] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    printf 'HARNESS_EXTRA_GATE_DIRS=""\n' > "$env"
+    run_stop "$RC_ROOT"
+    why="$(expect_dr_released "$RC_ROOT")"
+    [[ -n "$why" ]] && why="[빈 값] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    env_slot "$RC_BASE/slot" > "$env" && dr_flag "$RC_ROOT" 'src/a.go' \
+      || { report "$name" ''; return; }
+    run_stop "$RC_ROOT"
+    why="$(expect_dr_slot_block "$RC_ROOT" "$TOK_DR_ROOTBAD")"
+    if [[ -z "$why" ]]; then
+      printf '%s' "$ENV_NO_KEY" > "$env"
+      run_stop "$RC_ROOT"
+      why="$(expect_dr_released "$RC_ROOT")"
+    fi
+    [[ -n "$why" ]] && why="[키 줄 삭제] $why"
+  fi
+  report "$name" "$why"
+}
+
+v24() { # 경로에 US 가 든 값이 git 이 읽지 못하는 슬롯 저장소의 ④ 앵커면 기록 불가(영구)가
+        # 앞선다 — "git 이 회복된 뒤 다시 저장하면 기록된다" 를 함께 내면 두 알림이
+        # 어긋난다. 영구 알림만 내고, 그것이 사실임(git 을 고쳐 다시 저장하고 모든
+        # 자리에 리뷰를 둬도 막힘)을 확인한다.
+  local name='v24 US 값 · 슬롯 ④ git 판독 실패 → 영구 알림만 · git 복구 · 다시 저장해도 막음'
+  local why='' u v
+  stop_fixture || { report "$name" ''; return; }
+  u="$C3_S/U"
+  broken_git_repo "$u" || { report "$name" ''; return; }
+  v="$u/.claude/hooks/a${US}b.sh"
+  edit_new "$C3_R" "$v" || { report "$name" ''; return; }
+  if ! contains "$OUT" "$TOK_RECORD_PERM"; then
+    why="[저장 알림] 영구 알림 없음 [$OUT]"
+  elif contains "$OUT" "$TOK_RECORD_GIT"; then
+    why='[저장 알림] git 회복 뒤 다시 저장하라는 알림이 함께 나왔다'
+  fi
+  [[ -z "$why" ]] && why="$(expect_flags "$C3_R" 4 "$v")"
+  if [[ -z "$why" ]]; then
+    rm -f "$u/.git" && git -C "$u" init -q \
+      || { FIXTURE_FAIL='.git 복구'; report "$name" ''; return; }
+    run_mna "$C3_R" edit "$v"
+    review_at "$u/_workspace" && review_at "$C3_S/_workspace_U" \
+      && review_at "$C3_R/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_UNREC" "$TOK_DR_NOEXIT_UNREC")"
+    [[ -n "$why" ]] && why="[git 복구 뒤 다시 저장] $why"
   fi
   report "$name" "$why"
 }

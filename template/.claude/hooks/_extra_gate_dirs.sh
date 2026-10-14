@@ -565,7 +565,8 @@ read_review_dirs() {
 #   항목이 기다리는 자리)와 `M <값>`(현재 기록이 없는 값)
 # Returns:
 #   0 전부 충족 · 3 미충족 · 4 판정 불가(record-unusable · root-unusable) ·
-#   그 밖(2) 평가 실패
+#   5 환경 장애로 평가 실패(판독기 awk 실패 · 히어독 임시 파일 실패 — 이 모듈을 다시
+#   설치해도 풀리지 않는다) · 그 밖(2 인자 누락 — 훅과 판이 맞지 않음) 평가 실패
 #######################################
 read_review_verdict() {
   local root="${1:-}" flag="${DUALREVIEW_FLAG:-}" rec="${REVIEW_DIRS_FILE:-}"
@@ -589,7 +590,7 @@ read_review_verdict() {
     printf '\n'
     return 0
   fi
-  rows="$(run_review_record_awk verdict "$rec" "$flag")" || return 2
+  rows="$(run_review_record_awk verdict "$rec" "$flag")" || return 5
   judge_review_rows "$root" "$rows"
 }
 
@@ -604,9 +605,9 @@ read_review_verdict() {
 # Arguments:
 #   $1 — 물리 세션 루트, $2 — 판독기 줄(LF 구분)
 # Outputs:
-#   read_review_verdict 와 같다(rc 2 이면 없음)
+#   read_review_verdict 와 같다(rc 5 이면 없음)
 # Returns:
-#   0 전부 충족 · 3 미충족 · 2 입력을 끝까지 읽지 못함(평가 실패)
+#   0 전부 충족 · 3 미충족 · 5 입력을 끝까지 읽지 못함(히어독 임시 파일 — 환경 장애)
 #######################################
 judge_review_rows() {
   local root="${1:-}" line unmet=0 complete=0
@@ -624,7 +625,7 @@ judge_review_rows() {
 ${2:-}
 .
 EOF
-  ((complete)) || return 2
+  ((complete)) || return 5
   printf '%s\n' "$REVIEW_VERDICT_REASONS"
   # 줄의 중복은 쌓을 때가 아니라 여기서 한 번에 지운다(처음 나온 순서 그대로). 쌓을
   # 때마다 앞 줄 전체와 견주면 비용이 미충족 항목 수의 제곱으로 는다. 나열만 바뀌고

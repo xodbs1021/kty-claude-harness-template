@@ -610,7 +610,7 @@ read_review_verdict() {
 #   0 전부 충족 · 3 미충족 · 5 입력을 끝까지 읽지 못함(히어독 임시 파일 — 환경 장애)
 #######################################
 judge_review_rows() {
-  local root="${1:-}" line unmet=0 complete=0
+  local root="${1:-}" line unmet=0 complete=0 lines
   REVIEW_VERDICT_REASONS=''
   REVIEW_VERDICT_LINES=()
   while IFS= read -r line; do
@@ -629,9 +629,14 @@ EOF
   printf '%s\n' "$REVIEW_VERDICT_REASONS"
   # 줄의 중복은 쌓을 때가 아니라 여기서 한 번에 지운다(처음 나온 순서 그대로). 쌓을
   # 때마다 앞 줄 전체와 견주면 비용이 미충족 항목 수의 제곱으로 는다. 나열만 바뀌고
-  # 판정(rc)은 바뀌지 않는다.
+  # 판정(rc)은 바뀌지 않는다. 중복 제거가 실패하면(awk 없음 · 자원 부족) 중복 제거 없는
+  # 목록을 그대로 낸다 — 목록이 비면 막음 안내가 기다리는 자리를 말하지 못한다.
   if ((${#REVIEW_VERDICT_LINES[@]} > 0)); then
-    printf '%s\n' "${REVIEW_VERDICT_LINES[@]}" | LC_ALL=C awk '!seen[$0]++'
+    if ! lines="$(printf '%s\n' "${REVIEW_VERDICT_LINES[@]}" \
+        | LC_ALL=C awk '!seen[$0]++')"; then
+      lines="$(printf '%s\n' "${REVIEW_VERDICT_LINES[@]}")"
+    fi
+    printf '%s\n' "$lines"
   fi
   ((unmet)) && return 3
   return 0
@@ -739,5 +744,5 @@ note_verdict_reason() {
 #   $1 — `W <자리>` 또는 `M <값>`
 #######################################
 note_verdict_line() {
-  REVIEW_VERDICT_LINES[${#REVIEW_VERDICT_LINES[@]}]="${1:-}"
+  REVIEW_VERDICT_LINES+=("${1:-}")
 }

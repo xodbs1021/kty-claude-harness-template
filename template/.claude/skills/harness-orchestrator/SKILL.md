@@ -81,8 +81,11 @@ codex exec --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort="xhigh" 
 - **추가 관할 폴더 슬롯(harness.env 의 `HARNESS_EXTRA_GATE_DIRS` — ADR-0026)의
   저장소 편집은 그 값의 현재 기록 자리 리뷰로만 풀린다:** 자리는 그 저장소의
   `_workspace/` 또는 옆 `_workspace_<저장소>/` 이고, 설계·계획 산출물은 그
-  산출물이 있는 폴더다. 리뷰 산출물 이름은 같은 `*codex*.md` 다. 세션 루트
-  `_workspace/` 의 리뷰는 인정되지 않는다. 저장소마다 그 자리에 리뷰를 두고,
+  산출물이 있는 폴더다. 바로 위 항목의 "다른 체크아웃의 리뷰도 세션 루트
+  `_workspace/`" 의 예외다 — 같은 저장소의 다른 체크아웃이라도 슬롯 안이면 그
+  체크아웃의 `_workspace/` 또는 옆 `_workspace_<이름>/` 이 자리다. 리뷰 산출물
+  이름은 같은 `*codex*.md` 다. 세션 루트 `_workspace/` 의 리뷰는 인정되지
+  않는다. 저장소마다 그 자리에 리뷰를 두고,
   모든 자리의 리뷰는 마지막 편집 뒤에 쓴다 — 편집 하나가 그 전 리뷰를 모두 낡게
   만든다. 기다리는 자리는 Stop 막음 안내가 나열한다.
 

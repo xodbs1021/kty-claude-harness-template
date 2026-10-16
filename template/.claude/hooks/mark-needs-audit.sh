@@ -1288,7 +1288,7 @@ review_record_begin() {
 # 듀얼리뷰 플래그를 실제로 갱신하지 못했으면 쓰지 않고 회복 가능 문구를 낸다. 소속을
 # 모르면(git 판독 실패) 빈 집합 대신 갱신 표시를 남긴다 — 둘 다 막는 쪽이다.
 # Globals:
-#   RECORDING, RECORD_PERMANENT, VERDICT_REPO, proj, DUALREVIEW_FLAG, JUDGE_MSG,
+#   RECORDING, RECORD_PERMANENT, VERDICT_REPO, proj, DUALREVIEW_FLAG,
 #   MSG_RECORD_GIT (읽음) · RECORD_MSG (씀)
 # Arguments:
 #   $1 — 플래그 값, $2 — 듀얼리뷰 플래그를 썼는가(1|0), $3 — 설계물인가(1|0)
@@ -1315,11 +1315,11 @@ review_record_end() {
     # 현재 기록을 쓰지 않아 끝줄이 갱신 표시로 남고 턴 종료에서 막힌다 — 그 사실과 출구를
     # 알린다(일반 git 판독 실패 문구의 "앵커 밖 파일에는 게이트가 서지 않았다"는 이 값에 맞지
     # 않는다). 판정 알림(JUDGE_MSG)이 아니라 기록 알림으로 낸다 — Bash 스윕은 판정 알림을
-    # 부분 기록 문구 하나로 접어 "게이트는 섰고 막힌다"를 숨긴다. 갱신 표시부터 기록할 수
-    # 없었으면(영구) git 을 고쳐 다시 저장해도 기록되지 않으니 영구 문구만 둔다. 현재 기록
-    # 줄만 1023바이트를 넘는 값은 여기서 알 수 없다(자리를 모른다) — git 문구가 그 경우를 적는다.
-    [ "$RECORD_PERMANENT" -eq 1 ] || [ -n "$JUDGE_MSG" ] \
-      || add_record_msg "$MSG_RECORD_GIT"
+    # 부분 기록 문구 하나로 접어 "게이트는 섰고 막힌다"를 숨긴다 — 같은 판정에 판정 알림
+    # (다른 플래그 쓰기 실패)이 있어도 낸다. 갱신 표시부터 기록할 수 없었으면(영구) git 을
+    # 고쳐 다시 저장해도 기록되지 않으니 영구 문구만 둔다. 현재 기록 줄만 1023바이트를 넘는
+    # 값은 여기서 알 수 없다(자리를 모른다) — git 문구가 그 경우를 적는다.
+    [ "$RECORD_PERMANENT" -eq 1 ] || add_record_msg "$MSG_RECORD_GIT"
     return 0
   else
     record_review_dirs "$v"

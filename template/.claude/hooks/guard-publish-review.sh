@@ -59,7 +59,8 @@ esac
 # 추가 관할 폴더 슬롯(ADR-0026): 리뷰 자리 기록이 있고 키가 있으면(UNTRUSTED 포함) ② 는 세션
 # 루트 _workspace 와 기록된 리뷰 자리를 함께 본다(WINDOW 기준 그대로). 기록 파일 존재를 먼저
 # 내장 검사로 본다 — 없으면 키도 읽지 않는다(기존 바이트). 기록을 읽지 못하면(모듈 없음·사망·
-# 파일 종류) 세션 루트만 보고(거부 쪽) 사유 한 줄을 붙인다. 형식은 모듈이 정본이다.
+# 파일 종류·판독기 awk 의 환경 장애) 세션 루트만 보고(거부 쪽) 사유 한 줄을 붙인다. 형식은
+# 모듈이 정본이다.
 slot_mode=0
 slot_dirs=""
 slot_note=""
@@ -72,7 +73,7 @@ if [ -e "$REVIEW_DIRS_FILE" ] || [ -L "$REVIEW_DIRS_FILE" ]; then
       read_review_dirs 2>/dev/null
     )"; then
       slot_dirs=""
-      slot_note="슬롯 리뷰 자리 기록을 읽지 못해(모듈·기록 파일) 세션 루트 _workspace 만 보았다."
+      slot_note="슬롯 리뷰 자리 기록을 읽지 못해(모듈 유실 · 오류, 기록 파일 종류 · 권한, 기록 판독기 awk 의 환경 장애 · 자원 한도) 세션 루트 _workspace 만 보았다."
     fi
   fi
 fi

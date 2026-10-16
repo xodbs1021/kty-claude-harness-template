@@ -630,7 +630,7 @@ DR_MODE=""     # loop 기존 루프 · met 슬롯 판정으로 해제 · unmet �
                # root 슬롯 판정으로 막되 남은 것이 세션 루트 자리뿐(기존 막음 안내)
 DR_OUT=""      # 평가 출력: 슬롯 상태 한 줄 · 사유 코드 한 줄 · W <자리> · M <값> 줄
 DR_RC=0        # 평가 rc: 0 충족 · 3 미충족 · 4 판정 불가(기록·루트) · 5 환경 장애 ·
-               # 9 모듈 없음 · 그 밖 실패(모듈 오류)
+               # 9 모듈 없음 · 128 이상 신호 종료(원인 모름) · 그 밖 실패(모듈 오류)
 DR_ROOT_WS=""  # 평가에 쓴 세션 루트 자리(물리 루트/_workspace) — 막음 안내가 슬롯 자리를 가른다
 
 #######################################
@@ -644,7 +644,8 @@ DR_ROOT_WS=""  # 평가에 쓴 세션 루트 자리(물리 루트/_workspace) �
 #   첫 줄 = 평가 때의 슬롯 상태 — on 켜짐 · untrusted harness.env 를 믿을 수 없음 ·
 #   invalid 키 값이 검증에 실패. 다음 줄부터 read_review_verdict 의 출력
 # Returns:
-#   read_review_verdict 의 rc · 9 모듈을 읽지 못함
+#   read_review_verdict 의 rc · 9 모듈을 읽지 못함(서브셸이 신호로 죽으면 부른 쪽은
+#   128+신호를 받는다)
 #######################################
 dualreview_eval() {
   { . "$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"; } 2>/dev/null || exit 9
@@ -710,7 +711,8 @@ dualreview_judge_slot() {
 #######################################
 # 사유 코드의 문구(Stop 상수 — 모듈이 없어도 나간다).
 # Arguments:
-#   $1 — 사유 코드, $2 — 평가 때의 슬롯 상태(on|untrusted|invalid — dualreview_eval)
+#   $1 — 사유 코드, $2 — 평가 때의 슬롯 상태(on|untrusted|invalid — dualreview_eval),
+#   $3 — 평가 rc(eval-signal 문구에 싣는다)
 # Outputs:
 #   문구 한 줄(모르는 코드는 코드 그대로)
 #######################################
@@ -734,6 +736,8 @@ dualreview_reason_text() {
       echo "리뷰 자리 판정이 실패했다(모듈 오류) — 하네스를 다시 설치(sync)하라." ;;
     eval-env)
       echo "리뷰 자리 판정이 실패했다(환경 장애 — 판정기 awk 가 돌지 못했거나 판정용 임시 파일을 만들지 못했다: awk 없음 · 파일 권한 · 디스크 공간 · 자원 한도) — 하네스를 다시 설치해도 풀리지 않는다. 사용자에게 알려 판단을 받아라(장애가 걷히면 다음 Stop 이 다시 판정한다)." ;;
+    eval-signal)
+      echo "리뷰 자리 판정이 신호로 끝났다(rc $3 — 128 이상은 신호 종료) — 원인을 가릴 수 없다. 모듈이 바뀌었거나 망가졌으면 하네스를 다시 설치(sync)하면 풀리지만, 자원 한도(파일 크기 · 메모리) 같은 환경 원인이면 다시 설치해도 풀리지 않는다. 사용자에게 알려 판단을 받아라(원인이 걷히면 다음 Stop 이 다시 판정한다)." ;;
     dir-unknown)
       if [ "$2" = invalid ]; then
         echo "슬롯 폴더를 알 수 없어(harness.env 의 슬롯 값을 쓸 수 없음 — 값 검증 실패) 기록 없는 절대경로 항목은 세션 루트 규칙으로 보았다."
@@ -766,7 +770,14 @@ dualreview_slot_block() {
       [ "$body" = "$reasons" ] && body="" ;;
     5) reasons=eval-env ;;
     9) reasons=module ;;
-    *) reasons=eval-fail ;;
+    *)
+      # 128 이상은 서브셸이 신호로 죽은 것이다(셸 관례 128+신호) — 모듈이 낸 rc 가
+      # 아니라 원인(모듈 손상 · 자원 한도)을 가릴 수 없다.
+      if [ "$DR_RC" -ge 128 ]; then
+        reasons=eval-signal
+      else
+        reasons=eval-fail
+      fi ;;
   esac
   # 기다리는 자리 · 기록 없는 값 목록은 한 번 만들어 나열과 판단이 같은 목록을 보게 한다.
   # sed 는 입력을 끝까지 읽는다 — `printf | grep -q` 로 판단하면 grep 이 첫 일치에서 닫아
@@ -801,7 +812,7 @@ dualreview_slot_block() {
     echo
     echo "사유:"
     for code in $reasons; do
-      line="$(dualreview_reason_text "$code" "$slot_state")"
+      line="$(dualreview_reason_text "$code" "$slot_state" "$DR_RC")"
       echo "  - $line"
     done
   fi

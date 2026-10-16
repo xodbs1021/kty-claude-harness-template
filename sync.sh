@@ -158,4 +158,4 @@ if [ "$add_gate_key" -eq 1 ]; then
 fi
 
 echo ""
-echo "== sync 완료 ($changed개 글루 갱신). 슬롯(project-profile.md·harness.env)의 **값**은 그대로입니다."
+echo "== sync 완료 (${changed}개 글루 갱신). 슬롯(project-profile.md·harness.env)의 **값**은 그대로입니다."

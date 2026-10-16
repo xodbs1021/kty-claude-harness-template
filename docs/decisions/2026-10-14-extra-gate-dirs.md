@@ -277,7 +277,9 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
 *   시험 `tests/extra-gate-dirs.test.sh`(러너와 축별 케이스 파일 13개, 210
     케이스)와 CI 단계 하나. 기존 14묶음 가운데 `tests/install-hook-swap.test.sh`
     에만 c20(UTF-8 로케일에서 sync 완주 — 위 `sync.sh` 수정의 회귀 시험)을
-    더했고, 나머지 13묶음은 고치지 않았다.
+    더했고, 나머지 13묶음은 고치지 않았다. c20 의 판별력은 PATH 의 첫 bash 가
+    3.2 일 때만 있다 — `sync.sh` 는 shebang(env bash)으로 돌아 bash 5.2 ·
+    Homebrew bash 가 앞에 있으면 수정 전에도 녹색이다(CI 의 ubuntu 도 그렇다).
 
 ## Alternatives Considered
 

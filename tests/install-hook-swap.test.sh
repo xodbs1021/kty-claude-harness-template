@@ -446,6 +446,8 @@ utf8_locale() {
 c20() { # sync 는 UTF-8 로케일에서도 끝까지 간다. bash 3.2 는 UTF-8 로케일에서 변수 이름
         # 바로 뒤의 다바이트 글자를 이름의 일부로 읽는다 — `$changed개` 가 unbound 가 돼
         # 마지막 줄에서 rc 1 로 죽었다(종결 r2 #3). 로케일을 고정해 실행 환경과 무관하게 잰다.
+        # 판별력은 PATH 의 첫 bash 가 3.2 일 때만 있다 — sync.sh 는 shebang(env bash)으로 돌아
+        # bash 5.2 · Homebrew bash 가 앞에 있으면 수정 전에도 녹색이다(종결 r3 #4).
   local name='c20 UTF-8 로케일에서 sync → 완료 줄에 갱신 수를 싣고 완주' t p loc why=''
   if ! loc="$(utf8_locale)"; then
     report "$name" '픽스처 실패: UTF-8 로케일 없음'; return 0

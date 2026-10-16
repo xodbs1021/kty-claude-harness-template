@@ -194,9 +194,10 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
     나열하고 실제 해제 조건만 말한다. 평가 첫 줄의 슬롯 상태(on · untrusted ·
     invalid)로 missing-record 와 dir-unknown 의 문구를 가른다 — 슬롯이 꺼져
     있었으면 값 검증 실패(invalid)는 "harness.env 슬롯 설정을 고친 뒤", 판독
-    불가(untrusted — 슬롯 키든 다른 키든 문법이 깨짐)는 "harness.env 를 정상으로
-    읽을 수 있게 고친 뒤" 그 파일을 다시 저장하라다(그 값의 기록 줄이
-    1023바이트를 넘으면 그렇게 한 뒤의 Stop 이 켜짐 문구로 영구임을 알린다).
+    불가(untrusted — 손상 · 읽기 불가 · 중복 선언 · 문법 밖 · 파일 종류)는
+    "harness.env 를 정상으로 읽을 수 있게 고친 뒤" 위에 나열한 기록 없는 값의
+    파일을 다시 저장하라다(그 값의 기록 줄이 1023바이트를 넘으면 그렇게 한 뒤의
+    Stop 이 켜짐 문구로 영구임을 알린다).
     사유가 없고 남은 자리가 세션 루트 `_workspace` 하나뿐이면 기존 막음 안내를
     낸다(`DR_MODE=root`). 큰 본문에서도 나열이 빠지지 않게 목록은 입력을
     끝까지 읽어 한 번 만든다.
@@ -263,6 +264,9 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
     관할 폴더 키 안내.
 *   `template/.claude/harness/harness.env.template` — 주석 블록(키는 주석
     예시로만 둔다).
+*   `sync.sh` — 완료 줄의 변수 경계 하나(`$changed개` → `${changed}개`, kty
+    결정). bash 3.2 는 UTF-8 로케일에서 변수 이름 바로 뒤의 다바이트 글자를
+    이름의 일부로 읽어, 완료 줄에서 unbound 로 rc 1 이 났다.
 *   `template/.claude/skills/harness-orchestrator/SKILL.md` — 끼워 넣기만
     했다(기존 줄은 고치지 않았다). "듀얼 리뷰 규칙" 절의 "리뷰 산출물은 세션
     루트의 `_workspace/`에 둔다" 항목 뒤에 슬롯 리뷰 자리 항목 하나, Phase 5 의
@@ -271,7 +275,9 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
 *   `docs/usage.md` — 키 안내 · 훅 표 · "추가 관할 폴더 슬롯" 소절(운영 안내 ·
     한계). ADR-0024 의 "후속 이력"에 한 항.
 *   시험 `tests/extra-gate-dirs.test.sh`(러너와 축별 케이스 파일 13개, 210
-    케이스)와 CI 단계 하나. 기존 14묶음은 고치지 않았다.
+    케이스)와 CI 단계 하나. 기존 14묶음 가운데 `tests/install-hook-swap.test.sh`
+    에만 c20(UTF-8 로케일에서 sync 완주 — 위 `sync.sh` 수정의 회귀 시험)을
+    더했고, 나머지 13묶음은 고치지 않았다.
 
 ## Alternatives Considered
 
@@ -518,8 +524,8 @@ Edit · Write · MultiEdit 은 아래 꼴도 잡는다. 못 잡는 것은 Bash �
     리뷰로 풀린다(harness.env 를 정상으로 읽을 수 있을 때만 — 다른 키가 손상됐으면
     그것부터 고친다).
     슬롯이 꺼진 동안 막힌 1023바이트 값은 Stop 이 먼저 꺼진 까닭(값 검증 실패 ·
-    harness.env 판독 불가)대로 "고친 뒤 다시 저장하라"고 안내하고, 그대로 한
-    뒤의 Stop 이 영구라는 안내를 낸다.
+    harness.env 판독 불가)대로 "고친 뒤 그 값의 파일을 다시 저장하라"고 안내하고,
+    그대로 한 뒤의 Stop 이 영구라는 안내를 낸다.
 *   **세션 루트 경로에 개행 · US** 가 있으면 판정하지 않고 막는다(root-unusable
     — rc 4 의 뜻이 기록 파일 사용 불가에서 넓어졌다). 키에 값이 있으면(값이
     틀려도) 기록 파일이 없어도 막고, harness.env 를 믿고 읽을 수 없으면 기록

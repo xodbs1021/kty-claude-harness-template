@@ -2,15 +2,18 @@
 # extra-gate-dirs.cause.cases.sh — 원인을 확정할 수 없거나 나중에야 드러나는 실패의
 # 안내 케이스: 평가 서브셸의 신호 종료(Stop 은 rc 만 본다) · 현재 기록 줄만 1023바이트를
 # 넘는 값의 git 판독 실패(자리를 몰라 그때는 알 수 없다) · 발행 ② 기록 판독 실패의 원인
-# 목록. 안내가 원인을 단정하지 않고, 말한 출구가 실제로 푸는가를 본다.
+# 목록 · 같은 판정의 플래그 쓰기 실패와 겹친 git 판독 실패(v29). 안내가 원인을 단정하지
+# 않고 다른 실패에 가려지지 않으며, 말한 출구가 실제로 푸는가를 본다.
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
 # 거기와 notice·judge·release·life·settle 케이스 파일에 있다:
 #   stop_fixture · run_stop · run_pub · dr_flag · rec · review_at · review_now
 #   expect_dr_released · expect_dr_slot_block · new_mna_project · edit_new · run_mna
-#   new_dir · report · contains · flat · MODULE · STOP_HOOK · MNA_PROJ · C3_R · C3_T
+#   broken_git_repo · make_window · new_file · new_dir · report · contains
+#   flat · MODULE · STOP_HOOK · MNA_PROJ · MNA_CWD · C3_F · C3_R · C3_T
 #   TOK_DR_MISSING · TOK_DR_NOEXIT_LONG · TOK_DR_ASKUSER · TOK_DR_SYNC ·
-#   TOK_DR_EVALMOD · TOK_RECORD_GIT · TOK_RECORD_PERM · TOK_PUB_NOTE · OUT · ERR · RC
+#   TOK_DR_EVALMOD · TOK_RECORD_GIT · TOK_RECORD_PERM · TOK_PUB_NOTE ·
+#   GOLDEN_PARTIAL · OUT · ERR · RC
 # 셸 이식성: macOS 기본 bash 는 3.2 다. ${var,,}·mapfile·연관배열 금지.
 
 if [[ -z "${MNA_HOOK-}" ]]; then
@@ -133,6 +136,30 @@ v27() { # 발행 ② 가 기록 판독기(awk)의 환경 장애로 기록을 읽
     why="통과 알림 없음 [$OUT]"
   elif ! contains "$OUT" "$TOK_PUB_NOTE_ENV"; then
     why="원인 목록에 환경 장애 없음 [$OUT]"
+  fi
+  report "$name" "$why"
+}
+
+v29() { # 같은 판정에서 듀얼리뷰가 아닌 플래그(여기서는 audit) 쓰기가 실패해도 슬롯 ④
+        # 앵커의 git 판독 실패 알림은 빠지지 않는다 — 판정 알림(쓰기 실패)은 Bash
+        # 스윕이 부분 기록 문구로 접으니, git 알림이 빠지면 "게이트는 섰고 막힌다" 가
+        # 다시 숨는다(v21 의 남은 꼴). 쓰기 실패도 접힌 문구로 그대로 알린다.
+  local name='v29 Bash 스윕 · audit 쓰기 실패 + ④ git 판독 실패 → git 알림 · 부분 기록 알림'
+  local why='' u v
+  stop_fixture || { report "$name" ''; return; }
+  u="$C3_T/U"
+  broken_git_repo "$u" && mkdir "$C3_R/.claude/.needs-audit" \
+    && find "$C3_F" -exec touch -t 201901010000 {} + && make_window "$C3_R" \
+    || { FIXTURE_FAIL="${FIXTURE_FAIL:-쓰기 실패 주입 · 창}"; report "$name" ''
+      return; }
+  v="$u/.claude/hooks/x.sh"
+  new_file "$v" || { report "$name" ''; return; }
+  local MNA_CWD="$C3_T"
+  run_mna "$C3_R" bash 'touch U/.claude/hooks/x.sh'
+  if ! contains "$OUT" "$TOK_RECORD_GIT"; then
+    why="git 판독 실패 알림이 빠졌다 [$OUT]"
+  elif ! contains "$OUT" "$GOLDEN_PARTIAL"; then
+    why="쓰기 실패가 부분 기록 문구로 나가지 않았다 [$OUT]"
   fi
   report "$name" "$why"
 }

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # extra-gate-dirs.rootchar.cases.sh — 세션 루트 경로에 개행(가운데·끝)이나 US 가 있을 때
-# Stop 3.5 · 발행 가드 ② 가 루트를 쪼개거나 다른 폴더로 읽지 않는 케이스(C5 r1 H-1).
+# Stop 3.5 · 발행 가드 ② 가 루트를 쪼개거나 다른 폴더로 읽지 않는 케이스(C5 r1 H-1)와,
+# 그 막음의 키 출구가 harness.env 를 정상으로 읽을 수 있을 때만 푸는가(종결 r1, v28).
 #
 # 실행 파일이 아니라 extra-gate-dirs.test.sh 가 source 하는 조각이다. 러너·도우미는
-# 거기와 release·life 케이스 파일에 있다:
+# 거기와 release·life·settle 케이스 파일에 있다:
 #   run_stop · run_pub · dr_flag · rec · expect_dr_released · expect_dr_slot_block ·
 #   expect_dr_loop_block · env_slot · new_dir · report · contains · flat · COMMON · MODULE ·
-#   STOP_HOOK · PUB_HOOK · ENV_NO_KEY · US · RC · ERR · FIXTURE_FAIL
+#   STOP_HOOK · PUB_HOOK · ENV_NO_KEY · TOK_DR_KEYLINE · TOK_DR_ENVOK · US ·
+#   RC · ERR · FIXTURE_FAIL
 #
 # 고정틀: <F>/B/R<꼴> 이 세션 루트다. 꼴은 셋 — 가운데 개행(R␊X) · 끝 개행(R␊) · US(R␟X).
 # 미끼: <F>/B/R(루트를 개행·US 에서 자르면 나오는 이름)과 그 _workspace 에 최근 *codex*.md 를
@@ -117,5 +119,37 @@ q04() { # 슬롯 VALUE · Stop 3.5 — 루트 경로가 목록 구분자(개행�
     why="$(expect_dr_slot_block "$RC_ROOT" "$TOK_DR_ROOTBAD")"
     [[ -n "$why" ]] && { why="[$k 루트 리뷰] $why"; break; }
   done
+  report "$name" "$why"
+}
+
+v28() { # root-unusable 의 키 출구(키 줄 삭제 · 빈 값)는 harness.env 를 정상으로 읽을 수
+        # 있을 때만 푼다 — 다른 키가 손상됐으면(UNTRUSTED) 기록 파일이 있는 한 기록으로
+        # 판정해 그대로 막는다. 안내가 그 한정어를 싣고, 한정어가 사실이며(키 줄을 지우고
+        # 루트 리뷰를 둬도 막음), 다른 키를 고치면 풀린다.
+  local name='v28 root-unusable · 다른 키 손상 → 키 줄 삭제로 안 풀림 · 한정어 · 고치면 해제'
+  local why='' env bad
+  bad='HARNESS_KNOWLEDGE_GATE="x'$'\n'   # 따옴표가 닫히지 않은 다른 키
+  rootchar_fixture mid '' || { report "$name" ''; return; }
+  env="$RC_ROOT/.claude/harness/harness.env"
+  env_slot "$RC_BASE/slot" > "$env" && dr_flag "$RC_ROOT" 'src/a.go' \
+    && rec "$RC_ROOT" 'src/a.go' '-' \
+    || { FIXTURE_FAIL="${FIXTURE_FAIL:-고정틀}"; report "$name" ''; return; }
+  run_stop "$RC_ROOT"
+  why="$(expect_dr_slot_block "$RC_ROOT" "$TOK_DR_ROOTBAD" "$TOK_DR_KEYLINE" \
+    "$TOK_DR_ENVOK")"
+  if [[ -z "$why" ]]; then
+    printf '%s%s' "$ENV_NO_KEY" "$bad" > "$env" && root_review "$RC_ROOT" \
+      || { FIXTURE_FAIL='harness.env'; report "$name" ''; return; }
+    run_stop "$RC_ROOT"
+    why="$(expect_dr_slot_block "$RC_ROOT" "$TOK_DR_ROOTBAD")"
+    [[ -n "$why" ]] && why="[키 줄 삭제 · 다른 키 손상] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    printf '%s' "$ENV_NO_KEY" > "$env" \
+      || { FIXTURE_FAIL='harness.env'; report "$name" ''; return; }
+    run_stop "$RC_ROOT"
+    why="$(expect_dr_released "$RC_ROOT")"
+    [[ -n "$why" ]] && why="[다른 키를 고친 뒤] $why"
+  fi
   report "$name" "$why"
 }

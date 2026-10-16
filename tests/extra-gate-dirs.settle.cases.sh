@@ -57,6 +57,7 @@ TOK_DR_EVALENV='리뷰 자리 판정이 실패했다(환경 장애'   # 판정�
 TOK_DR_EVALMOD='리뷰 자리 판정이 실패했다(모듈 오류)'  # 모듈이 망가진 평가 실패
 TOK_DR_SYNC='(sync)하라'                               # 다시 설치 출구
 TOK_DR_KEYLINE='키 줄을 지우거나 값을 비울지'          # root-unusable 의 키 출구(사용자 판단)
+TOK_DR_ENVOK='harness.env 를 정상으로 읽을 수 있을 때만'   # 그 키 출구의 한정어
 TOK_DR_OLD_KEYOFF='슬롯 키를 끌지'   # 값만 틀리게 바꾸는 것(그대로 막힘)과 갈리지 않는 옛 문구
 # 큰 본문 나열 케이스의 항목 수 — 값마다 300바이트 남짓이라 본문이 파이프 버퍼
 # (64 KB)의 몇 배다.
@@ -403,8 +404,11 @@ v13() { # 경로에 US 가 든 값(unrecordable)은 파일 이름을 바꿔 새 
 
 v14() { # 발행 ① (듀얼리뷰 미해소)의 저장 안내 — 슬롯 모드에서 "_workspace 또는 슬롯
         # 자리에 저장하면 자동 해제" 는 사실이 아니다(슬롯 항목은 그 자리에서만 풀린다).
-        # 키가 없으면 기존 줄 바이트 그대로다.
-  local name='v14 발행 ① 슬롯 모드 → 항목마다 그 자리 안내 · 키 부재 → 기존 줄' why=''
+        # 키가 없으면 기존 줄 바이트 그대로다. 기록 파일이 없어도 키에 값이 있으면(세션
+        # 중에 키를 켬 · 첫 값이 기록 불가) Stop 이 슬롯 판정으로 막으니 기존 줄도 거짓이다.
+        # harness.env 를 믿을 수 없고 기록 파일이 없으면 Stop 은 기존 루프라 기존 줄이 맞다.
+  local name='v14 발행 ① 슬롯 모드 · 기록 없는 값 → 항목마다 그 자리 안내 · 키 부재 → 기존 줄'
+  local why=''
   local v
   stop_fixture || { report "$name" ''; return; }
   v="$C3_T/src/v14.go"
@@ -425,14 +429,49 @@ v14() { # 발행 ① (듀얼리뷰 미해소)의 저장 안내 — 슬롯 모드
     elif contains "$ERR" "$TOK_PUB_PERITEM"; then why='[키 부재] 슬롯 안내가 섞였다'
     fi
   fi
+  if [[ -z "$why" ]]; then
+    set_env "$C3_R" "$(env_slot "$C3_S")"
+    rm -f "$C3_R/.claude/.review-dirs"
+    run_pub "$C3_R"
+    if [[ "$RC" -ne 2 ]]; then why="[기록 없음 · 값] rc=$RC (기대 2)"
+    elif printf '%s\n' "$ERR" | grep -qxF -- "$TOK_PUB_OLD_STEP2"; then
+      why='[기록 없음 · 값] 세션 루트 저장으로 해제된다는 기존 줄'
+    elif ! contains "$ERR" "$TOK_PUB_PERITEM"; then
+      why='[기록 없음 · 값] 항목별 자리 안내 없음'
+    fi
+  fi
+  # 기존 줄이 거짓인가 — 세션 루트 리뷰를 둬도 Stop 이 슬롯 판정으로 막는다.
+  if [[ -z "$why" ]]; then
+    review_at "$C3_R/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING")"
+    [[ -n "$why" ]] && why="[기록 없음 · 값 · Stop] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    set_env "$C3_R" "$(env_untrusted "$C3_S")"
+    run_pub "$C3_R"
+    printf '%s\n' "$ERR" | grep -qxF -- "$TOK_PUB_OLD_STEP2" \
+      || why='[기록 없음 · 믿을 수 없음] 기존 루프인데 기존 줄이 아니다'
+  fi
   report "$name" "$why"
 }
 
 v15() { # 발행 ② 가 기록을 읽지 못하면(모듈 없음) 세션 루트만 본다 — 차단 안내가 "또는
-        # 슬롯 리뷰 자리" 에 저장하라고 하면 그 자리 리뷰로는 통과하지 못한다.
-  local name='v15 발행 ② 기록 못 읽음 → 리뷰 자리 안내는 세션 루트만 · 사유 한 줄'
+        # 슬롯 리뷰 자리" 에 저장하라고 하면 그 자리 리뷰로는 통과하지 못한다. 기록을
+        # 읽었어도 자리 목록이 비면(갱신 표시 · 빈 집합 줄뿐 — 슬롯 밖 앵커의 정상 편집)
+        # 볼 슬롯 자리가 없으니 같다.
+  local name='v15 발행 ② 기록 못 읽음 · 자리 목록 빔 → 안내는 세션 루트만 · 못 읽음만 사유'
   local why=''
   stop_fixture || { report "$name" ''; return; }
+  rec "$C3_R" "$C3_T/src/v15a.go" '!' && rec "$C3_R" "$C3_T/src/v15b.go" '-' \
+    || { report "$name" ''; return; }
+  run_pub "$C3_R"
+  if [[ "$RC" -ne 2 ]]; then why="[자리 목록 빔] rc=$RC (기대 2)"
+  elif contains "$ERR" "$TOK_PUB_SLOTWHERE"; then
+    why='[자리 목록 빔] 없는 슬롯 자리에 저장하라고 안내한다'
+  elif contains "$ERR" "$TOK_PUB_NOTE"; then why='[자리 목록 빔] 못 읽음 사유가 나왔다'
+  fi
+  [[ -n "$why" ]] && { report "$name" "$why"; return; }
   rec "$C3_R" "$C3_T/src/v15.go" "$C3_T/_workspace" \
     && rm -f "$C3_R/.claude/hooks/_extra_gate_dirs.sh" \
     || { report "$name" ''; return; }

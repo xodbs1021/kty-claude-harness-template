@@ -18,7 +18,8 @@
 #                                      홈 토큰의 : 경계 · 사용자 조회 실패)
 #   extra-gate-dirs.release.cases.sh   듀얼리뷰 해제(Stop 3.5)의 슬롯 리뷰 자리 판정
 #   extra-gate-dirs.life.cases.sh      기록 수명(소속 변경·결속 순서·기록 장애)·발행 ②
-#   extra-gate-dirs.rootchar.cases.sh  세션 루트 경로의 개행·US(Stop 3.5 · 발행 ②)
+#   extra-gate-dirs.rootchar.cases.sh  세션 루트 경로의 개행·US(Stop 3.5 · 발행 ②)와
+#                                      그 막음의 키 출구 한정(harness.env 정상 판독)
 #   extra-gate-dirs.settle.cases.sh    푸는 쪽 이연 처분(미충족 나열 비용 · 발행 ② 읽기
 #                                      실패 알림 · 막음 안내 문구 · 큰 본문 나열 ·
 #                                      안내가 실제 해제 조건과 맞는가)과 종결 전
@@ -27,7 +28,8 @@
 #                                      중복 제거 실패 나열 · 기록 불가 값 알림 우선)
 #   extra-gate-dirs.cause.cases.sh     원인을 확정할 수 없거나 나중에야 드러나는
 #                                      실패의 안내(평가 신호 종료 · 기록 줄만 넘는
-#                                      값의 git 판독 실패 · 발행 ② 판독 실패 원인)
+#                                      값의 git 판독 실패 · 발행 ② 판독 실패 원인 ·
+#                                      플래그 쓰기 실패와 겹친 git 판독 실패)
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -239,7 +241,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=207
+EXPECTED_CASES=209
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -260,7 +262,7 @@ q01 q02 q03 q04
 v01 v02 v03 v04 v05 v06 v07 v08
 v09 v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20
 v21 v22 v23 v24
-v25 v26 v27
+v25 v26 v27 v28 v29
 '
 
 #######################################

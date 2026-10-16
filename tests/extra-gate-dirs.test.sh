@@ -25,6 +25,9 @@
 #                                      처분(스윕 git 판독 실패 알림 · 평가 실패
 #                                      원인별 출구 · root-unusable 키 출구 ·
 #                                      중복 제거 실패 나열 · 기록 불가 값 알림 우선)
+#   extra-gate-dirs.cause.cases.sh     원인을 확정할 수 없거나 나중에야 드러나는
+#                                      실패의 안내(평가 신호 종료 · 기록 줄만 넘는
+#                                      값의 git 판독 실패 · 발행 ② 판독 실패 원인)
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -224,7 +227,8 @@ for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.release.cases.sh \
                   extra-gate-dirs.life.cases.sh \
                   extra-gate-dirs.rootchar.cases.sh \
-                  extra-gate-dirs.settle.cases.sh; do
+                  extra-gate-dirs.settle.cases.sh \
+                  extra-gate-dirs.cause.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -235,7 +239,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=204
+EXPECTED_CASES=207
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -256,6 +260,7 @@ q01 q02 q03 q04
 v01 v02 v03 v04 v05 v06 v07 v08
 v09 v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20
 v21 v22 v23 v24
+v25 v26 v27
 '
 
 #######################################

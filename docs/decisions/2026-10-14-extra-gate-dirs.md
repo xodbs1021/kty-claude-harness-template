@@ -146,9 +146,12 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
     `MSG_RECORD_PERMANENT`(경로에 US · LF, 줄 1023바이트 초과), 슬롯 안
     `.claude/` 앵커 저장소의 git 판독 실패는 `MSG_RECORD_GIT` 이다(슬롯 갈래만 —
     일반 갈래의 `MSG_GIT_UNAVAILABLE` 은 그대로). 셋 다 Bash 스윕에서도 스윕
-    집계 알림(`MSG_SWEEP_PARTIAL` 등)으로 접히지 않고 따로 나간다. 한 값이
-    영구이면서 git 판독도 실패하면 영구 문구만 낸다 — git 을 고쳐 다시 저장해도
-    그 값은 기록되지 않는다.
+    집계 알림(`MSG_SWEEP_PARTIAL` 등)으로 접히지 않고 따로 나간다. 갱신 표시부터
+    기록할 수 없는 값(US · LF, 갱신 표시 줄 1023바이트 초과)이 git 판독도
+    실패하면 영구 문구만 낸다 — git 을 고쳐 다시 저장해도 그 값은 기록되지
+    않는다. 현재 기록 줄만 1023바이트를 넘는 값은 git 이 실패한 때 자리를 몰라
+    알 수 없어 `MSG_RECORD_GIT` 을 내고(문구가 그 경우를 함께 적는다), git 을
+    고쳐 다시 저장할 때 영구 문구가 나간다(2단계, 시험 v26).
 
 ### 4. 완료 게이트(Stop) 3.5 — 결정 표
 
@@ -159,7 +162,7 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
 | UNTRUSTED | 있음 | rc 0 / 3 | 해제 / 막음 — 슬롯 폴더를 몰라 기록 없는 절대 항목은 세션 루트 규칙(dir-unknown) |
 | VALUE | 무관(없으면 0줄) | rc 0 / 3 | 해제 / 막음 — missing-record · unrecordable |
 | UNTRUSTED · VALUE | (평가한 경우) | rc 4 | 기록 파일과 무관하게 막음 — record-unusable · root-unusable(세션 루트에 개행 · US) |
-| UNTRUSTED · VALUE | (평가한 경우) | 그 밖(모듈 없음 9 · 환경 장애 5 · 사망 · 판독 실패) | 기록 파일이 있으면(0바이트 포함) 막음 — module · eval-env · eval-fail. 없으면 기존 루프 |
+| UNTRUSTED · VALUE | (평가한 경우) | 그 밖(모듈 없음 9 · 환경 장애 5 · 신호 종료 128 이상 · 사망 · 판독 실패) | 기록 파일이 있으면(0바이트 포함) 막음 — module · eval-env · eval-signal · eval-fail. 없으면 기존 루프 |
 
 *   **평가**(`read_review_verdict <물리 세션 루트>`)는 플래그 항목마다 그 값의
     마지막 기록 줄로 본다.
@@ -178,9 +181,14 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
     존재**다. Stop 은 기록 줄을 해석하지 않는다. 기록 파일은 슬롯이 켜진 판정만
     만든다.
 *   평가는 서브셸에서 한다 — 모듈이 죽어도 본 셸은 끝나지 않는다. 모듈을 읽지
-    못하면 서브셸이 rc 9 로 알린다(module). 판독기 awk 나 히어독 임시 파일이
-    실패하면 모듈이 rc 5 로 알린다(eval-env — 환경 장애라 다시 설치로 풀리지
-    않아 사용자 판단을 안내한다). 그 밖의 rc 는 모듈 오류다(eval-fail — sync).
+    못하면 서브셸이 rc 9 로 알린다(module). 판독기 awk 가 돌지 못하거나 히어독
+    임시 파일을 만들거나 쓰지 못하면 모듈이 rc 5 로 알린다(eval-env — 환경
+    장애라 다시 설치로 풀리지 않아 사용자 판단을 안내한다). 서브셸이 신호로
+    죽으면(rc 128 이상 — 예: bash 3.2 에서 파일 크기 한도 아래 히어독 쓰기가
+    SIGXFSZ 로 서브셸을 죽인다, rc 153) 모듈은 rc 를 내지 못하고 Stop 은 원인을
+    가릴 수 없다(eval-signal — rc 를 싣고, 모듈이 바뀌었거나 망가졌으면 sync 로
+    풀리지만 자원 한도 같은 환경 원인이면 다시 설치로 풀리지 않는다고 함께 말해
+    사용자 판단을 안내한다). 그 밖의 rc 는 모듈 오류다(eval-fail — sync).
 *   해제는 모든 항목이 충족될 때만이고, 그때 플래그 전체를 지운다.
 *   **막음 안내**는 기다리는 자리(`W`) · 현재 기록이 없는 값(`M`) · 사유를
     나열하고 실제 해제 조건만 말한다. 평가 첫 줄의 슬롯 상태(on · untrusted ·
@@ -198,8 +206,9 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
 *   기록 파일이 있고 키 상태가 ABSENT 가 아니면(UNTRUSTED 포함) "최근 리뷰"를
     세션 루트 `_workspace` 와 기록된 리뷰 자리에서 함께 찾는다. 창(기본 180분)
     기준은 그대로다(ADR-0022).
-*   기록을 읽지 못하면(모듈 · 기록 파일 종류) 세션 루트만 본다(거부 쪽). 그래도
-    세션 루트 리뷰로 통과하면 그 사실을 `systemMessage` 로 알린다.
+*   기록을 읽지 못하면(모듈 유실 · 오류, 기록 파일 종류 · 권한, 기록 판독기
+    awk 의 환경 장애 · 자원 한도) 세션 루트만 본다(거부 쪽). 그래도 세션 루트
+    리뷰로 통과하면 그 사실을 `systemMessage` 로 알린다.
 *   안내 문구는 슬롯 모드에서만 바뀐다. 키가 없으면 기존 바이트다.
 
 ### 6. Bash 스윕 — 슬롯이 켜졌을 때만
@@ -256,7 +265,7 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
     문단 앞에 한 문단.
 *   `docs/usage.md` — 키 안내 · 훅 표 · "추가 관할 폴더 슬롯" 소절(운영 안내 ·
     한계). ADR-0024 의 "후속 이력"에 한 항.
-*   시험 `tests/extra-gate-dirs.test.sh`(러너와 축별 케이스 파일 12개, 204
+*   시험 `tests/extra-gate-dirs.test.sh`(러너와 축별 케이스 파일 13개, 207
     케이스)와 CI 단계 하나. 기존 14묶음은 고치지 않았다.
 
 ## Alternatives Considered
@@ -510,8 +519,10 @@ Edit · Write · MultiEdit 은 아래 꼴도 잡는다. 못 잡는 것은 Bash �
     파일이 있을 때 막는다. 듀얼리뷰 플래그가 있는 턴마다 막힌다.
 *   **평가할 수 없을 때 기록 파일이 있으면 막는다:** 모듈이 유실되거나 평가가
     실패하면 세션 루트 항목만 남은 묶음도 막힌다(출구 — 모듈 유실 · 오류는 sync,
-    판독기 awk · 임시 파일의 환경 장애는 사용자 판단). 근사 대조를 걷어낸
-    대가다(대안 F).
+    판독기 awk · 임시 파일의 환경 장애는 사용자 판단). 평가가 신호로 끝나면(rc
+    128 이상) Stop 은 원인을 가리지 못한다 — 모듈 탓이면 sync 로 풀리고 자원
+    한도 같은 환경 탓이면 다시 설치로 풀리지 않아, 사용자 판단을 안내한다(시험
+    v25). 근사 대조를 걷어낸 대가다(대안 F).
 *   **이중 실패**(기록 파일 없음 + 평가 실패)는 기존 루프다 — 판정자도 기록하지
     못한 경우다.
 *   **키를 세션 중에 켜면** 그 전에 플래그에 오른 슬롯 안 절대경로 항목은 기록이
@@ -592,11 +603,11 @@ Edit · Write · MultiEdit 은 아래 꼴도 잡는다. 못 잡는 것은 Bash �
 
 | 파일 | 이 결정 뒤 | `187398c` |
 |---|---|---|
-| `template/.claude/hooks/mark-needs-audit.sh` | 1388 | 585 |
-| `template/.claude/hooks/verify-before-stop.sh` | 1022 | 797 |
+| `template/.claude/hooks/mark-needs-audit.sh` | 1391 | 585 |
+| `template/.claude/hooks/verify-before-stop.sh` | 1033 | 797 |
 | `template/.claude/hooks/_common.sh` | 836 | 768 |
-| `template/.claude/hooks/_extra_gate_dirs.sh`(신설) | 748 | — |
-| `template/.claude/hooks/guard-publish-review.sh` | 187 | 127 |
+| `template/.claude/hooks/_extra_gate_dirs.sh`(신설) | 750 | — |
+| `template/.claude/hooks/guard-publish-review.sh` | 188 | 127 |
 
 ## 되돌리기
 

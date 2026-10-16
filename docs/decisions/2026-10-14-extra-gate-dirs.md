@@ -193,10 +193,12 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
 *   **막음 안내**는 기다리는 자리(`W`) · 현재 기록이 없는 값(`M`) · 사유를
     나열하고 실제 해제 조건만 말한다. 평가 첫 줄의 슬롯 상태(on · untrusted ·
     invalid)로 missing-record 와 dir-unknown 의 문구를 가른다 — 슬롯이 꺼져
-    있었으면 "harness.env 슬롯 설정을 고친 뒤 그 파일을 다시 저장하라"다(그 값의
-    기록 줄이 1023바이트를 넘으면 그렇게 한 뒤의 Stop 이 켜짐 문구로 영구임을
-    알린다). 사유가 없고 남은 자리가 세션 루트 `_workspace` 하나뿐이면 기존 막음
-    안내를 낸다(`DR_MODE=root`). 큰 본문에서도 나열이 빠지지 않게 목록은 입력을
+    있었으면 값 검증 실패(invalid)는 "harness.env 슬롯 설정을 고친 뒤", 판독
+    불가(untrusted — 슬롯 키든 다른 키든 문법이 깨짐)는 "harness.env 를 정상으로
+    읽을 수 있게 고친 뒤" 그 파일을 다시 저장하라다(그 값의 기록 줄이
+    1023바이트를 넘으면 그렇게 한 뒤의 Stop 이 켜짐 문구로 영구임을 알린다).
+    사유가 없고 남은 자리가 세션 루트 `_workspace` 하나뿐이면 기존 막음 안내를
+    낸다(`DR_MODE=root`). 큰 본문에서도 나열이 빠지지 않게 목록은 입력을
     끝까지 읽어 한 번 만든다.
 *   막힘의 기존 출구 — 같은 지점 3회 차단 뒤 경고와 함께 통과(`MAX_BLOCKS`),
     사용자 전용 탈출구 — 는 그대로다.
@@ -268,7 +270,7 @@ harness.env 에 선언한 폴더 하나**로만 정한다. 이 폴더를 슬롯(
     문단 앞에 한 문단.
 *   `docs/usage.md` — 키 안내 · 훅 표 · "추가 관할 폴더 슬롯" 소절(운영 안내 ·
     한계). ADR-0024 의 "후속 이력"에 한 항.
-*   시험 `tests/extra-gate-dirs.test.sh`(러너와 축별 케이스 파일 13개, 209
+*   시험 `tests/extra-gate-dirs.test.sh`(러너와 축별 케이스 파일 13개, 210
     케이스)와 CI 단계 하나. 기존 14묶음은 고치지 않았다.
 
 ## Alternatives Considered
@@ -515,8 +517,9 @@ Edit · Write · MultiEdit 은 아래 꼴도 잡는다. 못 잡는 것은 Bash �
     v24). 키 줄을 지우거나 값을 비우는 것도 사용자 판단이다 — 그러면 세션 루트
     리뷰로 풀린다(harness.env 를 정상으로 읽을 수 있을 때만 — 다른 키가 손상됐으면
     그것부터 고친다).
-    슬롯이 꺼진 동안 막힌 1023바이트 값은 Stop 이 먼저 "설정을 고친 뒤 다시
-    저장하라"고 안내하고, 그대로 한 뒤의 Stop 이 영구라는 안내를 낸다.
+    슬롯이 꺼진 동안 막힌 1023바이트 값은 Stop 이 먼저 꺼진 까닭(값 검증 실패 ·
+    harness.env 판독 불가)대로 "고친 뒤 다시 저장하라"고 안내하고, 그대로 한
+    뒤의 Stop 이 영구라는 안내를 낸다.
 *   **세션 루트 경로에 개행 · US** 가 있으면 판정하지 않고 막는다(root-unusable
     — rc 4 의 뜻이 기록 파일 사용 불가에서 넓어졌다). 키에 값이 있으면(값이
     틀려도) 기록 파일이 없어도 막고, harness.env 를 믿고 읽을 수 없으면 기록
@@ -610,7 +613,7 @@ Edit · Write · MultiEdit 은 아래 꼴도 잡는다. 못 잡는 것은 Bash �
 | 파일 | 이 결정 뒤 | `187398c` |
 |---|---|---|
 | `template/.claude/hooks/mark-needs-audit.sh` | 1391 | 585 |
-| `template/.claude/hooks/verify-before-stop.sh` | 1033 | 797 |
+| `template/.claude/hooks/verify-before-stop.sh` | 1035 | 797 |
 | `template/.claude/hooks/_common.sh` | 836 | 768 |
 | `template/.claude/hooks/_extra_gate_dirs.sh`(신설) | 750 | — |
 | `template/.claude/hooks/guard-publish-review.sh` | 191 | 127 |

@@ -30,7 +30,8 @@ TOK_DR_LOOP='[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리
 TOK_DR_SLOT='슬롯 리뷰 자리 기록으로 판정했습니다'
 TOK_DR_MISSING='현재 리뷰 자리 기록이 없다'
 TOK_DR_RESAVE='그 파일을 다시 저장하면 기록된다'
-TOK_DR_FIXCONF='슬롯 설정을 고친 뒤'
+TOK_DR_FIXCONF='슬롯 설정을 고친 뒤'   # 슬롯 값 검증 실패(invalid)의 출구
+TOK_DR_FIXENV='harness.env 를 정상으로 읽을 수 있게 고친 뒤'   # 믿을 수 없음(untrusted)의 출구
 TOK_DR_UNREC='리뷰 자리를 기록할 수 없는 값이다'
 TOK_DR_UNUSABLE='리뷰 자리 기록 파일을 쓰거나 읽을 수 없다'
 TOK_DR_MODULE='모듈을 읽지 못해 리뷰 자리를 판정할 수 없다'
@@ -447,8 +448,9 @@ r07b() { # 기록 파일이 없고 모듈도 없으면 기존 루프다(판정�
   report "$name" "$why"
 }
 
-r09() { # UNTRUSTED + 기록(끝줄 갱신 표시) — 그 값을 M 으로 나열하고 출구를 "슬롯 설정을
-        # 고친 뒤"로 바꾼다. 기록 없는 절대 항목은 슬롯을 몰라 dir-unknown(세션 루트 규칙).
+r09() { # UNTRUSTED + 기록(끝줄 갱신 표시) — 그 값을 M 으로 나열하고 출구를 "harness.env 를
+        # 정상으로 읽을 수 있게 고친 뒤"로 바꾼다. 기록 없는 절대 항목은 슬롯을 몰라
+        # dir-unknown(세션 루트 규칙).
   local name='r09 UNTRUSTED · 끝줄 갱신 표시 → M 값 나열 · 설정 출구 · dir-unknown' why=''
   local v1 v2
   stop_fixture || { report "$name" ''; return; }
@@ -458,9 +460,43 @@ r09() { # UNTRUSTED + 기록(끝줄 갱신 표시) — 그 값을 M 으로 나�
     && rec "$C3_R" "$v1" '!' && review_at "$C3_R/_workspace" \
     || { report "$name" ''; return; }
   run_stop "$C3_R"
-  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXCONF" \
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXENV" \
     "$TOK_DR_DIRUNK" "  - $v1")"
   [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_RESAVE" && why='슬롯 켜짐 출구 문구가 나왔다'
+  report "$name" "$why"
+}
+
+r10() { # 슬롯이 꺼진 missing-record 의 출구는 꺼진 까닭마다 사실이다 — 값 검증 실패면
+        # 슬롯 설정을, 다른 키가 손상돼 harness.env 를 믿을 수 없으면(슬롯 키는 정상) 그
+        # 파일을 정상으로 읽을 수 있게 고치라고 한다. 다른 키를 고치고 다시 저장하면 그
+        # 자리 리뷰로 풀린다(종결 r2 #1).
+  local name='r10 슬롯 꺼짐 missing-record → 값 불량 · 다른 키 손상의 출구를 가른다'
+  local why='' v bad
+  bad='HARNESS_KNOWLEDGE_GATE="x'$'\n'   # 따옴표가 닫히지 않은 다른 키
+  stop_fixture || { report "$name" ''; return; }
+  v="$C3_T/src/r10.go"
+  set_env "$C3_R" "$(env_slot "$C3_F/no-such-slot")"
+  : > "$v" && dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" '!' \
+    || { report "$name" ''; return; }
+  run_stop "$C3_R"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXCONF")"
+  [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_FIXENV" && why='판독 불가 출구가 나왔다'
+  [[ -n "$why" ]] && why="[값 검증 실패] $why"
+  if [[ -z "$why" ]]; then
+    set_env "$C3_R" "$(env_slot "$C3_S")"$'\n'"$bad"
+    run_stop "$C3_R"
+    why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXENV")"
+    [[ -z "$why" ]] && contains "$ERR" "$TOK_DR_FIXCONF" && why='슬롯 설정 출구가 나왔다'
+    [[ -n "$why" ]] && why="[다른 키 손상] $why"
+  fi
+  if [[ -z "$why" ]]; then
+    set_env "$C3_R" "$(env_slot "$C3_S")"
+    run_mna "$C3_R" edit "$v"
+    review_at "$C3_T/_workspace" || { report "$name" ''; return; }
+    run_stop "$C3_R"
+    why="$(expect_dr_released "$C3_R")"
+    [[ -n "$why" ]] && why="[다른 키 고친 뒤 다시 저장] $why"
+  fi
   report "$name" "$why"
 }
 

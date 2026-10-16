@@ -593,8 +593,8 @@ v19() { # 슬롯 안 ④ 앵커의 저장소를 git 이 돌려주지 못하면 �
   report "$name" "$why"
 }
 
-v20() { # 슬롯이 꺼진 동안의 missing-record 출구("harness.env 슬롯 설정을 고친 뒤 그 파일을
-        # 다시 저장하라")가 실제로 푼다 — 설정을 고치고 다시 저장하면 그 자리 리뷰로 풀린다.
+v20() { # 슬롯이 꺼진 동안의 missing-record 출구("harness.env 를 정상으로 읽을 수 있게 고친
+        # 뒤")가 실제로 푼다 — 설정을 고치고 다시 저장하면 그 자리 리뷰로 풀린다.
   local name='v20 슬롯 꺼짐 missing-record → 설정 고치고 다시 저장 → 자리 리뷰로 해제'
   local why='' v
   stop_fixture || { report "$name" ''; return; }
@@ -603,7 +603,7 @@ v20() { # 슬롯이 꺼진 동안의 missing-record 출구("harness.env 슬롯 �
   : > "$v" && dr_flag "$C3_R" "$v" && rec "$C3_R" "$v" '!' \
     || { report "$name" ''; return; }
   run_stop "$C3_R"
-  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXCONF")"
+  why="$(expect_dr_slot_block "$C3_R" "$TOK_DR_MISSING" "$TOK_DR_FIXENV")"
   if [[ -z "$why" ]]; then
     set_env "$C3_R" "$(env_slot "$C3_S")"
     run_mna "$C3_R" edit "$v"

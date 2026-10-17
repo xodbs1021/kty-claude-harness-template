@@ -26,6 +26,9 @@ BLOCK_FP="$STATE_DIR/.stop-block-fp"    # 마지막 차단 지문(게이트|플�
 readonly EXTRA_GATE_KEY='HARNESS_EXTRA_GATE_DIRS'
 REVIEW_DIRS_FILE="$STATE_DIR/.review-dirs"         # 슬롯 리뷰 자리 기록(형식은 모듈이 정본)
 EXTRA_NOTICE_FILE="$STATE_DIR/.extra-gate-notice"  # 슬롯 사용 불가 알림을 낸 사유 표식
+# 훅의 git 은 선택적 잠금(index.lock)을 잡지 않는다 — 잡으면 다른 세션의 commit 이 실패할 수 있다(ADR-0027).
+# Stop 의 검사 명령(타입체크 · 스타일)도 이 값을 물려받는다 — 의도한 상속이다.
+export GIT_OPTIONAL_LOCKS=0
 
 # 세션 격리 (2026-10-01 실사고). 위 경로들은 **세션 번호가 없을 때의 기본값**이다.
 #

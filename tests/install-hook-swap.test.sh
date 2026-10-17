@@ -430,8 +430,44 @@ c19() { # 오염된 GIT_DIR/GIT_WORK_TREE 아래서도 가드는 **정본을** �
   report "$name" "$why"
 }
 
-CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19'
-EXPECTED_CASES=19
+# utf8_locale — 이 기계에 있는 UTF-8 로케일 하나(한국어 우선). 없으면 rc 1.
+utf8_locale() {
+  local avail l
+  avail="$(locale -a 2>/dev/null)"
+  for l in ko_KR.UTF-8 ko_KR.utf8 C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if printf '%s\n' "$avail" | grep -qxF "$l"; then
+      printf '%s\n' "$l"
+      return 0
+    fi
+  done
+  return 1
+}
+
+c20() { # sync 는 UTF-8 로케일에서도 끝까지 간다. bash 3.2 는 UTF-8 로케일에서 변수 이름
+        # 바로 뒤의 다바이트 글자를 이름의 일부로 읽는다 — `$changed개` 가 unbound 가 돼
+        # 마지막 줄에서 rc 1 로 죽었다(종결 r2 #3). 로케일을 고정해 실행 환경과 무관하게 잰다.
+        # 판별력은 PATH 의 첫 bash 가 3.2 일 때만 있다 — sync.sh 는 shebang(env bash)으로 돌아
+        # bash 5.2 · Homebrew bash 가 앞에 있으면 수정 전에도 녹색이다(종결 r3 #4).
+  local name='c20 UTF-8 로케일에서 sync → 완료 줄에 갱신 수를 싣고 완주' t p loc why=''
+  if ! loc="$(utf8_locale)"; then
+    report "$name" '픽스처 실패: UTF-8 로케일 없음'; return 0
+  fi
+  if ! t="$(new_tpl)"; then report "$name" '픽스처 실패: tpl'; return 0; fi
+  if ! p="$(mktemp -d "$TMPROOT/proj.XXXXXX")"; then
+    report "$name" '픽스처 실패'; return 0
+  fi
+  RC=999; OUT=''; DID_RUN=1
+  OUT="$(LC_ALL="$loc" "$t/sync.sh" "$p" --no-pull 2>&1)"; RC=$?
+  if [ "$RC" -ne 0 ]; then
+    why="[$loc] rc=$RC: $(printf '%s' "$OUT" | tail -1 | head -c 120)"
+  elif ! printf '%s' "$OUT" | grep -qE '== sync 완료 \([0-9]+개 글루 갱신\)'; then
+    why="[$loc] 완료 줄에 갱신 수가 없다: $(printf '%s' "$OUT" | tail -1 | head -c 120)"
+  fi
+  report "$name" "$why"
+}
+
+CASES='c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19 c20'
+EXPECTED_CASES=20
 
 case_total="$(printf '%s\n' $CASES | wc -l | tr -d ' ')"
 case_uniq="$(printf '%s\n' $CASES | sort | uniq | wc -l | tr -d ' ')"

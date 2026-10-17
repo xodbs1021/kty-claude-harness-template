@@ -327,9 +327,10 @@ u03() { # H-A — 판정기 입력을 끝까지 읽지 못하면 "충족"(rc 0)�
         # 판별력: bash 3.2 는 히어독을 늘 임시 파일로 만든다. bash 5.1 이상은 파이프
         # 용량보다 작은 히어독을 파이프로 만들어 주입이 닿지 않으므로, 판정기 입력을
         # 64KiB 넘게 키운다(값 16개 × 약 6000바이트 — 5.2 실측: 70000바이트부터 임시
-        # 파일). 고친 판은 임시 파일이 필요 없거나(rc 3) 실패를 알린다(rc 2) — 둘 다
-        # 맞다. stderr 는 단언하지 않는다(주입 아래 셸 경고가 날 수 있다).
-  local name='u03 판정 입력 순회 실패 → rc 0(충족) 금지 (bash 3.2·5.2 모두 판별)'
+        # 파일). 고친 판은 임시 파일이 필요 없거나(rc 3) 실패를 환경 장애로
+        # 알린다(rc 5 — 다시 설치로 풀리지 않는 원인이라 모듈 오류와 출구가 다르다).
+        # stderr 는 단언하지 않는다(주입 아래 셸 경고가 날 수 있다).
+  local name='u03 판정 입력 순회 실패 → rc 0(충족) 금지 · 환경 장애 rc 5 (bash 3.2·5.2)'
   local why='' fix long i
   fix="$(new_dir u03)" || { FIXTURE_FAIL='임시 디렉토리'; report "$name" ''; return; }
   mkdir -p "$fix/root/_workspace"
@@ -349,7 +350,7 @@ echo "inj=$rc $(printf "%s\n" "$out" | head -n 1)"' FIX="$fix"
   elif [[ "$RC" -ne 0 ]]; then why="셸 rc=$RC"
   elif ! contains "$OUT" 'ctl=3 missing-record'; then
     why="대조(주입 없음)가 미충족이 아니다: [$(flat "$OUT")]"
-  elif ! contains "$OUT" 'inj=2' && ! contains "$OUT" 'inj=3 missing-record'
+  elif ! contains "$OUT" 'inj=5' && ! contains "$OUT" 'inj=3 missing-record'
   then
     why="주입 아래 평가 실패가 충족·다른 판정으로 샜다: [$(flat "$OUT")]"
   fi

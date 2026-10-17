@@ -623,6 +623,231 @@ if retrieval_pending; then
   fi
 fi
 
+# --- 3.5 의 추가 관할 폴더 슬롯 판정 (ADR-0026) ---------------------------------------
+# 슬롯 리뷰 자리 기록의 형식은 _extra_gate_dirs.sh 가 정본이고, Stop 은 형식을 모른다 —
+# 키 판독 상태 · 기록 파일의 존재 · 평가의 rc · 사유 코드 · W/M 줄만 안다.
+DR_MODE=""     # loop 기존 루프 · met 슬롯 판정으로 해제 · unmet 슬롯 판정으로 막음 ·
+               # root 슬롯 판정으로 막되 남은 것이 세션 루트 자리뿐(기존 막음 안내)
+DR_OUT=""      # 평가 출력: 슬롯 상태 한 줄 · 사유 코드 한 줄 · W <자리> · M <값> 줄
+DR_RC=0        # 평가 rc: 0 충족 · 3 미충족 · 4 판정 불가(기록·루트) · 5 환경 장애 ·
+               # 9 모듈 없음 · 128 이상 신호 종료(원인 모름) · 그 밖 실패(모듈 오류)
+DR_ROOT_WS=""  # 평가에 쓴 세션 루트 자리(물리 루트/_workspace) — 막음 안내가 슬롯 자리를 가른다
+
+#######################################
+# 서브셸 안에서만 부른다(모듈 적재 실패는 exit 로 알린다). 모듈을 적재해 슬롯을 검증하고
+# read_review_verdict 를 돌린다 — 모듈이 죽어도 본 셸은 끝나지 않는다(시험 r06).
+# Globals:
+#   EXTRA_GATE_RAW (읽음) · EXTRA_GATE_DIR (모듈 전역 — 슬롯이 꺼졌으면 비운다)
+# Arguments:
+#   $1 — 키 판독 상태(0 VALUE · 1 UNTRUSTED), $2 — 물리 세션 루트
+# Outputs:
+#   첫 줄 = 평가 때의 슬롯 상태 — on 켜짐 · untrusted harness.env 를 믿을 수 없음 ·
+#   invalid 키 값이 검증에 실패. 다음 줄부터 read_review_verdict 의 출력
+# Returns:
+#   read_review_verdict 의 rc · 9 모듈을 읽지 못함(서브셸이 신호로 죽으면 부른 쪽은
+#   128+신호를 받는다)
+#######################################
+dualreview_eval() {
+  { . "$(dirname "${BASH_SOURCE[0]}")/_extra_gate_dirs.sh"; } 2>/dev/null || exit 9
+  if [ "$1" -ne 0 ]; then
+    EXTRA_GATE_DIR=''
+    printf 'untrusted\n'
+  elif validate_extra_gate_dir "$EXTRA_GATE_RAW"; then
+    printf 'on\n'
+  else
+    EXTRA_GATE_DIR=''
+    printf 'invalid\n'
+  fi
+  read_review_verdict "$2"
+}
+
+#######################################
+# 3.5 를 슬롯 리뷰 자리 기록으로 판정할지 정하고, 그렇다면 서브셸에서 평가한다.
+#   ABSENT · (UNTRUSTED ∧ 기록 파일 없음)  → loop(기존 루프 원문 — 키가 없으면 바이트 같음)
+#   (UNTRUSTED ∧ 기록 있음) · VALUE        → 평가. rc 0 met · 3 unmet · 4 unmet(막음)
+#     rc 3 인데 남은 것이 세션 루트 자리뿐  → root(막되 기존 막음 안내가 사실이다)
+#     그 밖(모듈 없음 · 사망 · 판독 실패)   → 기록 파일이 있으면(0바이트 포함) unmet,
+#                                             없으면 loop(판정자도 기록하지 못했다 — 공시)
+# 평가할 수 없을 때의 증거는 기록 파일의 **존재**다 — 기록 줄은 해석하지 않는다.
+# Globals:
+#   REVIEW_DIRS_FILE, PROJECT_DIR (읽음) · DR_MODE, DR_OUT, DR_RC, DR_ROOT_WS (씀)
+#######################################
+dualreview_judge_slot() {
+  local ks have_rec=0 root
+  DR_MODE=loop
+  DR_OUT=""
+  DR_RC=0
+  DR_ROOT_WS=""
+  extra_gate_key_state
+  ks=$?
+  [ "$ks" -eq 3 ] && return 0
+  { [ -e "$REVIEW_DIRS_FILE" ] || [ -L "$REVIEW_DIRS_FILE" ]; } && have_rec=1
+  [ "$ks" -eq 1 ] && [ "$have_rec" -eq 0 ] && return 0
+  # 소속은 물리 세션 루트로 본다 — 판정자가 그렇게 기록했다(시험 e12w). 끝 개행까지
+  # 센티널로 받는다 — 명령 치환은 끝 개행을 지워 다른 폴더를 가리킨다. 개행·US 가 든
+  # 루트는 모듈이 root-unusable 로 막는다(목록 구분자와 부딪힌다).
+  if root="$(CDPATH='' cd -P -- "$PROJECT_DIR" 2>/dev/null && pwd -P && printf x)"; then
+    root="${root%x}"
+    root="${root%$'\n'}"
+  else
+    root="$PROJECT_DIR"
+  fi
+  DR_ROOT_WS="$root/_workspace"
+  DR_OUT="$(dualreview_eval "$ks" "$root" 2>/dev/null)"
+  DR_RC=$?
+  case "$DR_RC" in
+    0) DR_MODE=met ;;
+    3)
+      DR_MODE=unmet
+      # 사유가 없고 기다리는 자리가 세션 루트 _workspace 하나뿐이면(줄은 중복 없이 온다)
+      # 남은 항목은 세션 루트 규칙이다 — 슬롯 안내가 아니라 기존 막음 안내가 맞다.
+      [ "${DR_OUT#*$'\n'}" = $'\n'"W $root/_workspace" ] && DR_MODE=root ;;
+    4) DR_MODE=unmet ;;
+    *) [ "$have_rec" -eq 1 ] && DR_MODE=unmet ;;
+  esac
+  return 0
+}
+
+#######################################
+# 사유 코드의 문구(Stop 상수 — 모듈이 없어도 나간다).
+# Arguments:
+#   $1 — 사유 코드, $2 — 평가 때의 슬롯 상태(on|untrusted|invalid — dualreview_eval),
+#   $3 — 평가 rc(eval-signal 문구에 싣는다)
+# Outputs:
+#   문구 한 줄(모르는 코드는 코드 그대로)
+#######################################
+dualreview_reason_text() {
+  case "$1" in
+    missing-record)
+      if [ "$2" = on ]; then
+        echo "현재 리뷰 자리 기록이 없다 — 세션 폴더 쓰기와 그 저장소의 git 판독(소유권 · 권한 · 손상)을 확인하고 그 파일을 다시 저장하면 기록된다. 다만 그 값의 기록 줄이 1023바이트를 넘으면 기록할 수 없어(기록 줄 = 값 경로와 리뷰 자리 경로들을 구분 바이트 하나씩으로 이은 것 — 자리는 슬롯 저장소 항목이면 그 저장소의 _workspace 와 옆 _workspace_<저장소> 둘, 설계 산출물은 그 폴더 하나), 다시 저장해도 · 저장소를 옮겨도 이번 막음은 풀리지 않는다 — 사용자에게 알려 판단을 받아라(다음부터 막히지 않게 저장소를 더 짧은 경로로 옮길지는 사용자가 정한다)."
+      elif [ "$2" = invalid ]; then
+        echo "현재 리뷰 자리 기록이 없다 — 지금은 슬롯이 꺼져 있어 저장해도 기록되지 않는다. harness.env 슬롯 설정을 고친 뒤 위 '현재 리뷰 자리 기록이 없는 값' 의 파일을 다시 저장하라."
+      else
+        echo "현재 리뷰 자리 기록이 없다 — 지금은 harness.env 를 믿고 읽을 수 없어(손상·읽기 불가·중복 선언·문법 밖·파일 종류) 슬롯이 꺼져 있고 저장해도 기록되지 않는다. harness.env 를 정상으로 읽을 수 있게 고친 뒤 위 '현재 리뷰 자리 기록이 없는 값' 의 파일을 다시 저장하라."
+      fi ;;
+    unrecordable)
+      echo "경로에 제어문자(US)가 있어 리뷰 자리를 기록할 수 없는 값이다(영구) — 다시 저장해도 · 파일 이름을 바꿔도 이번 막음은 풀리지 않는다. 사용자에게 알려 판단을 받아라." ;;
+    record-unusable)
+      echo "리뷰 자리 기록 파일을 쓰거나 읽을 수 없다 — 세션 폴더의 .review-dirs 가 일반 파일이 아니거나(폴더 · FIFO · 끊긴 링크) 읽기 · 쓰기 권한이 없다. 읽고 쓸 수 있는 일반 파일이 되게(파일 종류 · 권한) 고친 뒤 고친 파일들을 다시 저장하라." ;;
+    root-unusable)
+      echo "세션 루트 경로에 개행이나 제어문자(US)가 있어 리뷰 자리를 판정할 수 없다 — 사용자에게 알려 판단을 받아라(세션 루트 폴더 이름을 바꿀지, harness.env 의 슬롯 키 줄을 지우거나 값을 비울지는 사용자가 정한다 — 키 값만 틀리게 바꾸면 그대로 막히고, 키 줄을 지우거나 값을 비워도 harness.env 를 정상으로 읽을 수 있을 때만 풀린다. 다른 키가 손상됐으면 그것부터 고친다)." ;;
+    module)
+      echo "추가 관할 폴더 모듈을 읽지 못해 리뷰 자리를 판정할 수 없다 — 하네스를 다시 설치(sync)하라." ;;
+    eval-fail)
+      echo "리뷰 자리 판정이 실패했다(모듈 오류) — 하네스를 다시 설치(sync)하라." ;;
+    eval-env)
+      echo "리뷰 자리 판정이 실패했다(환경 장애 — 판정기 awk 가 돌지 못했거나 판정용 임시 파일을 만들지 못했다: awk 없음 · 파일 권한 · 디스크 공간 · 자원 한도) — 하네스를 다시 설치해도 풀리지 않는다. 사용자에게 알려 판단을 받아라(장애가 걷히면 다음 Stop 이 다시 판정한다)." ;;
+    eval-signal)
+      echo "리뷰 자리 판정이 신호로 끝났다(rc $3 — 128 이상은 신호 종료) — 원인을 가릴 수 없다. 모듈이 바뀌었거나 망가졌으면 하네스를 다시 설치(sync)하면 풀리지만, 자원 한도(파일 크기 · 메모리) 같은 환경 원인이면 다시 설치해도 풀리지 않는다. 사용자에게 알려 판단을 받아라(원인이 걷히면 다음 Stop 이 다시 판정한다)." ;;
+    dir-unknown)
+      if [ "$2" = invalid ]; then
+        echo "슬롯 폴더를 알 수 없어(harness.env 의 슬롯 값을 쓸 수 없음 — 값 검증 실패) 기록 없는 절대경로 항목은 세션 루트 규칙으로 보았다."
+      else
+        echo "슬롯 폴더를 알 수 없어(harness.env 를 믿고 읽을 수 없음) 기록 없는 절대경로 항목은 세션 루트 규칙으로 보았다."
+      fi ;;
+    *) echo "$1" ;;
+  esac
+}
+
+#######################################
+# 슬롯 판정으로 막을 때의 안내(호출자가 stderr 로 돌린다). 기다리는 자리(W)와 현재 기록이
+# 없는 값(M)을 나열하고 사유마다 문구를 싣는다(슬롯이 꺼져 있었으면 다시 저장해도
+# 기록되지 않으니 출구 문구가 다르다). "해야 할 일"은 실제 해제 조건만 말한다 — 기다리는
+# 자리 목록이 없으면 그 자리에 저장하라고 하지 않고, 풀기 전에 해결할 사유가 있을 때만
+# "위 사유"를, 슬롯 항목이 남았을 때만 "세션 루트 리뷰로 풀리지 않는다"를 낸다.
+# Globals:
+#   DR_OUT, DR_RC, DR_ROOT_WS, DUALREVIEW_FLAG, count, MAX_BLOCKS (읽음)
+#######################################
+dualreview_slot_block() {
+  local slot_state='' reasons="" body="" waiting="" missing="" slot_waits=""
+  local blocking=0 line code
+  case "$DR_RC" in
+    0|3|4)
+      slot_state="${DR_OUT%%$'\n'*}"
+      body="${DR_OUT#*$'\n'}"
+      [ "$body" = "$DR_OUT" ] && body=""
+      reasons="${body%%$'\n'*}"
+      body="${body#*$'\n'}"
+      [ "$body" = "$reasons" ] && body="" ;;
+    5) reasons=eval-env ;;
+    9) reasons=module ;;
+    *)
+      # 128 이상은 서브셸이 신호로 죽은 것이다(셸 관례 128+신호) — 모듈이 낸 rc 가
+      # 아니라 원인(모듈 손상 · 자원 한도)을 가릴 수 없다.
+      if [ "$DR_RC" -ge 128 ]; then
+        reasons=eval-signal
+      else
+        reasons=eval-fail
+      fi ;;
+  esac
+  # 기다리는 자리 · 기록 없는 값 목록은 한 번 만들어 나열과 판단이 같은 목록을 보게 한다.
+  # sed 는 입력을 끝까지 읽는다 — `printf | grep -q` 로 판단하면 grep 이 첫 일치에서 닫아
+  # 큰 본문(파이프 버퍼 초과)의 printf 가 SIGPIPE 로 죽고, pipefail 아래 조건이 거짓이 돼
+  # 나열이 조용히 빠진다.
+  # 자리 · 값은 바이트열이다 — 로케일에 기대지 않게 LC_ALL=C 로 다룬다(UTF-8 로케일의 GNU
+  # grep 은 잘못된 UTF-8 이 든 줄을 이진으로 보고 줄을 내지 않으며 경고를 stderr 에 섞는다).
+  waiting="$(printf '%s\n' "$body" | LC_ALL=C sed -n 's/^W /  - /p')"
+  missing="$(printf '%s\n' "$body" | LC_ALL=C sed -n 's/^M /  - /p')"
+  # 세션 루트 자리 말고 기다리는 자리(슬롯 자리)가 있는가.
+  slot_waits="$(printf '%s\n' "$waiting" \
+    | LC_ALL=C grep -vxF -- "  - $DR_ROOT_WS" 2>/dev/null)"
+  # dir-unknown 은 판정 방식을 알리는 사유라 풀기 전에 해결할 조건이 아니다.
+  for code in $reasons; do
+    [ "$code" = dir-unknown ] || blocking=1
+  done
+  echo "[완료 차단] codex 듀얼 리뷰가 그 리뷰 자리에서 확인되지 않았습니다 — 추가 관할 폴더 슬롯 리뷰 자리 기록으로 판정했습니다."
+  echo
+  echo "이 턴의 듀얼 리뷰 대상:"
+  sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+  if [ -n "$waiting" ]; then
+    echo
+    echo "리뷰를 기다리는 자리(그 폴더에 *codex*.md 를 저장하면 풀린다):"
+    printf '%s\n' "$waiting"
+  fi
+  if [ -n "$missing" ]; then
+    echo
+    echo "현재 리뷰 자리 기록이 없는 값:"
+    printf '%s\n' "$missing"
+  fi
+  if [ -n "$reasons" ]; then
+    echo
+    echo "사유:"
+    for code in $reasons; do
+      line="$(dualreview_reason_text "$code" "$slot_state" "$DR_RC")"
+      echo "  - $line"
+    done
+  fi
+  echo
+  echo "해야 할 일:"
+  echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
+  if [ -n "$waiting" ]; then
+    if [ -n "$slot_waits" ] || [ -n "$missing" ]; then
+      echo "  2. 결과를 위 '리뷰를 기다리는 자리'에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다 — 슬롯 항목은 세션 루트 _workspace 의 리뷰로 풀리지 않는다."
+    else
+      echo "  2. 결과를 위 '리뷰를 기다리는 자리'에 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합한다."
+    fi
+    if [ "$blocking" -eq 1 ]; then
+      echo "  3. 위 사유를 해결하고 저장하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+    else
+      echo "  3. 저장하면 다음 Stop 에서 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+    fi
+  else
+    if [ "$blocking" -eq 1 ]; then
+      echo "  2. 리뷰를 기다리는 자리를 아직 정할 수 없다 — 위 사유를 먼저 해결하면 다음 Stop 이 그 자리를 알려 준다."
+    else
+      echo "  2. 리뷰를 기다리는 자리 목록을 만들지 못했다(나열 실패) — 다음 Stop 이 다시 판정한다."
+    fi
+    echo "  3. 다음 Stop 이 알려 주는 자리에 결과를 *codex*.md 로 저장하고 지적을 [cc]/[cx] 태그로 통합하면 이 게이트가 자동 해제된다 — 지울 플래그가 없습니다."
+  fi
+  echo "     codex 미설치·호출 실패로 생략하는 경우에만 사용자 보고에 '듀얼 리뷰 생략(codex 실패)'을"
+  echo "     명시하고:  rm -f $(flag_hint "$DUALREVIEW_FLAG" .needs-dualreview)"
+  echo "     리뷰 없이 플래그만 지우는 것은 이 게이트의 존재 이유를 없앤다."
+  echo
+  emit_decision_note
+  echo "차단 $((count + 1))/${MAX_BLOCKS}.  탈출구(사용자 전용 — 셸에서 직접 export해야 하며, 에이전트가 대입을 시도하면 guard-hook-disable에 차단됨): HARNESS_HOOKS=off  또는  ECC_DISABLED_HOOKS=stop:dualreview"
+}
+
 # (3.5) 듀얼 리뷰(codex) 게이트 (2026-08-03 kty — "리뷰가 필요한 모든 단계를 codex와 같이"의 기계화).
 #      설계·계획 산출물이 저장되거나 코드가 바뀐 턴은 codex 독립 리뷰 없이 끝낼 수 없다.
 #      Claude 단독 리뷰가 놓친 CRITICAL을 codex가 잡은 실사고(2026-08-03 POK-30)의 재발 방지.
@@ -633,17 +858,26 @@ fi
 #      에이전트 손에 주지 않는 것이 게이트의 형태다(회수 게이트 3.4 와 같은 구조).
 #      내용은 파싱하지 않는다 — 형식·존재만 본다. 빈 껍데기 파일로 통과하는 우회는
 #      남는다(기록된 한계) — 내용 검증은 감사자(completion-auditor) 몫이다(ADR-0013 ④).
+#
+#      **추가 관할 폴더 슬롯**(ADR-0026): 키가 있으면 위 dualreview_judge_slot 이 결정 표대로
+#      슬롯 리뷰 자리 기록으로 판정한다. 키가 없으면 아래 기존 루프 원문 그대로다(출력
+#      바이트도 같다). 슬롯 판정으로 남은 것이 세션 루트 자리뿐이면(root) 기존 막음 안내를 낸다.
 if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
   dualreview_artifact=""
-  for _dr in "$PROJECT_DIR/_workspace"/*codex*.md; do
-    # 글롭 무매치 리터럴·디렉터리·빈 파일 전부 거른다 — [cx]: -e 만 보면
-    # foo-codex.md **디렉터리**나 0바이트 touch 로도 게이트가 풀린다.
-    [ -f "$_dr" ] && [ -s "$_dr" ] || continue
-    if [ "$_dr" -nt "$DUALREVIEW_FLAG" ]; then
-      dualreview_artifact="$_dr"
-      break
-    fi
-  done
+  dualreview_judge_slot
+  if [ "$DR_MODE" = loop ]; then
+    for _dr in "$PROJECT_DIR/_workspace"/*codex*.md; do
+      # 글롭 무매치 리터럴·디렉터리·빈 파일 전부 거른다 — [cx]: -e 만 보면
+      # foo-codex.md **디렉터리**나 0바이트 touch 로도 게이트가 풀린다.
+      [ -f "$_dr" ] && [ -s "$_dr" ] || continue
+      if [ "$_dr" -nt "$DUALREVIEW_FLAG" ]; then
+        dualreview_artifact="$_dr"
+        break
+      fi
+    done
+  elif [ "$DR_MODE" = met ]; then
+    dualreview_artifact="$REVIEW_DIRS_FILE"   # 모든 항목이 제 리뷰 자리에서 풀렸다
+  fi
   if [ -n "$dualreview_artifact" ]; then
     rm -f "$DUALREVIEW_FLAG" 2>/dev/null
   fi
@@ -664,6 +898,10 @@ if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
       fi
       exit 0
     fi
+  elif [ "$DR_MODE" = unmet ]; then
+    gate_budget "dualreview"
+    dualreview_slot_block >&2
+    bump_and_block
   else
     gate_budget "dualreview"
     {

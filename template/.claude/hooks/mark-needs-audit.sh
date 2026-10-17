@@ -78,9 +78,17 @@ MSG_SWEEP_TIME_CUT="이 명령의 스윕이 시간 예산을 다 써서 바꾼 �
 # 추가 관할 폴더 슬롯(ADR-0026)을 쓸 수 없을 때의 알림 머리. 사유 문구는 _common.sh 의
 # extra_problem_text 가 뒤에 붙는다 — 모듈이 없어도 나가야 하기 때문이다.
 MSG_EXTRA_HEAD="추가 관할 폴더 슬롯(harness.env 의 HARNESS_EXTRA_GATE_DIRS)을 쓸 수 없다 — 고칠 때까지 슬롯 폴더 안 저장소 편집에 게이트가 서지 않고 리뷰 자리도 기록되지 않는다. 사유: "
-# 리뷰 자리 기록(슬롯 수명 계약 ①·③) 실패 — 회복 가능(쓰기 실패)과 영구(경로에 US·LF).
-MSG_RECORD_FAIL="리뷰 자리 기록에 실패했다(세션 폴더 쓰기 확인). 그 파일을 다시 저장하라 — 그 전까지 그 값은 턴 종료에서 막히거나 옛 소속 자리 리뷰로 풀릴 수 있다."
-MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있거나 기록 줄이 1023바이트를 넘어 리뷰 자리를 기록하지 못했다(영구) — 그 값이 슬롯 안 항목이면 턴 종료에서 막힌다. 파일 이름이나 저장소 위치를 바꾸거나(자리 경로가 길면 저장소를 더 짧은 경로로 옮긴다) 사용자에게 알려 판단을 받아라."
+# 리뷰 자리 기록(슬롯 수명 계약 ①·③) 실패 — 회복 가능(쓰기 실패 · 기록 파일이 일반 파일 아님)과
+# 영구(경로에 US·LF · 줄 1023바이트 초과). 영구면 그 값은 다시 저장 · 이름 · 위치 바꾸기로 이번
+# 막음이 풀리지 않는다(옛 값이 플래그에 남는다) — 그것을 출구로 안내하지 않는다. 슬롯 저장소의
+# git 판독 실패로 자리를 정하지 못한 경우(MSG_RECORD_GIT)는 git 이 회복된 뒤 다시 저장하면 된다 —
+# 단 현재 기록 줄만 1023바이트를 넘는 값은 그때 영구 알림이 나간다(git 이 실패한 때는 자리를 몰라
+# 줄 길이를 알 수 없어, 문구가 그 경우를 함께 적는다). 셋 다 RECORD_MSG 로 나가 Bash 스윕의 집계
+# 문구로 접히지 않는다. 갱신 표시부터 기록할 수 없는 값(US·LF · 갱신 표시 줄 1023바이트 초과)이
+# git 판독도 실패하면 영구 문구만 낸다 — git 을 고쳐 다시 저장해도 그 값은 기록되지 않는다.
+MSG_RECORD_FAIL="리뷰 자리 기록에 실패했다(세션 폴더 쓰기 · 기록 파일 종류 확인). 그 파일을 다시 저장하라 — 그 전까지 그 값은 턴 종료에서 막히거나 옛 소속 자리 리뷰로 풀릴 수 있다."
+MSG_RECORD_GIT="git 이 저장소 정보를 돌려주지 못해(소유권 거부·권한·손상) 그 값의 리뷰 자리를 정하지 못했다 — 게이트는 섰고 그 값은 턴 종료에서 막힌다. git 이 그 저장소를 다시 읽을 수 있게 된 뒤 그 파일을 다시 저장하면 기록된다(소유권·권한·손상을 어떻게 고칠지는 사용자에게 알려 판단을 받아라). 단 그 값의 기록 줄(값과 리뷰 자리 경로들)이 1023바이트를 넘으면 그때 기록할 수 없다는 영구 알림이 나가고, 그 막음은 다시 저장 · 이름 · 위치 바꾸기로 풀리지 않는다."
+MSG_RECORD_PERMANENT="경로에 기록할 수 없는 제어문자가 있거나 기록 줄이 1023바이트를 넘어 리뷰 자리를 기록하지 못했다(영구) — 그 값이 슬롯 안 항목이면 턴 종료에서 막히고, 다시 저장해도 · 파일 이름이나 저장소 위치를 바꿔도 이번 막음은 풀리지 않는다. 사용자에게 알려 판단을 받아라(다음부터 막히지 않게 이름이나 위치를 바꿀지는 사용자가 정한다)."
 
 # --- 계약 함수 ------------------------------------------------------------
 
@@ -1026,7 +1034,8 @@ sweep_bash_writes() {
     SWEEP_MSG="${SWEEP_MSG:+$SWEEP_MSG }$MSG_SWEEP_ROOT_CAP"
   fi
   # 파일 하나의 판정 알림은 위 집계로 접혔다. 남겨 두면 마지막 파일의 알림이 출구에서
-  # 집계와 섞여 키가 없을 때의 바이트가 달라진다.
+  # 집계와 섞여 키가 없을 때의 바이트가 달라진다. 리뷰 자리 기록 알림(RECORD_MSG)은
+  # 접지 않는다 — 막힘과 출구가 사유마다 달라 출구(finish_hook)가 그대로 붙인다.
   JUDGE_MSG=""
   return 0
 }
@@ -1039,6 +1048,7 @@ VERDICT=""     # verdict_of 의 결과 — gate · knowledge · skip
 VERDICT_REPO=""  # verdict_of 의 결과 — 분류 기준 저장소 최상위(①③④⑤′, 없으면 빈 값)
 REPO_TOP=""      # repo_top_of 의 결과
 RECORDING=0      # 이번 판정이 리뷰 자리를 기록하는가(슬롯 켜짐 ∧ 절대 값)
+RECORD_PERMANENT=0  # 이번 판정의 값을 기록할 수 없는가(갱신 표시부터 영구 실패)
 
 # other_checkout <물리 절대경로> — 그 파일이 세션 루트($proj)가 아닌 **같은 저장소의 다른
 # 체크아웃**(메인·형제 워크트리) 안이면 CHECKOUT_ROOT 에 그 최상위를 담고 rc=0.
@@ -1252,18 +1262,23 @@ judge_file() {
 
 #######################################
 # 결속 ① — 슬롯이 켜졌고 값이 절대경로면 갱신 표시 줄을 덧붙이고 RECORDING 을 켠다.
+# 갱신 표시가 영구 실패(rc 2)면 그 값은 기록할 수 없다 — RECORD_PERMANENT 로 ③ 에 넘긴다.
 # Globals:
-#   EXTRA_ON (읽음) · RECORDING, RECORD_MSG (씀)
+#   EXTRA_ON (읽음) · RECORDING, RECORD_PERMANENT, RECORD_MSG (씀)
 # Arguments:
 #   $1 — 플래그 값
 #######################################
 review_record_begin() {
+  local rc
   RECORDING=0
+  RECORD_PERMANENT=0
   [ "$EXTRA_ON" -eq 1 ] || return 0
   case "$1" in /*) ;; *) return 0 ;; esac
   RECORDING=1
   record_review_pending "$1"
-  note_record_rc $?
+  rc=$?
+  [ "$rc" -eq 2 ] && RECORD_PERMANENT=1
+  note_record_rc "$rc"
 }
 
 #######################################
@@ -1273,8 +1288,8 @@ review_record_begin() {
 # 듀얼리뷰 플래그를 실제로 갱신하지 못했으면 쓰지 않고 회복 가능 문구를 낸다. 소속을
 # 모르면(git 판독 실패) 빈 집합 대신 갱신 표시를 남긴다 — 둘 다 막는 쪽이다.
 # Globals:
-#   RECORDING, VERDICT_REPO, proj, DUALREVIEW_FLAG (읽음) ·
-#   RECORD_MSG, JUDGE_MSG (씀)
+#   RECORDING, RECORD_PERMANENT, VERDICT_REPO, proj, DUALREVIEW_FLAG,
+#   MSG_RECORD_GIT (읽음) · RECORD_MSG (씀)
 # Arguments:
 #   $1 — 플래그 값, $2 — 듀얼리뷰 플래그를 썼는가(1|0), $3 — 설계물인가(1|0)
 #######################################
@@ -1297,7 +1312,14 @@ review_record_end() {
     record_review_dirs "$v" "$VERDICT_REPO/_workspace" "$sibling"
   elif [ -z "$VERDICT_REPO" ] && has_git_ancestor "$v"; then
     # 소속을 모른다(.git 은 있는데 최상위를 못 받음) — 빈 집합이면 세션 루트 리뷰로 풀린다.
-    [ -n "$JUDGE_MSG" ] || JUDGE_MSG="$MSG_GIT_UNAVAILABLE"
+    # 현재 기록을 쓰지 않아 끝줄이 갱신 표시로 남고 턴 종료에서 막힌다 — 그 사실과 출구를
+    # 알린다(일반 git 판독 실패 문구의 "앵커 밖 파일에는 게이트가 서지 않았다"는 이 값에 맞지
+    # 않는다). 판정 알림(JUDGE_MSG)이 아니라 기록 알림으로 낸다 — Bash 스윕은 판정 알림을
+    # 부분 기록 문구 하나로 접어 "게이트는 섰고 막힌다"를 숨긴다 — 같은 판정에 판정 알림
+    # (다른 플래그 쓰기 실패)이 있어도 낸다. 갱신 표시부터 기록할 수 없었으면(영구) git 을
+    # 고쳐 다시 저장해도 기록되지 않으니 영구 문구만 둔다. 현재 기록 줄만 1023바이트를 넘는
+    # 값은 여기서 알 수 없다(자리를 모른다) — git 문구가 그 경우를 적는다.
+    [ "$RECORD_PERMANENT" -eq 1 ] || add_record_msg "$MSG_RECORD_GIT"
     return 0
   else
     record_review_dirs "$v"
@@ -1314,15 +1336,24 @@ review_record_end() {
 #   $1 — record_review_pending · record_review_dirs 의 rc
 #######################################
 note_record_rc() {
-  local add
   case "$1" in
     0) return 0 ;;
-    2) add="$MSG_RECORD_PERMANENT" ;;
-    *) add="$MSG_RECORD_FAIL" ;;
+    2) add_record_msg "$MSG_RECORD_PERMANENT" ;;
+    *) add_record_msg "$MSG_RECORD_FAIL" ;;
   esac
+}
+
+#######################################
+# 리뷰 자리 기록 알림 하나를 RECORD_MSG 에 덧붙인다(같은 문구는 한 번).
+# Globals:
+#   RECORD_MSG (씀)
+# Arguments:
+#   $1 — 문구
+#######################################
+add_record_msg() {
   case "$RECORD_MSG" in
-    *"$add"*) ;;
-    *) RECORD_MSG="${RECORD_MSG:+$RECORD_MSG }$add" ;;
+    *"$1"*) ;;
+    *) RECORD_MSG="${RECORD_MSG:+$RECORD_MSG }$1" ;;
   esac
 }
 

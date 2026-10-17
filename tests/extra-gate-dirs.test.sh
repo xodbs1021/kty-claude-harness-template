@@ -13,8 +13,23 @@
 #                                      슬롯 경계·순회 입력 유실)
 #   extra-gate-dirs.capture.cases.sh   잡는 쪽 이연 처분(기록 줄 길이·쌍 뿌리 삭제 판정·
 #                                      중복 계수·접미 충돌·홈 토큰 알림·표식·동시 출력)
-#   extra-gate-dirs.closing.cases.sh   종결 r2 처분(없는 사용자 ~ · 비ASCII 홈 토큰 ·
-#                                      홈 토큰 중복 계수 · 상대 cwd · 표식 EFBIG · 경계)
+#   extra-gate-dirs.closing.cases.sh   종결 r2 · r3 처분(없는 사용자 ~ · 비ASCII 홈 토큰 ·
+#                                      홈 토큰 중복 계수 · 상대 cwd · 표식 EFBIG · 경계 ·
+#                                      홈 토큰의 : 경계 · 사용자 조회 실패)
+#   extra-gate-dirs.release.cases.sh   듀얼리뷰 해제(Stop 3.5)의 슬롯 리뷰 자리 판정
+#   extra-gate-dirs.life.cases.sh      기록 수명(소속 변경·결속 순서·기록 장애)·발행 ②
+#   extra-gate-dirs.rootchar.cases.sh  세션 루트 경로의 개행·US(Stop 3.5 · 발행 ②)와
+#                                      그 막음의 키 출구 한정(harness.env 정상 판독)
+#   extra-gate-dirs.settle.cases.sh    푸는 쪽 이연 처분(미충족 나열 비용 · 발행 ② 읽기
+#                                      실패 알림 · 막음 안내 문구 · 큰 본문 나열 ·
+#                                      안내가 실제 해제 조건과 맞는가)과 종결 전
+#                                      처분(스윕 git 판독 실패 알림 · 평가 실패
+#                                      원인별 출구 · root-unusable 키 출구 ·
+#                                      중복 제거 실패 나열 · 기록 불가 값 알림 우선)
+#   extra-gate-dirs.cause.cases.sh     원인을 확정할 수 없거나 나중에야 드러나는
+#                                      실패의 안내(평가 신호 종료 · 기록 줄만 넘는
+#                                      값의 git 판독 실패 · 발행 ② 판독 실패 원인 ·
+#                                      플래그 쓰기 실패와 겹친 git 판독 실패)
 #
 # 무엇을 붙드나:
 #   · 슬롯 모듈의 계약 — set -u 생존, 기록 쓰기 형식, 기록 읽기의 보수 판정
@@ -210,7 +225,12 @@ for cases_file in extra-gate-dirs.unit.cases.sh \
                   extra-gate-dirs.sweep.cases.sh \
                   extra-gate-dirs.bound.cases.sh \
                   extra-gate-dirs.capture.cases.sh \
-                  extra-gate-dirs.closing.cases.sh; do
+                  extra-gate-dirs.closing.cases.sh \
+                  extra-gate-dirs.release.cases.sh \
+                  extra-gate-dirs.life.cases.sh \
+                  extra-gate-dirs.rootchar.cases.sh \
+                  extra-gate-dirs.settle.cases.sh \
+                  extra-gate-dirs.cause.cases.sh; do
   [[ -f "$TEST_DIR/$cases_file" ]] || {
     echo "✗ 케이스 파일을 찾지 못했습니다: $cases_file" >&2
     exit 1
@@ -221,7 +241,7 @@ done
 
 # --- 러너 -----------------------------------------------------------------
 # EXPECTED_CASES 는 상수다. 파생값이면 케이스를 지워도 초록이다.
-EXPECTED_CASES=142
+EXPECTED_CASES=210
 CASES='
 u01 u02 x01 z2a z2b z2c z4a z4b z4c
 h01 h02 h03 h04 h05
@@ -235,6 +255,14 @@ f01 f02 f03 f04 f05 s_pair1 s_pair2 s_nonpair s_rec h_unset
 b01 b02 b03 b04 b05 l01 l02 l03 w01 w02 d01 d02 d03
 k01 k02 k03 k04 k05 k06 k07 k08 k09 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23
 k24 k25 k26 k27 k28 k29 k30 k31 k32 k33 k34 k35 k36 k37 k38 k39 k40 k41 k42 k43
+c01 c02 c03 t01 t02 t03 t04 t07 t08 t09
+r01_absent r01_empty r01b r02 r02e r03 r04 r05 r06 r07 r07b r09 r10 e12w
+x1a x1b x1c x1d x1e x1f x1g x1h p01 p02 p03
+q01 q02 q03 q04
+v01 v02 v03 v04 v05 v06 v07 v08
+v09 v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20
+v21 v22 v23 v24
+v25 v26 v27 v28 v29
 '
 
 #######################################

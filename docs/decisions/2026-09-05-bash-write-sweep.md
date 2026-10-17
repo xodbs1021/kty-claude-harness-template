@@ -131,5 +131,12 @@ CRITICAL). 그래서 호출마다 창 파일을 만들고 PostToolUse 는 **가�
       동시성 · 취소 · 세션 재개 문제가 나와 이 변경에 싣지 않고 설계부터 별도로 다시
       한다(kty 결정 2026-10-09).
 
+- **2026-10-14 — 추가 관할 폴더로 스윕 뿌리를 넓힌다**: harness.env 의
+  `HARNESS_EXTRA_GATE_DIRS` 가 켜져 있으면 슬롯 안 저장소(cwd · 명령문 절대경로
+  · 홈 토큰 `~/…` 이 가리키는 것) · 트랙 작업 공간(`_workspace*` — 한 단계, 설계
+  모양만) · 그 쌍(저장소 T ↔ 옆 `_workspace_T`)도 뿌리로 훑고, 시간 예산 20 s 를
+  모든 뿌리에 건다. 비파싱 · 힌트 뿌리 원칙은 그대로이고, 키가 없으면 스윕은
+  바뀌지 않는다([ADR-0026](2026-10-14-extra-gate-dirs.md)).
+
 [훅 문서]: https://code.claude.com/docs/en/hooks
 [도구 문서]: https://code.claude.com/docs/en/tools-reference

@@ -49,7 +49,7 @@ EXTRA_GATE_PROBLEM=''      # 불량 사유: colon|tilde|relative|missing|newline
 REVIEW_RECORD_SEP=$'\037'  # 기록 형식의 필드 구분자(US)
 REVIEW_RECORD_MAX=1023    # 기록 한 줄의 최대 바이트(개행 제외 — 한 번의 write 로 나가는 길이)
 REVIEW_VERDICT_REASONS=''  # read_review_verdict 가 쌓는 사유 코드(공백 구분)
-REVIEW_VERDICT_LINES=''    # read_review_verdict 가 쌓는 W·M 줄(LF 구분)
+REVIEW_VERDICT_LINES=()    # read_review_verdict 가 쌓는 W·M 줄(배열 — 중복은 낼 때 지운다)
 SAME_DIR_PREFIX=''         # find_same_dir_prefix 가 찾은 접두
 
 # 기록 형식의 판독기. 쓰기 쪽 계약(위 머리 주석)과 한 파일에 둔다. 경로는 awk 피연산자로만
@@ -564,12 +564,22 @@ read_review_dirs() {
 #   첫 줄 = 사유 코드(공백 구분, 없으면 빈 줄). 다음 줄부터 `W <자리>`(미충족
 #   항목이 기다리는 자리)와 `M <값>`(현재 기록이 없는 값)
 # Returns:
-#   0 전부 충족 · 3 미충족 · 4 record-unusable · 그 밖(2) 평가 실패
+#   0 전부 충족 · 3 미충족 · 4 판정 불가(record-unusable · root-unusable) ·
+#   5 환경 장애로 평가 실패(판독기 awk 실패 · 히어독 임시 파일을 만들거나 쓰지 못함 —
+#   이 모듈을 다시 설치해도 풀리지 않는다) · 그 밖(2 인자 누락 — 훅과 판이 맞지 않음)
+#   평가 실패. 셸이 신호로 죽으면(파일 크기 한도 아래 히어독 쓰기의 SIGXFSZ 등) rc 를
+#   내지 못한다 — 서브셸로 부른 쪽이 128+신호로 받는다.
 #######################################
 read_review_verdict() {
   local root="${1:-}" flag="${DUALREVIEW_FLAG:-}" rec="${REVIEW_DIRS_FILE:-}"
   local rows
   [[ -n "$root" && -n "$flag" && -n "$rec" ]] || return 2
+  # 세션 루트 자리(`루트/_workspace`)는 US 구분 자리 목록·줄 단위 결과에 실린다 — 루트에
+  # US·LF 가 있으면 다른 폴더로 쪼개지므로 판정하지 않고 막는다(조용한 축소 금지).
+  if has_record_separator "$root"; then
+    printf 'root-unusable\n'
+    return 4
+  fi
   if [[ -e "$rec" || -L "$rec" ]]; then
     if [[ ! -f "$rec" || ! -r "$rec" || ! -w "$rec" ]]; then
       printf 'record-unusable\n'
@@ -582,7 +592,7 @@ read_review_verdict() {
     printf '\n'
     return 0
   fi
-  rows="$(run_review_record_awk verdict "$rec" "$flag")" || return 2
+  rows="$(run_review_record_awk verdict "$rec" "$flag")" || return 5
   judge_review_rows "$root" "$rows"
 }
 
@@ -597,14 +607,14 @@ read_review_verdict() {
 # Arguments:
 #   $1 — 물리 세션 루트, $2 — 판독기 줄(LF 구분)
 # Outputs:
-#   read_review_verdict 와 같다(rc 2 이면 없음)
+#   read_review_verdict 와 같다(rc 5 이면 없음)
 # Returns:
-#   0 전부 충족 · 3 미충족 · 2 입력을 끝까지 읽지 못함(평가 실패)
+#   0 전부 충족 · 3 미충족 · 5 입력을 끝까지 읽지 못함(히어독 임시 파일 — 환경 장애)
 #######################################
 judge_review_rows() {
-  local root="${1:-}" line unmet=0 complete=0
+  local root="${1:-}" line unmet=0 complete=0 lines
   REVIEW_VERDICT_REASONS=''
-  REVIEW_VERDICT_LINES=''
+  REVIEW_VERDICT_LINES=()
   while IFS= read -r line; do
     if [[ "$line" == '.' ]]; then
       complete=1
@@ -617,8 +627,19 @@ judge_review_rows() {
 ${2:-}
 .
 EOF
-  ((complete)) || return 2
-  printf '%s\n%s' "$REVIEW_VERDICT_REASONS" "$REVIEW_VERDICT_LINES"
+  ((complete)) || return 5
+  printf '%s\n' "$REVIEW_VERDICT_REASONS"
+  # 줄의 중복은 쌓을 때가 아니라 여기서 한 번에 지운다(처음 나온 순서 그대로). 쌓을
+  # 때마다 앞 줄 전체와 견주면 비용이 미충족 항목 수의 제곱으로 는다. 나열만 바뀌고
+  # 판정(rc)은 바뀌지 않는다. 중복 제거가 실패하면(awk 없음 · 자원 부족) 중복 제거 없는
+  # 목록을 그대로 낸다 — 목록이 비면 막음 안내가 기다리는 자리를 말하지 못한다.
+  if ((${#REVIEW_VERDICT_LINES[@]} > 0)); then
+    if ! lines="$(printf '%s\n' "${REVIEW_VERDICT_LINES[@]}" \
+        | LC_ALL=C awk '!seen[$0]++')"; then
+      lines="$(printf '%s\n' "${REVIEW_VERDICT_LINES[@]}")"
+    fi
+    printf '%s\n' "$lines"
+  fi
   ((unmet)) && return 3
   return 0
 }
@@ -718,15 +739,12 @@ note_verdict_reason() {
 }
 
 #######################################
-# 결과 줄 하나를 중복 없이 쌓는다.
+# 결과 줄 하나를 쌓는다(중복은 judge_review_rows 가 낼 때 지운다).
 # Globals:
 #   REVIEW_VERDICT_LINES (씀)
 # Arguments:
 #   $1 — `W <자리>` 또는 `M <값>`
 #######################################
 note_verdict_line() {
-  case $'\n'"$REVIEW_VERDICT_LINES" in
-    *$'\n'"${1:-}"$'\n'*) ;;
-    *) REVIEW_VERDICT_LINES="$REVIEW_VERDICT_LINES${1:-}"$'\n' ;;
-  esac
+  REVIEW_VERDICT_LINES+=("${1:-}")
 }

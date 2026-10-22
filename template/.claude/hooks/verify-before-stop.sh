@@ -798,8 +798,7 @@ dualreview_slot_block() {
   done
   echo "[완료 차단] codex 듀얼 리뷰가 그 리뷰 자리에서 확인되지 않았습니다 — 추가 관할 폴더 슬롯 리뷰 자리 기록으로 판정했습니다."
   echo
-  echo "이 턴의 듀얼 리뷰 대상:"
-  sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+  echo "이 턴의 듀얼 리뷰 대상: $(wc -l < "$DUALREVIEW_FLAG" 2>/dev/null | tr -d ' ')개 파일 (목록: $DUALREVIEW_FLAG)"
   if [ -n "$waiting" ]; then
     echo
     echo "리뷰를 기다리는 자리(그 폴더에 *codex*.md 를 저장하면 풀린다):"
@@ -907,8 +906,7 @@ if [ -s "$DUALREVIEW_FLAG" ] && ! hook_disabled "stop:dualreview"; then
     {
       echo "[완료 차단] codex 듀얼 리뷰 미수행 — Claude 단독 리뷰로는 끝낼 수 없습니다."
       echo
-      echo "이 턴의 듀얼 리뷰 대상:"
-      sed 's/^/  - /' "$DUALREVIEW_FLAG" 2>/dev/null
+      echo "이 턴의 듀얼 리뷰 대상: $(wc -l < "$DUALREVIEW_FLAG" 2>/dev/null | tr -d ' ')개 파일 (목록: $DUALREVIEW_FLAG)"
       echo
       echo "해야 할 일:"
       echo "  1. 대상 산출물/diff를 codex로 독립 리뷰시킨다 (모델·effort는 guard-codex-invocation 규정 — 임의 하향 금지)."
@@ -934,8 +932,7 @@ if [ -s "$EXPLAIN_FLAG" ] && ! hook_disabled "stop:explain"; then
   {
     echo "[완료 차단] change-explainer 미실행 — 변경 설명 없이 끝낼 수 없습니다."
     echo
-    echo "이 턴에서 바뀐 코드/설정:"
-    sed 's/^/  - /' "$EXPLAIN_FLAG" 2>/dev/null
+    echo "이 턴에서 바뀐 코드/설정: $(wc -l < "$EXPLAIN_FLAG" 2>/dev/null | tr -d ' ')개 파일 (목록: $EXPLAIN_FLAG)"
     echo
     echo "해야 할 일:"
     echo "  1. change-explainer 에이전트로 실제 diff 기반 사용자용 변경 설명을 낸다."
@@ -961,8 +958,7 @@ if knowledge_gate_active && ! hook_disabled "stop:knowledge"; then
   {
     echo "[완료 차단] 지식 저장소 반영 미확인 — 이 턴의 결정·설계를 남기지 않고 끝낼 수 없습니다."
     echo
-    echo "이 턴에서 바뀐 코드/설정:"
-    sed 's/^/  - /' "$KNOWLEDGE_FLAG" 2>/dev/null
+    echo "이 턴에서 바뀐 코드/설정: $(wc -l < "$KNOWLEDGE_FLAG" 2>/dev/null | tr -d ' ')개 파일 (목록: $KNOWLEDGE_FLAG)"
     echo
     echo "해야 할 일:"
     echo "  1. 이 머신의 지식 저장소가 **어디이고 어떤 형식인지는 사용자 층 설정**(전역"
@@ -1013,8 +1009,7 @@ gate_budget "audit"
 {
   echo "[완료 차단] completion-auditor 미실행 — '완료'라고 말할 수 없습니다."
   echo
-  echo "이 턴에서 바뀐 코드/설정:"
-  sed 's/^/  - /' "$AUDIT_FLAG" 2>/dev/null
+  echo "이 턴에서 바뀐 코드/설정: $(wc -l < "$AUDIT_FLAG" 2>/dev/null | tr -d ' ')개 파일 (목록: $AUDIT_FLAG)"
   if [ -n "$typecheck_note" ]; then
     echo
     echo "참고: $typecheck_note"

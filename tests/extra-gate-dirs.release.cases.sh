@@ -251,7 +251,6 @@ t07() { # 키가 없으면(ABSENT) 기존 루프 원문 — 차단 바이트의 
   dr_flag "$C3_R" "$v" || { report "$name" ''; return; }
   run_stop "$C3_R"
   why="$(expect_dr_loop_block "$C3_R")"
-  [[ -z "$why" ]] && ! contains "$ERR" "  - $v" && why='대상 나열 없음'
   if [[ -z "$why" ]]; then
     review_at "$C3_R/_workspace" || { report "$name" ''; return; }
     run_stop "$C3_R"

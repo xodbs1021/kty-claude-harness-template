@@ -262,6 +262,7 @@ v07() { # 기록 줄이 1023바이트를 넘어 현재 기록을 못 쓴 값(영
 v08() { # 기록 없는 값(M) 나열은 본문이 파이프 버퍼보다 커도 빠지지 않는다 — 판정을
         # `printf | grep -q` 로 하면 grep 이 첫 일치에서 닫아 printf 가 SIGPIPE 로
         # 죽고(pipefail) 절이 조용히 사라진다. 막음 · 사유는 그대로다.
+        # 대상은 개수 한 줄로만 나오므로(PR #54) 끝 값은 기록 없는 값 절에 한 번이다.
   local name="v08 끝줄 갱신 표시 ${V08_ITEMS}개(큰 본문) → 기록 없는 값 절 · 끝 값까지"
   local why='' a b d last n
   stop_fixture || { report "$name" ''; return; }
@@ -280,7 +281,7 @@ v08() { # 기록 없는 값(M) 나열은 본문이 파이프 버퍼보다 커도
   if [[ -z "$why" ]]; then
     n="$(printf '%s\n' "$ERR" | grep -cxF -- "  - $last")"
     if ! contains "$ERR" "$TOK_DR_MLIST"; then why='기록 없는 값 절이 빠졌다'
-    elif [[ "$n" != 2 ]]; then why="끝 값 나열 ${n}번(기대 2 — 대상 · 기록 없는 값)"
+    elif [[ "$n" != 1 ]]; then why="끝 값 나열 ${n}번(기대 1 — 기록 없는 값)"
     fi
   fi
   report "$name" "$why"

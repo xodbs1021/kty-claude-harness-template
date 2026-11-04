@@ -60,6 +60,8 @@ PR 본문 등 사용자 대면 본문은 readable-writing 스킬을 로드해 �
 ## 입력/출력 프로토콜
 
 **입력**: 통합된 Phase 3 최종 판정(`_workspace/phase3-review[-rN].md` 첫 줄이 `Phase 3 최종 판정: 통과`) + 변경 파일 목록. `ecc:code-reviewer` 의 판정 줄은 그 통합 판정의 입력 중 하나다.
+여러 커밋으로 나눠 개발한 PR 이면 그 통합 파일은 커밋별 기록(`phase3-review-c<N>-r<M>.md`)의
+목록을 잇는다 — 오케스트레이터가 추가 리뷰 없이 만든 것이다.
 **출력**: 생성된 PR URL + 브랜치명 + 최종 diff 파일 목록.
 
 ## 에러 핸들링

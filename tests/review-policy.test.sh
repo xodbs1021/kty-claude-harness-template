@@ -39,6 +39,10 @@ readonly H_P3_RULE='#### Phase 3 (코드 검수) — '
 readonly H_P4_RULE='#### Phase 4 (PR 점검) — '
 readonly H_UNIT='#### 적용 단위'
 readonly H_REPORT='#### 라운드 보고'
+readonly H_COMMON='#### 공통 운영 규약'
+
+# "Phase 3" 이 든 문장에 이것이 함께 나오면 옛 Phase 3 삼중 규칙이다.
+readonly PHASE3_TRIPLE_RE='무지적 ?(라운드 ?)?3|상한 ?5|5 ?회'
 readonly H_P3_PIPE='## Phase 3: '
 readonly H_P4_PIPE='## Phase 4: '
 
@@ -55,6 +59,14 @@ readonly OLD_PLAIN='- Phase 3 은 PR 전체 차분으로 무지적 3회를 채�
 readonly OLD_WRAPPED='- 그 뒤 Phase 3 은 PR 전체 차분으로\n  무지적 3회를 채우고 Phase 4 로 간다.'
 # shellcheck disable=SC2016
 readonly OLD_AUTHOR='입력은 종결 라운드의 `phase3-review[-rN].md` 하나다.'
+# 같은 옛 규칙을 "종결 라운드" · "Phase 3 … 무지적 3" 없이 다른 말로 쓴 꼴
+# (2026-11-04 [tq] 리뷰가 놓침을 보인 문장들).
+readonly OLD_DUAL3='- Phase 3 끝에 PR 전체로 Claude+Codex 듀얼 3회를 돈다.'
+readonly OLD_CLOSING_PR='- **종결 = PR 전체를 입력으로 한 라운드에서 무지적 3회 ∧ 축 체크리스트 전부 커버.**'
+readonly OLD_REVIEWER='입력은 Phase 3 끝 PR 전체 무지적 3회의 최종 기록이다.'
+# 옛 규칙을 "왜 …" 제목 절로 감싸 심는 꼴. 뒤따르는 활성 절이 역사로 묻혀
+# 필요 문구 검사가 빨개진다 — 금지 검사가 아닌 이유의 RED 다.
+readonly OLD_UNDER_WHY='#### 왜 옛 규칙\n- Phase 3 은 PR 전체 차분으로 무지적 3회를 채운 뒤 Phase 4 로 간다.'
 
 TMPROOT="$(mktemp -d)" || exit 1
 if [[ -z "${TMPROOT}" || ! -d "${TMPROOT}" ]]; then
@@ -207,10 +219,18 @@ check_phase3() {
   need 'Phase 3 종결은 C/H 0' "${rule}" 'CRITICAL/HIGH 0'
   need 'M/L 은 PR 로 이연 + 귀속' "${rule}" '이연.*귀속|귀속.*이연'
   need 'C/H 수정은 확인 패스' "${rule}" '확인 패스'
-  need '확인 패스 한도 뒤 사용자 회부' "${rule}" '사용자에게 회부'
+  need '확인 패스 한도 2회 뒤 사용자 회부' \
+    "$(split_sentences <<< "${rule}")" '두 번째 확인에도 남으면[^.]*사용자에게 회부'
   need '싱글턴 교차 검증 유지' "${rule}" '싱글턴'
-
+  # 보안 · [tq] 차단을 고친 수정분은 cc·cx 만이 아니라 그 지적을 낸 전문
+  # 검수자도 다시 판정해야 닫힌다.
   local text
+  for text in "${rule}" "${pipe}"; do
+    need 'Phase 3 보안·tq 수정분은 원 전문 검수자가 재판정' \
+      "$(split_sentences <<< "${text}")" \
+      'security-reviewer[^.]*tq[^.]*수정분만 병렬 재판정'
+  done
+
   for text in "${rule}" "${pipe}"; do
     deny 'Phase 3 절에 무지적 계수' "${text}" '무지적'
     deny 'Phase 3 절에 종결 라운드' "${text}" '종결 라운드'
@@ -222,8 +242,7 @@ check_phase3() {
   deny '활성 문구에 Phase 3·4 묶음' "${skill_all}" \
     'Phase 3·4|Phase 3 ?\(코드 검수\)·Phase 4'
   deny '한 문장에 Phase 3 과 무지적 3회·상한 5' \
-    "$(grep -F 'Phase 3' <<< "${skill_all}")" \
-    '무지적 ?(라운드 ?)?3|상한 ?5|5 ?회'
+    "$(grep -F 'Phase 3' <<< "${skill_all}")" "${PHASE3_TRIPLE_RE}"
 }
 
 #######################################
@@ -239,7 +258,9 @@ check_phase4() {
 
   need 'Phase 4 무지적 3회' "${rule}" '무지적 라운드 3회'
   need 'Phase 4 연속 불요' "${rule}" '연속 불요'
-  need 'Phase 4 전면 상한 5' "${rule}" '상한 5회'
+  # 제목의 "(전면 상한 5회)" 가 대신 채우지 않게 본문에서만 찾는다.
+  need 'Phase 4 전면 상한 5 (본문)' "$(grep -v '^#' <<< "${rule}")" \
+    '전면 라운드 상한 5회'
   need 'Phase 4 입력: PR 전체 차분' "${rule}" 'PR 전체 차분'
   need 'Phase 4 입력: 현재 계획서' "${rule}" '현재 계획서'
   need 'Phase 4 입력: 차분 밖 운영 문서 목록' "${rule}" '운영 문서'
@@ -270,6 +291,25 @@ check_unit() {
   need '적용 단위: pr-author 전달' "${unit}" 'pr-author'
   need '종결 기준: Phase 4 만 무지적 3라운드' "${gates}" \
     'Phase 4[^.]*무지적 3라운드'
+
+  # 말을 바꿔 되살린 PR 전체 3회도 잡는다(머리 = 첫 소제목 앞 문단).
+  deny_count3_outside_phase4 '종결 기준 머리' \
+    "$(awk 'NR > 1 && /^#/ { exit } { print }' <<< "${gates}")"
+  deny_count3_outside_phase4 '적용 단위' "${unit}"
+  deny_count3_outside_phase4 '공통 운영 규약' \
+    "$(active_text "$1" "${H_COMMON}")"
+}
+
+#######################################
+# 3회 · 3라운드를 말하는 문장이 그 자리가 Phase 4 임을 함께 말하지 않으면
+# 위반이다. "듀얼 3회" · "3라운드" 처럼 무지적 낱말 없이 쓴 꼴도 본다.
+# Arguments:
+#   자리 이름, 글
+#######################################
+deny_count3_outside_phase4() {
+  deny "$1: 3회 문장에 Phase 4 없음" \
+    "$(split_sentences <<< "$2" | grep -vF 'Phase 4')" \
+    '무지적 ?(라운드 ?)?3|듀얼 ?3|3 ?라운드|3 ?회'
 }
 
 #######################################
@@ -286,6 +326,12 @@ check_agents() {
   need 'pr-reviewer 대조: 커밋별 기록' "${reviewer}" '커밋별 기록'
   deny 'pr-author 에 종결 라운드' "${author}" '종결 라운드'
   deny 'pr-reviewer 에 종결 라운드' "${reviewer}" '종결 라운드'
+  deny 'pr-author 한 문장에 Phase 3 과 무지적 3회·상한 5' \
+    "$(split_sentences <<< "${author}" | grep -F 'Phase 3')" \
+    "${PHASE3_TRIPLE_RE}"
+  deny 'pr-reviewer 한 문장에 Phase 3 과 무지적 3회·상한 5' \
+    "$(split_sentences <<< "${reviewer}" | grep -F 'Phase 3')" \
+    "${PHASE3_TRIPLE_RE}"
 }
 
 #######################################
@@ -298,6 +344,11 @@ check_adrs() {
   status25="$(adr_status "$1/${ADR25_REL}")"
   need 'ADR-0025 상태가 superseded' "${status25}" 'superseded'
   need 'ADR-0025 상태가 ADR-0027 링크' "${status25}" 'ADR-0027\]\('
+  # 결정 1 은 유효하지만 그 기준 시점이던 종결 라운드는 없어졌다.
+  need 'ADR-0025 상태: 결정 1 의 종결 라운드 전은 Phase 4 전' \
+    "${status25}" '"Phase 4 전"으로 읽'
+  need 'ADR-0025 상태: 종결 라운드 C/H 수정 커밋 규칙은 Phase 4 로 이관' \
+    "${status25}" 'Phase 4 로 이관'
 
   for f in "$1/${ADR_DIR_REL}"/*.md; do
     if head -n 1 "${f}" | grep -q '^# ADR-0027:'; then
@@ -387,25 +438,70 @@ append_line() {
 }
 
 #######################################
-# 파일 안의 글자열을 모두 바꾼다. 없으면 실패한다.
+# 파일 안의 글자열을 모두 글자 그대로 바꾼다(한 줄 안의 글자열만). 없으면
+# 실패한다. bash 3.2 의 ${var//"a"/"b"} 는 바꿀 쪽 따옴표를 남기고 긴
+# 유니코드 글자열에서 수십 초가 걸려 awk 의 index · substr 로 바꾼다. 인자는
+# 환경 변수로 넘긴다 — awk -v 는 역슬래시를 펼친다.
 # Arguments:
 #   파일, 찾을 글자열, 바꿀 글자열
+# Returns:
+#   0 바꿈, 1 못 찾음
 #######################################
 replace_all() {
-  local body
-  body="$(cat "$1")" || return 1
-  [[ "${body}" == *"$2"* ]] || return 1
-  printf '%s\n' "${body//"$2"/"$3"}" > "$1"
+  RA_FROM="$2" RA_TO="$3" awk '
+    BEGIN { from = ENVIRON["RA_FROM"]; to = ENVIRON["RA_TO"]; n = length(from) }
+    n > 0 {
+      rest = $0
+      out = ""
+      while ((i = index(rest, from)) > 0) {
+        out = out substr(rest, 1, i - 1) to
+        rest = substr(rest, i + n)
+        hit = 1
+      }
+      $0 = out rest
+    }
+    { print }
+    END { exit !hit }
+  ' "$1" > "$1.new" && mv "$1.new" "$1"
 }
 
 #######################################
-# 픽스처에 변이 하나를 걸고 기대한 판정이 나오는지 잰다.
+# replace_all 이 바꿀 글자열을 따옴표 · 역슬래시 · & 를 펼치지 않고 그대로
+# 넣는지, 없는 글자열에는 실패하는지 잰다.
+# Outputs:
+#   어긋남이 있으면 그 설명을 stdout 에(없으면 아무것도)
+#######################################
+replace_all_literal_fault() {
+  local f="${TMPROOT}/replace-all.txt" to='Q\1&' want got
+  printf 'x abc y\nabc\n' > "${f}" || { echo '시험 파일을 못 썼다'; return; }
+  if ! replace_all "${f}" 'abc' "${to}"; then
+    echo '찾을 글자열이 있는데 실패했다'
+    return
+  fi
+  want="$(printf 'x %s y\n%s' "${to}" "${to}")"
+  got="$(cat "${f}")"
+  if [[ "${got}" != "${want}" ]]; then
+    printf '결과가 다르다 — %s' "${got}"
+  elif replace_all "${f}" 'zzz' 'q'; then
+    echo '없는 글자열인데 성공했다'
+  fi
+}
+
+#######################################
+# 픽스처에 변이 하나를 걸고 기대한 판정이 나오는지 잰다. 기대를
+# red:<위반 설명> 으로 주면 그 위반으로 빨개졌을 때만 통과다 — 엉뚱한
+# 검사가 대신 빨개진 변이를 통과로 세지 않으려는 것이다.
 # Arguments:
-#   케이스 이름, 기대(green|red), 변이 함수 이름, 변이 인자...
+#   케이스 이름, 기대(green | red | red:<위반 설명>), 변이 함수 이름,
+#   변이 인자...
 #######################################
 mutation_case() {
-  local name="$1" expect="$2" op="$3" d out
+  local name="$1" expect="$2" op="$3" d out reason=''
   shift 3
+  if [[ "${expect}" == red:* ]]; then
+    reason="${expect#red:}"
+    expect=red
+  fi
   if ! d="$(new_fixture)"; then
     report "${name}" '픽스처 실패'
     return
@@ -418,10 +514,104 @@ mutation_case() {
   local rc=$?
   if [[ "${expect}" == green && "${rc}" -eq 0 ]] \
       || [[ "${expect}" == red && "${rc}" -ne 0 ]]; then
-    report "${name}"
+    if [[ -n "${reason}" && "${out}" != *"위반: ${reason}"* ]]; then
+      report "${name}" "기대한 위반 '${reason}' 없이 빨개짐 — ${out}"
+    else
+      report "${name}"
+    fi
   else
     report "${name}" "기대 ${expect}, rc=${rc}${out:+ — ${out}}"
   fi
+}
+
+#######################################
+# 옛 Phase 3 삼중 규칙을 활성 자리에 되심는 변이. 그 규칙을 막는 검사로
+# 빨개져야 한다(기대 = red:<걸려야 할 위반 설명>).
+#######################################
+old_rule_cases() {
+  mutation_case '변이: 종결 기준 머리에 옛 Phase 3·4 무지적 3라운드' \
+    'red:활성 문구에 Phase 3·4 묶음' \
+    insert_after "${SKILL_REL}" "${H_GATES}" "${OLD_GATES}"
+  mutation_case '변이: Phase 3 절에 무지적 3회 종결' \
+    'red:Phase 3 절에 무지적 계수' \
+    insert_after "${SKILL_REL}" "${H_P3_RULE}" "${OLD_CLOSING}"
+  mutation_case '변이: 라운드 보고에 Phase 3·4 상한 5회' \
+    'red:활성 문구에 Phase 3·4 묶음' \
+    insert_after "${SKILL_REL}" "${H_REPORT}" "${OLD_CAP}"
+  mutation_case '변이: Phase 3 파이프라인에 PR 전체 종결 라운드' \
+    'red:Phase 3 절에 종결 라운드' \
+    insert_after "${SKILL_REL}" "${H_P3_PIPE}" "${OLD_PIPE}"
+  mutation_case '변이: 적용 단위에 커밋 하나 PR 의 종결 라운드 겸함' \
+    'red:활성 문구에 종결 라운드' \
+    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_SINGLE}"
+  mutation_case '변이: 종결 라운드 낱말 없이 Phase 3 무지적 3회' \
+    'red:한 문장에 Phase 3 과 무지적' \
+    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_PLAIN}"
+  mutation_case '변이: 두 줄로 감싼 Phase 3 무지적 3회' \
+    'red:한 문장에 Phase 3 과 무지적' \
+    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_WRAPPED}"
+  mutation_case '변이: 적용 단위에 듀얼 3회로 말을 바꾼 PR 전체 리뷰' \
+    'red:적용 단위: 3회 문장에 Phase 4 없음' \
+    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_DUAL3}"
+  mutation_case '변이: 공통 운영 규약에 PR 전체 무지적 3회 종결' \
+    'red:공통 운영 규약: 3회 문장에 Phase 4 없음' \
+    insert_after "${SKILL_REL}" "${H_COMMON}" "${OLD_CLOSING_PR}"
+  mutation_case '변이: pr-author 입력을 종결 라운드로 되돌림' \
+    'red:pr-author 에 종결 라운드' \
+    insert_after "${AUTHOR_REL}" '## 입력/출력 프로토콜' "${OLD_AUTHOR}"
+  mutation_case '변이: pr-reviewer 입력에 Phase 3 PR 전체 무지적 3회' \
+    'red:pr-reviewer 한 문장에 Phase 3' \
+    insert_after "${REVIEWER_REL}" '## 입력/출력 프로토콜' "${OLD_REVIEWER}"
+}
+
+#######################################
+# 현행 규칙의 수치 · 의무 · 상태를 약하게 바꾸는 변이. 그 규칙을 고정한
+# 필요 문구 검사로 빨개져야 한다.
+#######################################
+weakening_cases() {
+  mutation_case '변이: Phase 4 를 1회로 약화' 'red:Phase 4 무지적 3회' \
+    replace_all "${SKILL_REL}" '무지적 라운드 3회' '무지적 라운드 1회'
+  mutation_case '변이: Phase 4 연속 불요 삭제' 'red:Phase 4 연속 불요' \
+    replace_all "${SKILL_REL}" '연속 불요' '연속'
+  mutation_case '변이: Phase 4 본문 상한을 7회로(제목은 5회 그대로)' \
+    'red:Phase 4 전면 상한 5 (본문)' \
+    replace_all "${SKILL_REL}" '전면 라운드 상한 5회 —' '전면 라운드 상한 7회 —'
+  mutation_case '변이: Phase 3 확인 패스 한도를 다섯 번째로' \
+    'red:확인 패스 한도 2회' \
+    replace_all "${SKILL_REL}" '두 번째 확인에도' '다섯 번째 확인에도'
+  mutation_case '변이: 보안·tq 수정분의 원 전문 검수자 재판정 삭제' \
+    'red:Phase 3 보안·tq 수정분은 원 전문 검수자가 재판정' \
+    replace_all "${SKILL_REL}" '수정분만 병렬 재판정' '수정분 확인'
+  mutation_case '변이: ADR-0025 상태를 accepted 로 되돌림' \
+    'red:ADR-0025 상태가 superseded' \
+    replace_all "${ADR25_REL}" 'superseded' 'accepted'
+}
+
+#######################################
+# 판정 자체를 믿을 수 있는지 잰다. 기대한 이유가 아닌 이유로 빨개진 변이는
+# 실패해야 하고, 정당한 Phase 4 문장과 역사 자리의 옛 문장은 오탐하지 않아야
+# 한다.
+#######################################
+no_false_verdict_cases() {
+  # 옛 규칙을 "왜 …" 제목 아래 심으면 금지 검사가 아니라 필요 문구 검사로
+  # 빨개진다.
+  local meta
+  meta="$(mutation_case '메타' 'red:한 문장에 Phase 3 과 무지적' \
+    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_UNDER_WHY}")"
+  report '메타: 기대와 다른 이유로 빨개진 변이는 실패로 잡힌다' \
+    "$([[ "${meta}" == *'✗'* ]] || printf '놓침 — %s' "${meta}")"
+
+  mutation_case '정당: 적용 단위의 Phase 4 PR 전체 듀얼 3회는 초록' green \
+    insert_after "${SKILL_REL}" "${H_UNIT}" \
+    '- Phase 4 는 PR 전체로 Claude+Codex 듀얼 3회를 돈다.'
+  mutation_case '역사: ADR-0025 본문 끝의 옛 규칙은 초록' green \
+    append_line "${ADR25_REL}" "${OLD_PIPE}"
+  mutation_case '역사: ADR-0020 본문 끝의 옛 규칙은 초록' green \
+    append_line "${ADR20_REL}" "${OLD_GATES}"
+  mutation_case '역사: SKILL.md "**왜" 문단 안의 옛 규칙은 초록' green \
+    insert_after "${SKILL_REL}" '**왜 (' "${OLD_PLAIN}"
+  mutation_case '역사: SKILL.md "**왜" 문단 안의 듀얼 3회 말바꿈은 초록' green \
+    insert_after "${SKILL_REL}" '**왜 (' "${OLD_DUAL3}"
 }
 
 main() {
@@ -432,39 +622,13 @@ main() {
   rc=$?
   report '현행 저장소가 정책을 지킨다' "$( ((rc == 0)) || printf '%s' "${out}")"
 
+  report '도구: replace_all 은 바꿀 글자열을 글자 그대로 넣는다' \
+    "$(replace_all_literal_fault)"
   mutation_case '픽스처 원본은 초록' green append_line "${ADR25_REL}" ''
 
-  # 옛 Phase 3 삼중 규칙을 활성 자리에 되심으면 빨개져야 한다.
-  mutation_case '변이: 종결 기준 머리에 옛 Phase 3·4 무지적 3라운드' red \
-    insert_after "${SKILL_REL}" "${H_GATES}" "${OLD_GATES}"
-  mutation_case '변이: Phase 3 절에 무지적 3회 종결' red \
-    insert_after "${SKILL_REL}" "${H_P3_RULE}" "${OLD_CLOSING}"
-  mutation_case '변이: 라운드 보고에 Phase 3·4 상한 5회' red \
-    insert_after "${SKILL_REL}" "${H_REPORT}" "${OLD_CAP}"
-  mutation_case '변이: Phase 3 파이프라인에 PR 전체 종결 라운드' red \
-    insert_after "${SKILL_REL}" "${H_P3_PIPE}" "${OLD_PIPE}"
-  mutation_case '변이: 적용 단위에 커밋 하나 PR 의 종결 라운드 겸함' red \
-    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_SINGLE}"
-  mutation_case '변이: 종결 라운드 낱말 없이 Phase 3 무지적 3회' red \
-    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_PLAIN}"
-  mutation_case '변이: 두 줄로 감싼 Phase 3 무지적 3회' red \
-    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_WRAPPED}"
-  mutation_case '변이: pr-author 입력을 종결 라운드로 되돌림' red \
-    insert_after "${AUTHOR_REL}" '## 입력/출력 프로토콜' "${OLD_AUTHOR}"
-  mutation_case '변이: Phase 4 를 1회로 약화' red \
-    replace_all "${SKILL_REL}" '무지적 라운드 3회' '무지적 라운드 1회'
-  mutation_case '변이: Phase 4 연속 불요 삭제' red \
-    replace_all "${SKILL_REL}" '연속 불요' '연속'
-  mutation_case '변이: ADR-0025 상태를 accepted 로 되돌림' red \
-    replace_all "${ADR25_REL}" 'superseded' 'accepted'
-
-  # 역사 자리의 옛 문장은 오탐하지 않아야 한다.
-  mutation_case '역사: ADR-0025 본문 끝의 옛 규칙은 초록' green \
-    append_line "${ADR25_REL}" "${OLD_PIPE}"
-  mutation_case '역사: ADR-0020 본문 끝의 옛 규칙은 초록' green \
-    append_line "${ADR20_REL}" "${OLD_GATES}"
-  mutation_case '역사: SKILL.md "**왜" 문단 안의 옛 규칙은 초록' green \
-    insert_after "${SKILL_REL}" '**왜 (' "${OLD_PLAIN}"
+  old_rule_cases
+  weakening_cases
+  no_false_verdict_cases
 
   printf '\n통과 %d · 실패 %d\n' "${pass}" "${fail}"
   (( fail == 0 ))

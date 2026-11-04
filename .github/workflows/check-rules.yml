@@ -78,5 +78,9 @@ jobs:
       # 키가 없을 때 기존 바이트가 그대로인지와 기록 형식을 보수적으로 읽는지가 축이다.
       - name: 추가 관할 폴더 슬롯 회귀 테스트
         run: ./tests/extra-gate-dirs.test.sh
+      # 리뷰 횟수 정책(ADR-0027). 커밋마다 듀얼 1회 · PR 전체는 Phase 4 에서만 듀얼
+      # 3회 — 옛 Phase 3 끝 PR 전체 3회가 활성 문구로 돌아오면 적색이다(변이 케이스 포함).
+      - name: 리뷰 횟수 정책 의미 회귀 테스트
+        run: ./tests/review-policy.test.sh
       - name: 층 경계 검사 (글루에 상위 층 구현이 샜나)
         run: ./scripts/check-layer-boundary.sh

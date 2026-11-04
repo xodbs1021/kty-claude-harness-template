@@ -8,8 +8,8 @@
 # 이 시험이 막는 실패는 하나다 — 옛 규칙(Phase 3 끝에서도 PR 전체로 무지적
 # 3회 · 상한 5회)이 활성 문서로 돌아와 같은 PR 을 두 번 3라운드씩 도는 것.
 # 문구 하나가 아니라 부류를 본다. Phase 3 절에 무지적 · 상한 5 · 종결 라운드가
-# 나오거나, 어느 문장이든 "Phase 3" 과 무지적 3회 · 상한 5 가 함께 나오면
-# 빨개진다.
+# 나오거나, 어느 문장이든 "Phase 3" 과 3회(무지적 · 듀얼 · 3라운드) · 상한 5 가
+# 함께 나오거나, 활성 자리에서 3회의 주체가 Phase 4 가 아니면 빨개진다.
 #
 # 역사는 검사하지 않는다. ADR 본문과 SKILL.md 의 "**왜 (…)**" 문단 · "왜 …"
 # 제목 절은 옛 규칙을 인용해야 하는 자리다. 변이 케이스가 이 경계를 양쪽에서
@@ -41,8 +41,14 @@ readonly H_UNIT='#### 적용 단위'
 readonly H_REPORT='#### 라운드 보고'
 readonly H_COMMON='#### 공통 운영 규약'
 
+# 3회 · 3라운드를 말하는 꼴. "듀얼 3회" · "3라운드" 처럼 무지적 낱말 없이
+# 말을 바꾼 꼴도 든다.
+readonly COUNT3_RE='무지적 ?(라운드 ?)?3|듀얼 ?3|3 ?라운드|3 ?회'
 # "Phase 3" 이 든 문장에 이것이 함께 나오면 옛 Phase 3 삼중 규칙이다.
-readonly PHASE3_TRIPLE_RE='무지적 ?(라운드 ?)?3|상한 ?5|5 ?회'
+readonly PHASE3_TRIPLE_RE="${COUNT3_RE}|상한 ?5|5 ?회"
+# 3회의 주체가 Phase 4 인 문장(현행 정당 문구)의 꼴. "… 뒤 Phase 4 로 간다"
+# 같은 단순 언급은 주체가 아니다.
+readonly PHASE4_SUBJECT_RE='Phase 4 ?(는|가|만|의)'
 readonly H_P3_PIPE='## Phase 3: '
 readonly H_P4_PIPE='## Phase 4: '
 
@@ -64,6 +70,15 @@ readonly OLD_AUTHOR='입력은 종결 라운드의 `phase3-review[-rN].md` 하�
 readonly OLD_DUAL3='- Phase 3 끝에 PR 전체로 Claude+Codex 듀얼 3회를 돈다.'
 readonly OLD_CLOSING_PR='- **종결 = PR 전체를 입력으로 한 라운드에서 무지적 3회 ∧ 축 체크리스트 전부 커버.**'
 readonly OLD_REVIEWER='입력은 Phase 3 끝 PR 전체 무지적 3회의 최종 기록이다.'
+# 같은 말바꿈을 "Phase 3" 없이 쓰거나 "Phase 4 로 간다" 로 단순 언급만 한 꼴
+# (2026-11-04 c2 리뷰가 Phase 3 절 · 보고 · 에이전트에서 놓침을 보인 문장들).
+readonly OLD_DUAL3_PIPE='모든 커밋이 끝나면 PR 전체 차분으로 듀얼 3라운드를 돈 뒤 Phase 4 로 간다.'
+readonly OLD_DUAL3_NO_P3='- PR 을 열기 전 PR 전체로 Claude+Codex 듀얼 3회를 돈다.'
+readonly OLD_DUAL3_BEFORE_P4='- Phase 4 로 가기 전에 PR 전체로 듀얼 3회를 돈다.'
+# 라운드 보고의 Phase 3 줄을 옛 계수로 되돌린 꼴. 백틱은 마크다운 원문이다.
+readonly OLD_REPORT_P3='- **Phase 3 이면** — 무지적 계수(n/3).'
+# shellcheck disable=SC2016
+readonly NEW_REPORT_P3='- **Phase 3 이면** — `계수 비대상(커밋 N)`.'
 # 옛 규칙을 "왜 …" 제목 절로 감싸 심는 꼴. 뒤따르는 활성 절이 역사로 묻혀
 # 필요 문구 검사가 빨개진다 — 금지 검사가 아닌 이유의 RED 다.
 readonly OLD_UNDER_WHY='#### 왜 옛 규칙\n- Phase 3 은 PR 전체 차분으로 무지적 3회를 채운 뒤 Phase 4 로 간다.'
@@ -219,8 +234,10 @@ check_phase3() {
   need 'Phase 3 종결은 C/H 0' "${rule}" 'CRITICAL/HIGH 0'
   need 'M/L 은 PR 로 이연 + 귀속' "${rule}" '이연.*귀속|귀속.*이연'
   need 'C/H 수정은 확인 패스' "${rule}" '확인 패스'
-  need '확인 패스 한도 2회 뒤 사용자 회부' \
+  need '확인 패스 한도 2회 뒤 사용자 회부(소절)' \
     "$(split_sentences <<< "${rule}")" '두 번째 확인에도 남으면[^.]*사용자에게 회부'
+  need '확인 패스 한도 2회 뒤 사용자 회부(파이프라인)' \
+    "$(split_sentences <<< "${pipe}")" '두 번째 확인에도 남으면[^.]*사용자에게 회부'
   need '싱글턴 교차 검증 유지' "${rule}" '싱글턴'
   # 보안 · [tq] 차단을 고친 수정분은 cc·cx 만이 아니라 그 지적을 낸 전문
   # 검수자도 다시 판정해야 닫힌다.
@@ -230,6 +247,9 @@ check_phase3() {
       "$(split_sentences <<< "${text}")" \
       'security-reviewer[^.]*tq[^.]*수정분만 병렬 재판정'
   done
+  need 'Phase 3 전문 검수자의 C/H 도 0 이어야 닫힘' \
+    "$(split_sentences <<< "${rule}")" \
+    '수정분만 병렬 재판정[^.]*CRITICAL/HIGH 도 0 이어야 닫힌다'
 
   for text in "${rule}" "${pipe}"; do
     deny 'Phase 3 절에 무지적 계수' "${text}" '무지적'
@@ -237,12 +257,30 @@ check_phase3() {
     deny 'Phase 3 절에 상한 5' "${text}" '상한 ?5|5 ?회'
     deny 'Phase 3 절에 PR 전체 입력' "${text}" 'PR 전체를 입력'
   done
+  deny_count3_outside_phase4 'Phase 3 소절' "${rule}"
+  deny_count3_outside_phase4 'Phase 3 파이프라인' "${pipe}"
 
   deny '활성 문구에 종결 라운드' "${skill_all}" '종결 라운드'
   deny '활성 문구에 Phase 3·4 묶음' "${skill_all}" \
     'Phase 3·4|Phase 3 ?\(코드 검수\)·Phase 4'
-  deny '한 문장에 Phase 3 과 무지적 3회·상한 5' \
+  deny '한 문장에 Phase 3 과 3회·상한 5' \
     "$(grep -F 'Phase 3' <<< "${skill_all}")" "${PHASE3_TRIPLE_RE}"
+}
+
+#######################################
+# 라운드 보고: Phase 3 은 계수 비대상이고 PR 전체 3회를 말하지 않는다.
+# Arguments:
+#   SKILL.md 경로
+#######################################
+check_report() {
+  local report_text
+  report_text="$(active_text "$1" "${H_REPORT}")"
+
+  need '라운드 보고: Phase 3 은 계수 비대상' \
+    "$(split_sentences <<< "${report_text}")" 'Phase 3[^.]*계수 비대상'
+  deny '라운드 보고: Phase 3 에 무지적 계수' \
+    "$(split_sentences <<< "${report_text}" | grep -F 'Phase 3')" '무지적 계수'
+  deny_count3_outside_phase4 '라운드 보고' "${report_text}"
 }
 
 #######################################
@@ -270,6 +308,14 @@ check_phase4() {
   need 'Phase 4 축 체크리스트' "${rule}" '축 체크리스트'
   need 'Phase 4 파이프라인이 종결 규약을 가리킨다' "${pipe}" '무지적'
   need 'Phase 4 파이프라인 codex 동시' "${pipe}" 'codex'
+  # Phase 4 수정 커밋도 보안 · [tq] 몫은 원 전문 검수자가 다시 판정한다.
+  # 전면 라운드 · 무지적 계수는 늘리지 않는다.
+  need 'Phase 4 수정 커밋의 보안·tq 몫은 원 전문 검수자가 재판정(소절)' \
+    "$(split_sentences <<< "${rule}")" \
+    '보안 트리거[^.]*security-reviewer[^.]*tq[^.]*수정분만 병렬 재판정[^.]*CRITICAL/HIGH 도 0'
+  need 'Phase 4 수정 커밋의 보안·tq 몫은 원 전문 검수자가 재판정(파이프라인)' \
+    "$(split_sentences <<< "${pipe}")" \
+    'security-reviewer[^.]*tq[^.]*수정분만 병렬 재판정'
   need '라운드 보고: Phase 4 무지적 계수' "${report_text}" \
     'Phase 4[^.]*무지적 계수'
 }
@@ -301,15 +347,16 @@ check_unit() {
 }
 
 #######################################
-# 3회 · 3라운드를 말하는 문장이 그 자리가 Phase 4 임을 함께 말하지 않으면
-# 위반이다. "듀얼 3회" · "3라운드" 처럼 무지적 낱말 없이 쓴 꼴도 본다.
+# 3회 · 3라운드를 말하는 문장의 주체가 Phase 4 가 아니면 위반이다. "듀얼
+# 3회" · "3라운드" 처럼 무지적 낱말 없이 쓴 꼴도 보고, "Phase 4" 를 언급만
+# 한 문장("… 돈 뒤 Phase 4 로 간다")은 면제하지 않는다.
 # Arguments:
 #   자리 이름, 글
 #######################################
 deny_count3_outside_phase4() {
-  deny "$1: 3회 문장에 Phase 4 없음" \
-    "$(split_sentences <<< "$2" | grep -vF 'Phase 4')" \
-    '무지적 ?(라운드 ?)?3|듀얼 ?3|3 ?라운드|3 ?회'
+  deny "$1: 3회 문장의 주체가 Phase 4 아님" \
+    "$(split_sentences <<< "$2" | grep -vE -- "${PHASE4_SUBJECT_RE}")" \
+    "${COUNT3_RE}"
 }
 
 #######################################
@@ -326,10 +373,12 @@ check_agents() {
   need 'pr-reviewer 대조: 커밋별 기록' "${reviewer}" '커밋별 기록'
   deny 'pr-author 에 종결 라운드' "${author}" '종결 라운드'
   deny 'pr-reviewer 에 종결 라운드' "${reviewer}" '종결 라운드'
-  deny 'pr-author 한 문장에 Phase 3 과 무지적 3회·상한 5' \
+  deny_count3_outside_phase4 'pr-author' "${author}"
+  deny_count3_outside_phase4 'pr-reviewer' "${reviewer}"
+  deny 'pr-author 한 문장에 Phase 3 과 3회·상한 5' \
     "$(split_sentences <<< "${author}" | grep -F 'Phase 3')" \
     "${PHASE3_TRIPLE_RE}"
-  deny 'pr-reviewer 한 문장에 Phase 3 과 무지적 3회·상한 5' \
+  deny 'pr-reviewer 한 문장에 Phase 3 과 3회·상한 5' \
     "$(split_sentences <<< "${reviewer}" | grep -F 'Phase 3')" \
     "${PHASE3_TRIPLE_RE}"
 }
@@ -387,6 +436,7 @@ check_policy() {
   fi
   check_phase3 "${skill}"
   check_phase4 "${skill}"
+  check_report "${skill}"
   check_unit "${skill}"
   check_agents "$1"
   check_adrs "$1"
@@ -545,16 +595,16 @@ old_rule_cases() {
     'red:활성 문구에 종결 라운드' \
     insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_SINGLE}"
   mutation_case '변이: 종결 라운드 낱말 없이 Phase 3 무지적 3회' \
-    'red:한 문장에 Phase 3 과 무지적' \
+    'red:한 문장에 Phase 3 과 3회' \
     insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_PLAIN}"
   mutation_case '변이: 두 줄로 감싼 Phase 3 무지적 3회' \
-    'red:한 문장에 Phase 3 과 무지적' \
+    'red:한 문장에 Phase 3 과 3회' \
     insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_WRAPPED}"
   mutation_case '변이: 적용 단위에 듀얼 3회로 말을 바꾼 PR 전체 리뷰' \
-    'red:적용 단위: 3회 문장에 Phase 4 없음' \
+    'red:적용 단위: 3회 문장의 주체가 Phase 4 아님' \
     insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_DUAL3}"
   mutation_case '변이: 공통 운영 규약에 PR 전체 무지적 3회 종결' \
-    'red:공통 운영 규약: 3회 문장에 Phase 4 없음' \
+    'red:공통 운영 규약: 3회 문장의 주체가 Phase 4 아님' \
     insert_after "${SKILL_REL}" "${H_COMMON}" "${OLD_CLOSING_PR}"
   mutation_case '변이: pr-author 입력을 종결 라운드로 되돌림' \
     'red:pr-author 에 종결 라운드' \
@@ -562,6 +612,40 @@ old_rule_cases() {
   mutation_case '변이: pr-reviewer 입력에 Phase 3 PR 전체 무지적 3회' \
     'red:pr-reviewer 한 문장에 Phase 3' \
     insert_after "${REVIEWER_REL}" '## 입력/출력 프로토콜' "${OLD_REVIEWER}"
+  dual3_rewording_cases
+}
+
+#######################################
+# 무지적 낱말 없이 "듀얼 3회" · "3라운드" 로 말을 바꾼 PR 전체 3회를 각 활성
+# 자리에 되심는 변이. 3회의 주체가 Phase 4 가 아니면 빨개져야 한다.
+#######################################
+dual3_rewording_cases() {
+  mutation_case '변이: Phase 3 소절에 듀얼 3회' \
+    'red:Phase 3 소절: 3회 문장의 주체가 Phase 4 아님' \
+    insert_after "${SKILL_REL}" "${H_P3_RULE}" "${OLD_DUAL3}"
+  mutation_case '변이: Phase 3 파이프라인에 듀얼 3라운드 뒤 Phase 4' \
+    'red:Phase 3 파이프라인: 3회 문장의 주체가 Phase 4 아님' \
+    insert_after "${SKILL_REL}" "${H_P3_PIPE}" "${OLD_DUAL3_PIPE}"
+  mutation_case '변이: 라운드 보고에 Phase 3 낱말 없는 듀얼 3회' \
+    'red:라운드 보고: 3회 문장의 주체가 Phase 4 아님' \
+    insert_after "${SKILL_REL}" "${H_REPORT}" "${OLD_DUAL3_NO_P3}"
+  mutation_case '변이: pr-author 에 Phase 3 낱말 없는 듀얼 3회' \
+    'red:pr-author: 3회 문장의 주체가 Phase 4 아님' \
+    insert_after "${AUTHOR_REL}" '## 입력/출력 프로토콜' "${OLD_DUAL3_NO_P3}"
+  mutation_case '변이: pr-reviewer 에 Phase 3 낱말 없는 듀얼 3회' \
+    'red:pr-reviewer: 3회 문장의 주체가 Phase 4 아님' \
+    insert_after "${REVIEWER_REL}" '## 입력/출력 프로토콜' "${OLD_DUAL3_NO_P3}"
+  # 말바꿈 검사가 걸리지 않는 Phase 4 소절에 심어도 Phase 3 문장 검사가 잡는다.
+  mutation_case '변이: Phase 4 소절에 Phase 3 끝 듀얼 3회' \
+    'red:한 문장에 Phase 3 과 3회' \
+    insert_after "${SKILL_REL}" "${H_P4_RULE}" "${OLD_DUAL3}"
+  # "Phase 4" 를 언급만 하고 3회의 주체는 Phase 3 쪽인 문장.
+  mutation_case '변이: 적용 단위에 Phase 4 로 가기 전 듀얼 3회' \
+    'red:적용 단위: 3회 문장의 주체가 Phase 4 아님' \
+    insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_DUAL3_BEFORE_P4}"
+  mutation_case '변이: 라운드 보고에 Phase 3 무지적 계수 줄 추가' \
+    'red:라운드 보고: Phase 3 에 무지적 계수' \
+    insert_after "${SKILL_REL}" "${H_REPORT}" "${OLD_REPORT_P3}"
 }
 
 #######################################
@@ -579,6 +663,25 @@ weakening_cases() {
   mutation_case '변이: Phase 3 확인 패스 한도를 다섯 번째로' \
     'red:확인 패스 한도 2회' \
     replace_all "${SKILL_REL}" '두 번째 확인에도' '다섯 번째 확인에도'
+  mutation_case '변이: Phase 3 파이프라인만 확인 패스 한도를 다섯 번째로' \
+    'red:확인 패스 한도 2회 뒤 사용자 회부(파이프라인)' \
+    replace_all "${SKILL_REL}" '두 번째 확인에도 남으면 사용자에게' \
+    '다섯 번째 확인에도 남으면 사용자에게'
+  mutation_case '변이: Phase 3 전문 검수자 C/H 0 닫힘 조건 삭제' \
+    'red:Phase 3 전문 검수자의 C/H 도 0 이어야 닫힘' \
+    replace_all "${SKILL_REL}" '검수자의 CRITICAL/HIGH 도 0 이어야 닫힌다' \
+    '검수자 의견을 참고한다'
+  mutation_case '변이: Phase 4 소절의 수정 커밋 전문 검수자 재판정 삭제' \
+    'red:Phase 4 수정 커밋의 보안·tq 몫은 원 전문 검수자가 재판정(소절)' \
+    replace_all "${SKILL_REL}" '패스와 같은 자리에서 **수정분만 병렬 재판정**' \
+    '패스에서 함께 본다'
+  mutation_case '변이: Phase 4 파이프라인의 수정 커밋 전문 검수자 재판정 삭제' \
+    'red:Phase 4 수정 커밋의 보안·tq 몫은 원 전문 검수자가 재판정(파이프라인)' \
+    replace_all "${SKILL_REL}" '해당 검수자도 수정분만 병렬 재판정' \
+    '해당 검수자는 다음 PR 에서 확인'
+  mutation_case '변이: 라운드 보고의 Phase 3 줄을 무지적 계수로 되돌림' \
+    'red:라운드 보고: Phase 3 은 계수 비대상' \
+    replace_all "${SKILL_REL}" "${NEW_REPORT_P3}" "${OLD_REPORT_P3}"
   mutation_case '변이: 보안·tq 수정분의 원 전문 검수자 재판정 삭제' \
     'red:Phase 3 보안·tq 수정분은 원 전문 검수자가 재판정' \
     replace_all "${SKILL_REL}" '수정분만 병렬 재판정' '수정분 확인'
@@ -596,7 +699,7 @@ no_false_verdict_cases() {
   # 옛 규칙을 "왜 …" 제목 아래 심으면 금지 검사가 아니라 필요 문구 검사로
   # 빨개진다.
   local meta
-  meta="$(mutation_case '메타' 'red:한 문장에 Phase 3 과 무지적' \
+  meta="$(mutation_case '메타' 'red:한 문장에 Phase 3 과 3회' \
     insert_after "${SKILL_REL}" "${H_UNIT}" "${OLD_UNDER_WHY}")"
   report '메타: 기대와 다른 이유로 빨개진 변이는 실패로 잡힌다' \
     "$([[ "${meta}" == *'✗'* ]] || printf '놓침 — %s' "${meta}")"
